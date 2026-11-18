@@ -1,17 +1,19 @@
 # Builds the Windows installer (Live-Studio-Setup-x.y.z.exe) and publishes it as a GitHub Release.
 # Installed copies of Live Studio check these releases and update themselves.
 #
-# To release a new version:  Actions tab → "Build Windows installer" → Run workflow → type a version (e.g. 1.0.1)
+# A new release is built automatically whenever package.json gets a new version on the main branch.
+# You can also start one by hand: Actions tab → "Build Windows installer" → Run workflow.
 name: Build Windows installer
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version number for this release (e.g. 1.0.1) — must be higher than the last one"
-        required: true
+        description: "Version number (leave empty to use the one in package.json)"
+        required: false
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: ["package.json"]
 
 permissions:
   contents: write
@@ -30,8 +32,8 @@ jobs:
         shell: pwsh
         run: |
           $v = "${{ github.event.inputs.version }}"
-          if (-not $v) { $v = "${{ github.ref_name }}".TrimStart('v') }
-          npm version $v --no-git-tag-version --allow-same-version
+          if ($v) { npm version $v --no-git-tag-version --allow-same-version }
+          $v = (Get-Content package.json | ConvertFrom-Json).version
           echo "Building Live Studio $v"
 
       - name: Install dependencies

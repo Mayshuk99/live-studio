@@ -6,6 +6,10 @@
   "main": "main.js",
   "author": "Konstantin",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Mayshuk99/live-studio.git"
+  },
   "private": true,
   "scripts": {
     "start": "electron .",
@@ -23,11 +27,36 @@
     "appId": "com.konstantin.livestudio",
     "productName": "Live Studio",
     "copyright": "Konstantin",
-    "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["main.js", "preload.js", "streamer.js", "renderer/**/*", "build/icon.png", "package.json"],
-    "extraResources": [{ "from": "resources/ffmpeg", "to": "ffmpeg", "filter": ["**/*"] }],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "streamer.js",
+      "renderer/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/ffmpeg",
+        "to": "ffmpeg",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "artifactName": "Live-Studio-Setup-${version}.${ext}"
     },
