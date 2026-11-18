@@ -31,5 +31,11 @@ contextBridge.exposeInMainWorld('studio', {
   setLive: live => ipcRenderer.send('app:live', live),
   onUpdate: cb => ipcRenderer.on('update:status', (e, s) => cb(s)),
   checkUpdates: () => ipcRenderer.invoke('update:check'),
-  installUpdate: () => ipcRenderer.send('update:install')
+  installUpdate: () => ipcRenderer.send('update:install'),
+  yt: {
+    status: () => ipcRenderer.invoke('yt:status'),
+    signIn: () => ipcRenderer.invoke('yt:signIn'),
+    signOut: () => ipcRenderer.invoke('yt:signOut'),
+    api: (method, endpoint, query, body) => ipcRenderer.invoke('yt:api', method, endpoint, query, body)
+  }
 });

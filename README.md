@@ -46,6 +46,26 @@ Installers built this way work fine. Automatic updates still come from the GitHu
 - Open **⚙ Settings → YouTube** and paste your stream key. In YouTube Studio it's under *Create → Go live → Stream*.
 - Pick an encoder in Settings. Use *NVIDIA*, *Intel* or *AMD* if your PC has one, since it leaves the processor free.
 
+## Service flow
+
+- **Holding screen:** a clock (or a countdown to a start time or to your YouTube event) shows from the moment Live Studio opens, so you can go live early.
+- **START SERVICE** (`Ctrl+S`): goes live if you aren't yet, starts recording, plays your opening video, then fades to your camera.
+- **END SERVICE** (`Ctrl+E`): plays your closing video, goes back to the holding screen (or black), stops recording, and ends the stream after a delay you choose. You can cancel that with *Keep streaming*.
+- **⚙ Edit** in the Service panel chooses the videos, fade lengths, camera and each of these steps.
+
+## YouTube connection
+
+Click **Connect…** in the Service panel. The window walks through a one-time Google setup (about 10 minutes: a free Google Cloud project with the YouTube Data API and a *Desktop app* sign-in key). After that, Live Studio:
+- lists your upcoming scheduled events and fills in the stream key when you pick one,
+- shows whether YouTube is receiving your stream (good / OK / poor) and the viewer count,
+- starts the event on YouTube after START SERVICE and ends it after END SERVICE.
+
+## Audio
+
+- The master section shows peak and RMS levels with peak hold and clip lights, plus a **phase (mono check)** meter and stereo picture, and loudness in LUFS (YouTube aims for about −14).
+- **MONO** lets you listen in mono on your headphones only.
+- **⏱ Sync test** measures how far the capture card's sound and picture are apart: clap in front of the camera, and it sets the audio delay to fix it.
+
 ## 4. Running a show
 
 | Do this | How |

@@ -4,6 +4,8 @@ const { app, BrowserWindow, ipcMain, dialog, session, shell, safeStorage, powerS
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const http = require('http');
+const crypto = require('crypto');
 const { OutputManager } = require('./streamer');
 
 let autoUpdater = null;
@@ -116,7 +118,10 @@ ipcMain.handle('settings:load', () => {
   if (s.youtube && s.youtube.keyEnc && safeStorage.isEncryptionAvailable()) {
     try { s.youtube.key = safeStorage.decryptString(Buffer.from(s.youtube.keyEnc, 'base64')); } catch (e) { s.youtube.key = ''; }
   }
-  if (s.youtube) delete s.youtube.keyEnc;
+  if (s.youtube && s.youtube.clientSecretEnc && safeStorage.isEncryptionAvailable()) {
+    try { s.youtube.clientSecret = safeStorage.decryptString(Buffer.from(s.youtube.clientSecretEnc, 'base64')); } catch (e) { s.youtube.clientSecret = ''; }
+  }
+  if (s.youtube) { delete s.youtube.keyEnc; delete s.youtube.clientSecretEnc; }
   if (!s.recordDir) s.recordDir = path.join(app.getPath('videos'), 'Live Studio');
   return s;
 });
@@ -125,6 +130,10 @@ ipcMain.handle('settings:save', (e, obj) => {
   if (s.youtube && s.youtube.key && safeStorage.isEncryptionAvailable()) {
     s.youtube.keyEnc = safeStorage.encryptString(s.youtube.key).toString('base64');
     delete s.youtube.key;
+  }
+  if (s.youtube && s.youtube.clientSecret && safeStorage.isEncryptionAvailable()) {
+    s.youtube.clientSecretEnc = safeStorage.encryptString(s.youtube.clientSecret).toString('base64');
+    delete s.youtube.clientSecret;
   }
   writeJSON(settingsFile(), s);
   outputs.ffmpegPath = ffmpegPath();
@@ -195,6 +204,99 @@ ipcMain.handle('out:start', (e, opts) => {
 ipcMain.on('out:data', (e, id, data) => outputs.write(id, data));
 ipcMain.handle('out:stop', (e, id) => outputs.stop(id));
 ipcMain.on('app:live', (e, live) => { isLive = !!live; });
+
+/* ---------- YouTube account (Google sign-in + YouTube Live API) ---------- */
+const ytFile = () => path.join(userDir(), 'youtube-account.json');
+const YT_SCOPE = 'https://www.googleapis.com/auth/youtube';
+let ytAccess = { token: '', exp: 0 };
+function ytCreds() {
+  const s = readJSON(settingsFile(), {}).youtube || {};
+  let secret = s.clientSecret || '';
+  if (s.clientSecretEnc && safeStorage.isEncryptionAvailable()) { try { secret = safeStorage.decryptString(Buffer.from(s.clientSecretEnc, 'base64')); } catch (e) { secret = ''; } }
+  return { id: (s.clientId || '').trim(), secret: secret.trim() };
+}
+function ytSaveRefresh(token, channel) {
+  const data = { channel };
+  if (safeStorage.isEncryptionAvailable()) data.refreshEnc = safeStorage.encryptString(token).toString('base64');
+  else data.refresh = token;
+  writeJSON(ytFile(), data);
+}
+function ytAccount() {
+  const d = readJSON(ytFile(), null);
+  if (!d) return null;
+  let refresh = d.refresh || '';
+  if (d.refreshEnc && safeStorage.isEncryptionAvailable()) { try { refresh = safeStorage.decryptString(Buffer.from(d.refreshEnc, 'base64')); } catch (e) { refresh = ''; } }
+  return refresh ? { refresh, channel: d.channel } : null;
+}
+async function ytTokenRequest(params) {
+  const c = ytCreds();
+  const body = new URLSearchParams(Object.assign({ client_id: c.id, client_secret: c.secret }, params));
+  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error_description || j.error || `Google sign-in failed (${r.status})`);
+  return j;
+}
+async function ytToken() {
+  if (ytAccess.token && Date.now() < ytAccess.exp - 60000) return ytAccess.token;
+  const acc = ytAccount();
+  if (!acc) throw new Error('Not signed in to YouTube');
+  const j = await ytTokenRequest({ grant_type: 'refresh_token', refresh_token: acc.refresh });
+  ytAccess = { token: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
+  return ytAccess.token;
+}
+async function ytCall(method, endpoint, query, body) {
+  const url = new URL('https://www.googleapis.com/youtube/v3/' + endpoint);
+  for (const [k, v] of Object.entries(query || {})) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+  const r = await fetch(url, { method, headers: Object.assign({ Authorization: 'Bearer ' + await ytToken() }, body ? { 'Content-Type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = j.error || {};
+    throw new Error(((e.errors && e.errors[0] && e.errors[0].reason) ? e.errors[0].reason + ': ' : '') + (e.message || `YouTube error ${r.status}`));
+  }
+  return j;
+}
+ipcMain.handle('yt:status', () => {
+  const c = ytCreds(), acc = ytAccount();
+  return { configured: !!(c.id && c.secret), signedIn: !!acc, channel: acc ? acc.channel : null };
+});
+ipcMain.handle('yt:signOut', () => { try { fs.unlinkSync(ytFile()); } catch (e) { /* */ } ytAccess = { token: '', exp: 0 }; return true; });
+ipcMain.handle('yt:api', async (e, method, endpoint, query, body) => {
+  try { return { data: await ytCall(method, endpoint, query, body) }; } catch (err) { return { error: err.message }; }
+});
+ipcMain.handle('yt:signIn', () => new Promise(resolve => {
+  const c = ytCreds();
+  if (!c.id || !c.secret) return resolve({ error: 'Enter the Client ID and Client secret first.' });
+  const verifier = crypto.randomBytes(48).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const state = crypto.randomBytes(16).toString('hex');
+  let done = false;
+  const finish = r => { if (done) return; done = true; clearTimeout(timer); try { server.close(); } catch (e) { /* */ } if (win && !win.isDestroyed()) win.focus(); resolve(r); };
+  const server = http.createServer(async (req, res) => {
+    const u = new URL(req.url, 'http://127.0.0.1');
+    if (u.pathname !== '/') { res.writeHead(404); return res.end(); }
+    const page = (msg) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(`<html><body style="font-family:Segoe UI,sans-serif;background:#0b0e14;color:#e8edf6;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center"><h2>${msg}</h2><p>You can close this window and go back to Live Studio.</p></div></body></html>`); };
+    if (u.searchParams.get('state') !== state) { page('Sign-in did not match. Please try again.'); return finish({ error: 'Sign-in did not match' }); }
+    if (u.searchParams.get('error')) { page('Sign-in was cancelled.'); return finish({ error: u.searchParams.get('error') }); }
+    try {
+      const port = server.address().port;
+      const j = await ytTokenRequest({ grant_type: 'authorization_code', code: u.searchParams.get('code'), redirect_uri: `http://127.0.0.1:${port}`, code_verifier: verifier });
+      if (!j.refresh_token) throw new Error('Google did not return a long-term sign-in. Remove Live Studio from your Google account permissions and try again.');
+      ytAccess = { token: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
+      ytSaveRefresh(j.refresh_token, null);
+      let channel = null;
+      try { const ch = await ytCall('GET', 'channels', { part: 'snippet', mine: 'true' }); const it = ch.items && ch.items[0]; if (it) channel = { id: it.id, title: it.snippet.title, thumb: (it.snippet.thumbnails.default || {}).url }; } catch (e) { /* */ }
+      ytSaveRefresh(j.refresh_token, channel);
+      page('Live Studio is connected to YouTube ✓');
+      finish({ ok: true, channel });
+    } catch (err) { page('Sign-in failed: ' + err.message); finish({ error: err.message }); }
+  });
+  const timer = setTimeout(() => finish({ error: 'Sign-in timed out' }), 5 * 60 * 1000);
+  server.listen(0, '127.0.0.1', () => {
+    const port = server.address().port;
+    const q = new URLSearchParams({ client_id: c.id, redirect_uri: `http://127.0.0.1:${port}`, response_type: 'code', scope: YT_SCOPE, code_challenge: challenge, code_challenge_method: 'S256', access_type: 'offline', prompt: 'consent', state });
+    shell.openExternal('https://accounts.google.com/o/oauth2/v2/auth?' + q.toString());
+  });
+}));
 
 /* ---------- automatic updates (GitHub Releases) ---------- */
 function sendUpdate(status, extra) { if (win && !win.isDestroyed()) win.webContents.send('update:status', { status, ...extra }); }

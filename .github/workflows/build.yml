@@ -49,10 +49,29 @@ jobs:
           Copy-Item $exe.FullName resources/ffmpeg/ffmpeg.exe
           & resources/ffmpeg/ffmpeg.exe -hide_banner -version | Select-Object -First 1
 
-      - name: Build installer and publish release
+      - name: Prepare the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = (Get-Content package.json | ConvertFrom-Json).version
+          gh release view "v$v" 2>$null
+          if ($LASTEXITCODE -eq 0) { gh release delete "v$v" --yes --cleanup-tag }
+          gh release create "v$v" --draft --target "${{ github.sha }}" --title "Live Studio $v" --notes "Download **Live-Studio-Setup-$v.exe** below and run it. Installed copies update themselves."
+
+      - name: Build installer and upload it
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --publish always
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = (Get-Content package.json | ConvertFrom-Json).version
+          gh release edit "v$v" --draft=false --latest
+          gh release view "v$v"
 
       - name: Keep a copy of the installer on this run
         uses: actions/upload-artifact@v4

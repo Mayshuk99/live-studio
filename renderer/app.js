@@ -57,20 +57,20 @@
   /* ================= defaults ================= */
   const SHOT_COLORS = ['#64748b', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#9333ea', '#0891b2', '#db2777'];
   const PANEL_DEFS = {
-    monitors: { title: 'Video', hint: 'left = next · right = on air' },
+    monitors: { title: 'Video', hint: 'left = preview (next) · right = live' },
     audio: { title: 'Audio', hint: 'what the stream hears' },
     shots: { title: 'Shots', hint: 'click = next · double-click = on air' },
-    media: { title: 'Before Service & Ending' },
-    speakers: { title: 'Speaker Names', hint: 'click a name to show it' },
-    labels: { title: 'Labels' },
+    media: { title: 'Service', hint: 'start and end the service' },
+    speakers: { title: 'People', hint: 'click a name to put it on screen' },
+    labels: { title: 'Titles & Graphics', hint: 'click to show / hide' },
     inputs: { title: 'Cameras & Files' },
     editor: { title: 'Shot Framing', hint: 'zoom and move the picture' },
     color: { title: 'Color & Exposure' }
   };
   // Two screens: "Run Show" has only what you touch during a service; "Setup" has the things you prepare beforehand.
   const LAYOUTS = {
-    live: [['monitors', 8, 4], ['audio', 4, 4], ['shots', 8, 3], ['media', 4, 6], ['speakers', 4, 3], ['labels', 4, 3]],
-    setup: [['monitors', 8, 4], ['audio', 4, 4], ['inputs', 4, 6], ['editor', 4, 6], ['color', 4, 6]]
+    live: [['monitors', 9, 5], ['media', 3, 3], ['audio', 3, 5], ['shots', 9, 3], ['speakers', 6, 2], ['labels', 6, 2]],
+    setup: [['monitors', 9, 5], ['audio', 3, 5], ['inputs', 4, 5], ['editor', 4, 5], ['color', 4, 5]]
   };
   const layoutFrom = name => {
     const L = LAYOUTS[name].map(([id, w, h]) => ({ id, w, h, hidden: false }));
@@ -94,11 +94,13 @@
         { id: uid('lbl'), title: 'Welcome', subtitle: 'We are glad you are here', style: 'lower', color: '#2563eb', autoHide: 0 },
         { id: uid('lbl'), title: 'LIVE', subtitle: '', style: 'corner', color: '#dc2626', autoHide: 0 }
       ],
-      audio: { inputs: [], media: { gain: 0, mute: false }, master: { gain: 0, limiter: true, monitor: false, monitorGain: -6 } },
+      audio: { inputs: [], media: { gain: 0, mute: false }, master: { gain: 0, limiter: true, monitor: false, monitorGain: -6, mono: false } },
       transition: { ms: 600 },
-      intro: { fileId: '', after: '', loop: false, fadeMs: 2000 },
-      ending: { fileId: '', after: 'black' },
-      autoIntro: false,
+      service: {
+        hold: { mode: 'clock', target: '10:00', title: 'Welcome', subtitle: 'The service will begin shortly', bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
+        start: { record: true, goLive: true, videoId: '', fadeMs: 2000, cameraShot: '', ytLive: true },
+        end: { videoId: '', fadeMs: 1500, then: 'hold', stopRec: true, endStream: true, endAfter: 30, ytComplete: true }
+      },
       speakers: [
         { id: uid('spk'), name: 'Pastor Name', title: 'Senior Pastor', hotkey: '' },
         { id: uid('spk'), name: 'Worship Leader', title: 'Worship Team', hotkey: '' }
@@ -110,7 +112,7 @@
     youtube: { server: 'rtmps://a.rtmps.youtube.com:443/live2', custom: '', key: '' },
     output: { width: 1920, height: 1080, fps: 30, bitrate: 8000, encoder: 'x264', audioBitrate: 160, recordBitrate: 20000 },
     recordDir: '', autoRecord: false, ftbAudio: true, zebra: true, moveSpeed: 0.12,
-    ui: { scale: 1, accent: '#3b82f6', card: 1, layouts: defaultLayouts(), layoutV: 2 },
+    ui: { scale: 1, accent: '#3b82f6', card: 1, layouts: defaultLayouts(), layoutV: 4 },
     hotkeys: {}
   });
   function merge(base, over) {
@@ -123,7 +125,7 @@
   /* ================= state ================= */
   let show = merge(defaultShow(), (await S.loadShow()) || {});
   let settings = merge(defaultSettings(), (await S.loadSettings()) || {});
-  if (settings.ui.layoutV !== 2 || !settings.ui.layouts) { settings.ui.layouts = defaultLayouts(); settings.ui.layoutV = 2; delete curLayout(); }
+  if (settings.ui.layoutV !== 4 || !settings.ui.layouts) { settings.ui.layouts = defaultLayouts(); settings.ui.layoutV = 4; delete settings.ui.layout; }
   for (const v of ['live', 'setup']) {
     if (!Array.isArray(settings.ui.layouts[v]) || !settings.ui.layouts[v].length) settings.ui.layouts[v] = layoutFrom(v);
     for (const id of Object.keys(PANEL_DEFS)) if (!settings.ui.layouts[v].find(x => x.id === id)) settings.ui.layouts[v].push({ id, w: 4, h: 4, hidden: true });
@@ -320,7 +322,7 @@
       const f = rt.files.get(id);
       if (f && f.el) {
         // the before-service video can loop until you start the service
-        f.el.loop = (to.role === 'intro' && show.intro.loop) ? true : !!(fileById(id) || {}).loop;
+        f.el.loop = !!(fileById(id) || {}).loop && !to.role;
         f.el.currentTime = 0; f.el.play().catch(() => {}); mixer.setMediaActive(id, true, Math.max(60, ms));
       }
     }
@@ -358,42 +360,119 @@
     if (a.action === 'goto' && getShot(a.target)) takeShot(a.target, 'auto', a.fadeMs);
     else if (a.action === 'black') setBlack(true);
     else if (a.action === 'stop') { setBlack(true); setTimeout(() => { if (rt.live) stopLive(); }, (show.transition.ms || 500) + 1500); }
+    else if (a.action === 'serviceEnded') serviceEnded();
+    if (a.action === 'goto' && shot.role === 'open') setServiceState('running');
   }
 
-  /* the before-service video ("intro") and the ending are ordinary shots with a role,
-     kept in sync with the Before Service & Ending panel */
+  /* ================= service: holding screen → START SERVICE → … → END SERVICE ================= */
+  // Three built-in shots with a role: 'hold' (clock screen), 'open' (opening video), 'close' (closing video).
   const firstCameraShot = () => show.shots.find(x => !x.role && show.cameras.some(c => c.id === x.main.source)) || show.shots.find(x => !x.role);
-  function syncRoleShots() {
-    for (const role of ['intro', 'ending']) {
-      const cfg = show[role];
-      let s = show.shots.find(x => x.role === role);
-      if (!cfg.fileId) continue;
-      if (!s) { s = newShot(role === 'intro' ? 'Before Service' : 'Ending', cfg.fileId, '#d97706'); s.role = role; show.shots.push(s); }
-      s.main.source = cfg.fileId;
-      if (role === 'intro' && !cfg.after) { const c = firstCameraShot(); if (c) cfg.after = c.id; }
-      const after = cfg.after || '';
-      s.onEnd = ['black', 'stop', 'none'].includes(after) ? { action: after, target: '' } : (after ? { action: 'goto', target: after } : { action: 'none', target: '' });
-      if (role === 'intro') s.onEnd.fadeMs = cfg.fadeMs || 2000;
-    }
-  }
   const roleShot = role => show.shots.find(x => x.role === role);
-  function playRole(role) {
-    syncRoleShots();
-    const s = roleShot(role);
-    if (!s || !show[role].fileId) { toast(`Choose ${role === 'intro' ? 'a before-service' : 'an ending'} video first (Before Service & Ending panel).`, 'error'); return; }
-    if (engine.isBlack) setBlack(false);
-    takeShot(s.id, role === 'intro' ? 'cut' : 'auto');
-    refresh('shots');
+  const SV = () => show.service;
+  function syncRoleShots() {
+    show.shots = show.shots.filter(x => !['intro', 'ending'].includes(x.role)); // older versions
+    let h = roleShot('hold');
+    if (!h) { h = newShot('Holding screen', 'hold', '#0891b2'); h.role = 'hold'; h.id = 'shot_hold'; show.shots.unshift(h); }
+    h.main.source = 'hold';
+    for (const [role, cfg, name] of [['open', SV().start, 'Opening video'], ['close', SV().end, 'Closing video']]) {
+      let s = roleShot(role);
+      if (!cfg.videoId || !fileById(cfg.videoId)) { if (s && s.id !== engine.programId) show.shots = show.shots.filter(x => x !== s); continue; }
+      if (!s) { s = newShot(name, cfg.videoId, '#d97706'); s.role = role; show.shots.push(s); }
+      s.main.source = cfg.videoId;
+    }
+    if (!getShot(SV().start.cameraShot)) { const c = firstCameraShot(); SV().start.cameraShot = c ? c.id : ''; }
+    const o = roleShot('open');
+    if (o) o.onEnd = { action: 'goto', target: SV().start.cameraShot, fadeMs: SV().start.fadeMs };
+    const c = roleShot('close');
+    if (c) c.onEnd = { action: 'serviceEnded' };
   }
-  /* fade from the before-service video (looping or not) into the camera */
-  function startService() {
+  function setServiceState(st) { rt.service = st; refreshServiceState(); }
+  async function startService() {
     syncRoleShots();
-    const intro = roleShot('intro');
-    const target = getShot(show.intro.after) || firstCameraShot();
-    if (!target) { toast('Add a camera shot first.', 'error'); return; }
+    const st = SV().start;
+    const cam = getShot(st.cameraShot) || firstCameraShot();
+    if (!cam) { toast('Add a camera first (Setup → Cameras).', 'error'); return; }
+    clearEndTimer();
     if (engine.isBlack) setBlack(false);
-    takeShot(target.id, 'auto', intro && engine.programId === intro.id ? (show.intro.fadeMs || 2000) : undefined);
+    if (st.goLive && !rt.live) await goLive(true);
+    if (st.record && !rt.rec) startRec();
+    const o = roleShot('open');
+    if (o && rt.files.get(o.main.source) && rt.files.get(o.main.source).ok) { takeShot(o.id, 'auto', 800); setServiceState('opening'); }
+    else { takeShot(cam.id, 'auto', st.fadeMs); setServiceState('running'); }
+    if (st.ytLive) ytGoLiveWhenReady();
   }
+  function endService() {
+    syncRoleShots();
+    clearEndTimer();
+    const c = roleShot('close');
+    if (c && rt.files.get(c.main.source) && rt.files.get(c.main.source).ok) { takeShot(c.id, 'auto', SV().end.fadeMs); setServiceState('closing'); }
+    else serviceEnded();
+  }
+  function serviceEnded() {
+    const e = SV().end;
+    if (e.then === 'hold') takeShot('shot_hold', 'auto', e.fadeMs);
+    else setBlack(true);
+    if (e.stopRec && rt.rec) setTimeout(stopRec, e.fadeMs + 500);
+    setServiceState('ended');
+    if (e.endStream && rt.live) {
+      rt.endAt = Date.now() + e.endAfter * 1000;
+      rt.endTimer = setInterval(() => {
+        if (!rt.live) return clearEndTimer();
+        if (Date.now() >= rt.endAt) { clearEndTimer(); if (e.ytComplete) ytComplete(); stopLive(); }
+        refreshServiceState();
+      }, 500);
+    } else if (e.ytComplete && !rt.live) ytComplete();
+  }
+  function clearEndTimer() { clearInterval(rt.endTimer); rt.endTimer = null; rt.endAt = 0; refreshServiceState(); }
+  function showHold() { if (engine.isBlack) setBlack(false); takeShot('shot_hold', 'auto'); setServiceState('hold'); }
+
+  /* the holding screen: a clock or countdown drawn into its own picture source */
+  const holdCanvas = el('canvas', { width: 1920, height: 1080 });
+  const holdCtx = holdCanvas.getContext('2d');
+  let holdBg = null, holdBgKey = '';
+  function holdTarget() {
+    const h = SV().hold;
+    if (h.mode === 'youtube' && rt.yt && rt.yt.event && rt.yt.event.start) return new Date(rt.yt.event.start);
+    const [hh, mm] = (h.target || '10:00').split(':').map(Number);
+    const t = new Date(); t.setHours(hh || 0, mm || 0, 0, 0);
+    if (t - Date.now() < -60 * 60 * 1000) t.setDate(t.getDate() + 1);
+    return t;
+  }
+  function drawHold() {
+    const h = SV().hold, W = 1920, H = 1080, g = holdCtx;
+    const f = h.bgFile && rt.files.get(h.bgFile);
+    if (holdBgKey !== h.bgFile) { holdBgKey = h.bgFile; holdBg = null; }
+    if (f && f.ok && f.el && f.el.tagName === 'IMG') holdBg = f.el;
+    if (holdBg) {
+      const s = Math.max(W / holdBg.naturalWidth, H / holdBg.naturalHeight);
+      g.drawImage(holdBg, (W - holdBg.naturalWidth * s) / 2, (H - holdBg.naturalHeight * s) / 2, holdBg.naturalWidth * s, holdBg.naturalHeight * s);
+      g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(0, 0, W, H);
+    } else {
+      const gr = g.createLinearGradient(0, 0, W, H); gr.addColorStop(0, h.bgColor); gr.addColorStop(1, h.bgColor2 || h.bgColor);
+      g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    }
+    const font = '"Segoe UI", system-ui, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = h.textColor;
+    g.shadowColor = 'rgba(0,0,0,.5)'; g.shadowBlur = 20;
+    const now = new Date();
+    let big, small;
+    if (h.mode === 'clock') { big = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); small = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); }
+    else {
+      const left = Math.round((holdTarget() - now) / 1000);
+      if (left > 0) { const m = Math.floor(left / 60), sec = left % 60, hr = Math.floor(m / 60); big = hr ? `${hr}:${String(m % 60).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`; small = 'Service starts in'; }
+      else { big = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); small = 'Starting now'; }
+      if (left <= 0 && h.autoStart && rt.service === 'hold' && !rt.autoStarted) { rt.autoStarted = true; startService(); }
+    }
+    g.font = `600 64px ${font}`; g.globalAlpha = 0.95; g.fillText(h.title || '', W / 2, H / 2 - 230);
+    g.font = `500 40px ${font}`; g.globalAlpha = 0.75; g.fillText(small, W / 2, H / 2 - 120);
+    g.font = `300 230px ${font}`; g.globalAlpha = 1; g.fillText(big, W / 2, H / 2 + 30);
+    g.font = `400 44px ${font}`; g.globalAlpha = 0.8; g.fillText(h.subtitle || '', W / 2, H / 2 + 220);
+    g.globalAlpha = 1; g.shadowBlur = 0;
+    const src = engine.sources.get('hold'); if (src) src.dirty = true;
+  }
+  engine.setSource('hold', holdCanvas, 'image');
+  let lastHoldSec = -1;
+  setInterval(() => { const s2 = Math.floor(Date.now() / 1000); if (s2 !== lastHoldSec) { lastHoldSec = s2; drawHold(); } }, 100);
 
   /* ================= labels ================= */
   function setLabelVisible(id, on) {
@@ -495,7 +574,7 @@
       S.setLive(true);
       document.body.classList.add('is-live');
       if (settings.autoRecord && !rt.rec) startRec();
-      if (show.autoIntro && show.intro.fileId) playRole('intro');
+      ytAfterGoLive();
     } catch (e) { rt.live = null; toast(`Could not go live: ${e.message}`, 'error'); }
     btn.disabled = false; renderHeader();
   }
@@ -591,6 +670,13 @@
       if (slow) { if (!rt.slowSince) rt.slowSince = Date.now(); } else rt.slowSince = 0;
       if (rt.slowSince && Date.now() - rt.slowSince > 5000) parts.push('<span class="bad">⚠ Computer or internet can\'t keep up — lower bitrate or use a hardware encoder</span>');
     }
+    const yp = $('#ytStatus');
+    if (yp) {
+      const [cls, txt] = rt.yt && rt.yt.event ? ytHealthText() : ['', ''];
+      yp.classList.toggle('hidden', !txt || !rt.live);
+      yp.querySelector('.yt-dot').className = 'yt-dot ' + cls;
+      yp.querySelector('.txt').textContent = txt + (rt.yt && rt.yt.viewers ? ` · 👁 ${rt.yt.viewers}` : '');
+    }
     parts.push(`engine ${engine.stats.fps} fps`);
     hl.innerHTML = parts.join(' · ');
   }
@@ -672,21 +758,46 @@
   /* ================= panel: monitors ================= */
   const progInfo = el('div', { class: 'media-time hidden' });
   const progBar = el('div', { class: 'media-bar hidden' }, el('i'));
+  // slim master meter beside the program screen (like a hardware switcher)
+  const monMeter = el('canvas', { class: 'mon-meter', width: 40, height: 300 });
+  function drawMonMeter(A) {
+    if (!monMeter.isConnected) return;
+    const r = monMeter.getBoundingClientRect(), k = devicePixelRatio;
+    const w = Math.max(10, Math.round(r.width * k)), h = Math.max(10, Math.round(r.height * k));
+    if (monMeter.width !== w || monMeter.height !== h) { monMeter.width = w; monMeter.height = h; }
+    const g = monMeter.getContext('2d'), top = 6 * k, mh = h - top - 18 * k;
+    g.clearRect(0, 0, w, h);
+    const y = db => top + mh * (1 - Math.max(0, Math.min(1, (db + 60) / 60)));
+    const bw = (w - 6 * k) / 2;
+    [[A.peakL, A.holdL, A.clipL], [A.peakR, A.holdR, A.clipR]].forEach(([p, hd, clip], i) => {
+      const x = 2 * k + i * (bw + 2 * k);
+      g.fillStyle = '#0a0a0b'; g.fillRect(x, top, bw, mh);
+      const gr = g.createLinearGradient(0, top + mh, 0, top);
+      gr.addColorStop(0, '#16a34a'); gr.addColorStop(0.7, '#22c55e'); gr.addColorStop(0.82, '#eab308'); gr.addColorStop(0.95, '#ef4444');
+      g.fillStyle = gr; g.fillRect(x, y(p), bw, top + mh - y(p));
+      g.fillStyle = '#fff'; g.fillRect(x, y(hd) - k, bw, 2 * k);
+      if (clip) { g.fillStyle = '#ef4444'; g.fillRect(x, 0, bw, 4 * k); }
+    });
+    g.fillStyle = A.silent ? '#555' : A.corr < -0.2 ? '#ef4444' : A.corr < 0.2 ? '#f59e0b' : '#22c55e';
+    g.beginPath(); g.arc(w / 2, h - 8 * k, 4 * k, 0, 7); g.fill();
+  }
   RENDER.monitors = body => {
     body.innerHTML = '';
     const pvName = el('span', { class: 'name', id: 'pvName' });
     const pgName = el('span', { class: 'name', id: 'pgName' });
-    const durSel = select([[0, 'Cut (instant)'], [300, 'Fade 0.3 s'], [600, 'Fade 0.6 s'], [1000, 'Fade 1 s'], [2000, 'Fade 2 s']], show.transition.ms, v => { show.transition.ms = +v; changed(); });
-    put(body, el('div', { class: 'monitors' },
-      el('div', { class: 'monitor preview' }, el('div', { class: 'monitor-label' }, el('span', { class: 'tag' }, 'NEXT'), pvName), el('div', { class: 'screen' }, previewCanvas)),
-      el('div', { class: 'switcher' },
-        el('button', { class: 'btn big take-btn', onclick: () => take('auto') }, 'TAKE ▶', keyChip('take')),
-        el('button', { class: 'btn big cut-btn', onclick: () => take('cut') }, 'CUT', keyChip('cut')),
+    const durSel = select([[0, 'Cut'], [300, 'Fade 0.3 s'], [600, 'Smooth 0.6 s'], [1000, 'Fade 1 s'], [2000, 'Fade 2 s']], show.transition.ms, v => { show.transition.ms = +v; changed(); }, { class: 'trans-sel' });
+    put(body, el('div', { class: 'mon-wrap' },
+      el('div', { class: 'monitors' },
+        el('div', { class: 'monitor preview' }, el('div', { class: 'screen' }, previewCanvas), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot green' }), el('span', { class: 'tagtxt' }, 'Preview'), pvName)),
+        el('div', { class: 'monitor program' }, el('div', { class: 'screen' }, engine.canvas, progInfo, progBar), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot red' }), el('span', { class: 'tagtxt' }, 'Live'), pgName)),
+        el('div', { class: 'mon-meter-wrap', title: 'Master level · dot = phase (green good, red out of phase)' }, monMeter)),
+      el('div', { class: 'trans-bar' },
+        el('button', { class: 'btn cut-btn', onclick: () => take('cut') }, 'CUT', keyChip('cut')),
         durSel,
+        el('button', { class: 'btn take-btn', onclick: () => take('auto') }, 'TAKE ➜', keyChip('take')),
+        el('span', { class: 'trans-gap' }),
         el('button', { class: 'btn ftb-btn', id: 'ftbBtn', onclick: () => setBlack(!engine.isBlack) }, 'FADE TO BLACK', keyChip('ftb')),
-        el('button', { class: 'btn small ghost', onclick: openShortcuts }, '⌨ Shortcuts…')),
-      el('div', { class: 'monitor program' }, el('div', { class: 'monitor-label' }, el('span', { class: 'tag' }, 'ON AIR'), pgName), el('div', { class: 'screen' }, engine.canvas, progInfo, progBar))
-    ));
+        el('button', { class: 'btn small ghost', onclick: openShortcuts, title: 'Keyboard shortcuts' }, '⌨'))));
     renderTally();
   };
 
@@ -848,10 +959,10 @@
         select([['', 'No label'], ...show.speakers.map(p => [p.id, `Speaker: ${p.name}${p.title ? ' — ' + p.title : ''}`]), ...show.labels.map(l => [l.id, `${l.title}${l.subtitle ? ' — ' + l.subtitle : ''}`])], s.labelId, v => { s.labelId = v; changed(); }),
         el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, 'Shown when this shot goes live, hidden when you switch away.')),
 
-      mediaOf(s).length ? el('div', { class: 'section' }, el('h4', null, 'When the video ends'),
+      mediaOf(s).length && !s.role ? el('div', { class: 'section' }, el('h4', null, 'When the video ends'),
         select([['none', 'Hold the last frame'], ['black', 'Fade to black'], ['stop', 'Fade to black and end the stream'], ...show.shots.filter(x => x.id !== s.id).map(x => [`goto:${x.id}`, `Go to “${x.name}”`])],
           s.onEnd.action === 'goto' ? `goto:${s.onEnd.target}` : s.onEnd.action,
-          v => { s.onEnd = v.startsWith('goto:') ? { action: 'goto', target: v.slice(5) } : { action: v, target: '' }; if (s.role) show[s.role].after = s.onEnd.action === 'goto' ? s.onEnd.target : s.onEnd.action; changed(); refresh('media'); })) : null,
+          v => { s.onEnd = v.startsWith('goto:') ? { action: 'goto', target: v.slice(5) } : { action: v, target: '' }; changed(); })) : null,
 
       el('div', { class: 'section row wrap' },
         el('button', { class: 'btn small', onclick: () => { const c = clone(s); c.id = uid('shot'); c.name = s.name + ' copy'; c.role = ''; show.shots.splice(idx + 1, 0, c); changed(); refresh('shots'); editShot(c.id); } }, 'Duplicate'),
@@ -869,7 +980,9 @@
   function deleteShot(s) {
     if (s.id === engine.programId) { toast('This shot is live — switch to another shot first.', 'error'); return; }
     show.shots = show.shots.filter(x => x !== s);
-    if (s.role) show[s.role].fileId = '';
+    if (s.role === 'hold') { toast('The holding screen can’t be deleted.', 'error'); return; }
+    if (s.role === 'open') SV().start.videoId = '';
+    if (s.role === 'close') SV().end.videoId = '';
     if (rt.previewId === s.id) setPreview(show.shots[0] && show.shots[0].id);
     rt.editingId = null; changed(); refresh('shots'); refresh('editor'); refresh('media');
   }
@@ -994,29 +1107,39 @@
   /* ================= panel: labels ================= */
   RENDER.labels = body => {
     body.innerHTML = '';
-    show.labels.forEach((L, i) => {
-      const upd = () => { engine.setLabel(L); changed(); };
+    const row = el('div', { class: 'tile-row' });
+    show.labels.forEach(L => {
       const on = engine.labelVisible(L.id);
-      put(body, el('div', { class: 'label-card' + (on ? ' on' : ''), dataset: { label: L.id } },
-        el('div', { class: 'row' },
-          el('input', { type: 'text', class: 'grow', value: L.title, placeholder: 'Main text (name, title)', oninput: e => { L.title = e.target.value; upd(); } }),
-          el('button', { class: 'btn air-btn' + (on ? ' on' : ''), onclick: () => toggleLabel(L.id) }, on ? 'ON AIR' : 'SHOW')),
-        el('div', { class: 'row' },
-          el('input', { type: 'text', class: 'grow', value: L.subtitle, placeholder: 'Second line (optional)', oninput: e => { L.subtitle = e.target.value; upd(); } })),
-        el('div', { class: 'row wrap' },
-          el('button', { class: 'btn small', onclick: () => openDesigner(L, { title: L.title, subtitle: L.subtitle }, upd) }, '🎨 Design look…'),
-          select([[0, 'Stay on'], [5, 'Hide after 5 s'], [8, 'Hide after 8 s'], [15, 'Hide after 15 s']], L.autoHide, v => { L.autoHide = +v; changed(); }),
-          el('span', { class: 'grow' }),
-          keyChip('lbl:' + L.id),
-          el('button', { class: 'btn small danger', title: 'Delete label', onclick: () => { engine.removeLabel(L.id); show.labels.splice(i, 1); changed(); refresh('labels'); } }, '✕'))));
+      row.append(el('div', { class: 'gtile' + (on ? ' on' : ''), dataset: { label: L.id }, onclick: () => toggleLabel(L.id) },
+        el('div', { class: 'g-title' }, L.title || '(empty)'), el('div', { class: 'g-sub' }, L.subtitle || ''),
+        el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''), keyChip('lbl:' + L.id)),
+        el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editLabel(L); } }, '✎')));
     });
-    put(body, el('button', { class: 'btn', onclick: () => { const last = show.labels[show.labels.length - 1] || show.speakerStyle; const L = { id: uid('lbl'), title: 'Name', subtitle: 'Title', style: last.style || 'lower', color: last.color || settings.ui.accent, design: clone(last.design || {}), autoHide: 0 }; show.labels.push(L); engine.setLabel(L, false); changed(); refresh('labels'); } }, '+ Add label'));
+    row.append(el('div', { class: 'gtile add', onclick: () => {
+      const last = show.labels[show.labels.length - 1] || show.speakerStyle;
+      const L = { id: uid('lbl'), title: 'New title', subtitle: '', style: last.style || 'lower', color: last.color || settings.ui.accent, design: clone(last.design || {}), autoHide: 0 };
+      show.labels.push(L); engine.setLabel(L, false); changed(); refresh('labels'); editLabel(L);
+    } }, '+ Add'));
+    put(body, row);
   };
+  function editLabel(L) {
+    const upd = () => { engine.setLabel(L); changed(); };
+    openModal('Edit title / graphic', el('div', null,
+      el('div', { class: 'field' }, el('span', null, 'Main text'), el('input', { type: 'text', value: L.title, oninput: e => { L.title = e.target.value; upd(); } })),
+      el('div', { class: 'field' }, el('span', null, 'Second line (optional)'), el('input', { type: 'text', value: L.subtitle, oninput: e => { L.subtitle = e.target.value; upd(); } })),
+      el('div', { class: 'row wrap', style: 'gap:10px' },
+        el('button', { class: 'btn', onclick: () => openDesigner(L, { title: L.title, subtitle: L.subtitle }, upd) }, '🎨 Design look…'),
+        select([[0, 'Stay on until hidden'], [5, 'Hide after 5 s'], [8, 'Hide after 8 s'], [15, 'Hide after 15 s'], [30, 'Hide after 30 s']], L.autoHide, v => { L.autoHide = +v; changed(); })),
+      el('div', { class: 'row', style: 'margin-top:16px' },
+        el('button', { class: 'btn danger', onclick: () => { engine.removeLabel(L.id); show.labels = show.labels.filter(x => x !== L); delete settings.hotkeys['lbl:' + L.id]; saveSettings(); changed(); closeModal(); refresh('labels'); } }, 'Delete'),
+        el('span', { class: 'grow' }),
+        el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('labels'); } }, 'Done'))));
+  }
   function refreshLabelStates() {
-    document.querySelectorAll('.label-card[data-label]').forEach(card => {
+    document.querySelectorAll('.gtile[data-label]').forEach(card => {
       const on = engine.labelVisible(card.dataset.label);
       card.classList.toggle('on', on);
-      const b = card.querySelector('.air-btn'); b.classList.toggle('on', on); b.textContent = on ? 'ON AIR' : 'SHOW';
+      card.querySelector('.spk-air').textContent = on ? 'ON AIR' : '';
     });
   }
 
@@ -1045,79 +1168,318 @@
       el('span', { class: f.ok ? 'muted' : 'status-bad', dataset: { fileStatus: id } }, f.text),
       f.unsupported ? el('button', { class: 'btn small', style: 'margin-left:8px', onclick: () => convertFile(file) }, 'Convert to MP4') : null);
   }
+  const STATE_TEXT = {
+    hold: ['WAITING', 'Holding screen'],
+    opening: ['OPENING VIDEO', 'then fades to the camera'],
+    running: ['IN SERVICE', ''],
+    closing: ['CLOSING VIDEO', ''],
+    ended: ['ENDED', '']
+  };
+  function serviceSummary() {
+    const st = SV().start, en = SV().end;
+    const vid = id => (fileById(id) || {}).name;
+    const cam = (getShot(st.cameraShot) || {}).name || 'camera';
+    const a = [st.goLive ? 'go live' : null, st.record ? 'start recording' : null, st.videoId ? `play “${vid(st.videoId)}”` : null, `fade to ${cam}`].filter(Boolean);
+    const b = [en.videoId ? `play “${vid(en.videoId)}”` : null, en.then === 'hold' ? 'back to holding screen' : 'fade to black', en.stopRec ? 'stop recording' : null, en.endStream ? `end stream after ${en.endAfter} s` : null].filter(Boolean);
+    return [a.join(' → '), b.join(' → ')];
+  }
   RENDER.media = body => {
     body.innerHTML = '';
-    const vids = show.files.filter(f => f.kind === 'video');
-    const fileSel = role => {
-      const sel = select([['', vids.length ? '— choose a video —' : '— no videos yet —'], ...vids.map(f => [f.id, f.name])], show[role].fileId, v => { show[role].fileId = v; syncRoleShots(); changed(); refresh('shots'); refresh('media'); }, { class: 'grow' });
-      return el('div', { class: 'row' }, sel, el('button', { class: 'btn small primary', onclick: async () => { const a = await addFiles(); const v = a.find(f => f.kind === 'video'); if (v) { show[role].fileId = v.id; syncRoleShots(); changed(); refreshAll(); } } }, 'Import video…'));
-    };
-    const shots = show.shots.filter(x => !x.role);
-    const camShots = shots.map(x => [x.id, x.name]);
-    const I = show.intro;
-    const introOn = roleShot('intro') && (engine.programId === roleShot('intro').id);
+    const [sumA, sumB] = serviceSummary();
     put(body,
-      el('div', { class: 'media-slot' + (introOn ? ' on' : '') },
-        el('h4', null, '⏳ Before service'),
-        fileSel('intro'), fileStatus(I.fileId),
-        el('div', { class: 'field', style: 'margin-top:10px' }, el('span', null, 'Playback'),
-          radio('introLoop', [[false, 'Play once, then fade to the camera'], [true, 'Loop until I start the service']], !!I.loop, v => { I.loop = v === true || v === 'true'; const r = rt.files.get(I.fileId); if (introOn && r && r.el) r.el.loop = I.loop; changed(); })),
-        el('div', { class: 'grid2' },
-          el('div', { class: 'field' }, el('span', null, 'Fade into'), select(camShots.length ? camShots : [['', '— add a camera shot —']], I.after, v => { I.after = v; syncRoleShots(); changed(); })),
-          el('div', { class: 'field' }, el('span', null, 'Fade length'), select([[1000, '1 second'], [2000, '2 seconds'], [3000, '3 seconds'], [5000, '5 seconds']], I.fadeMs || 2000, v => { I.fadeMs = +v; syncRoleShots(); changed(); }))),
-        el('div', { class: 'row', style: 'gap:8px' },
-          el('button', { class: 'btn big play-btn grow', onclick: () => playRole('intro') }, '▶ PLAY', keyChip('intro')),
-          el('button', { class: 'btn big take-btn grow', title: 'Fade from the video into the camera now', onclick: startService }, 'START SERVICE ▶', keyChip('startService'))),
-        el('div', { class: 'muted mono', id: 'introStatus', style: 'margin-top:6px;min-height:1.2em' }),
-        el('div', { style: 'margin-top:4px' }, check(' Start this video automatically when I press GO LIVE', show.autoIntro, v => { show.autoIntro = v; changed(); }))),
-      el('div', { class: 'media-slot' },
-        el('h4', null, '🏁 Closing video'),
-        fileSel('ending'), fileStatus(show.ending.fileId),
-        el('div', { class: 'row', style: 'margin-top:8px' }, el('span', { class: 'muted' }, 'Then'),
-          select([['black', 'Fade to black'], ['stop', 'Fade to black and end the stream'], ['none', 'Hold the last frame'], ...shots.map(x => [x.id, `Go to “${x.name}”`])], show.ending.after || 'black', v => { show.ending.after = v; syncRoleShots(); changed(); }, { class: 'grow' })),
-        el('button', { class: 'btn big play-btn', onclick: () => playRole('ending') }, '▶ PLAY ENDING', keyChip('ending')))
-    );
+      el('div', { class: 'svc-state', id: 'svcState' }),
+      ytEventLine(),
+      el('div', { class: 'svc-btns' },
+        el('button', { class: 'btn svc-start', onclick: startService }, el('div', { class: 'svc-big' }, '▶ START SERVICE'), el('div', { class: 'svc-sum' }, sumA), keyChip('startService')),
+        el('button', { class: 'btn svc-end', onclick: endService }, el('div', { class: 'svc-big' }, '■ END SERVICE'), el('div', { class: 'svc-sum' }, sumB), keyChip('endService'))),
+      el('div', { class: 'row', style: 'margin-top:8px;gap:8px' },
+        el('button', { class: 'btn small', onclick: showHold }, '🕘 Holding screen', keyChip('hold')),
+        el('span', { class: 'grow' }),
+        el('button', { class: 'btn small primary', onclick: openServiceEdit }, '⚙ Edit')));
+    refreshServiceState();
   };
-  function tickIntroStatus() {
-    const n = $('#introStatus'); if (!n) return;
-    const s = roleShot('intro'), f = rt.files.get(show.intro.fileId);
-    const on = s && engine.programId === s.id;
-    if (!on || !f || !f.el) { n.textContent = f && f.ok ? `Ready · ${fmtShort(f.el.duration || 0)} long` : ''; return; }
-    n.textContent = show.intro.loop ? '● ON AIR — looping. Press START SERVICE when you are ready.' : `● ON AIR — fades to camera in ${fmtShort(f.el.duration - f.el.currentTime)}`;
+  function refreshServiceState() {
+    const n = $('#svcState'); if (!n) return;
+    const [tag, text] = STATE_TEXT[rt.service] || STATE_TEXT.hold;
+    let extra = '';
+    if (rt.endAt) extra = ` Stream ends in ${Math.max(0, Math.ceil((rt.endAt - Date.now()) / 1000))} s.`;
+    n.innerHTML = '';
+    n.append(el('span', { class: 'svc-tag ' + (rt.service || 'hold') }, tag), el('span', null, text + extra));
+    if (rt.endAt) n.append(el('button', { class: 'btn small', onclick: clearEndTimer }, 'Keep streaming'));
+    const o = roleShot('open'), f = o && rt.files.get(o.main.source);
+    if (rt.service === 'opening' && f && f.el) n.append(el('span', { class: 'mono muted' }, ` −${fmtShort(f.el.duration - f.el.currentTime)}`));
   }
+  setInterval(() => { if (rt.service === 'opening' || rt.service === 'closing') refreshServiceState(); }, 500);
+
+  function openServiceEdit() {
+    const H = SV().hold, st = SV().start, en = SV().end;
+    const vids = () => show.files.filter(f => f.kind === 'video');
+    const imgs = () => show.files.filter(f => f.kind === 'image');
+    const body = el('div');
+    const holdPrev = el('canvas', { width: 480, height: 270, class: 'hold-prev' });
+    const paintPrev = () => { drawHold(); holdPrev.getContext('2d').drawImage(holdCanvas, 0, 0, 480, 270); };
+    const done = () => { syncRoleShots(); changed(); refresh('media'); refresh('shots'); paintPrev(); };
+    const videoPick = (cfg, key) => el('div', { class: 'row' },
+      select([['', '— no video —'], ...vids().map(f => [f.id, f.name])], cfg[key], v => { cfg[key] = v; done(); }, { class: 'grow' }),
+      el('button', { class: 'btn small', onclick: async () => { const a = await addFiles(); const v = a.find(f => f.kind === 'video'); if (v) { cfg[key] = v.id; done(); draw(); } } }, 'Import…'));
+    const draw = () => {
+      body.innerHTML = '';
+      const camShots = show.shots.filter(x => !x.role).map(x => [x.id, x.name]);
+      put(body,
+        el('h3', null, '🕘 Holding screen (shown before the service)'),
+        el('div', { class: 'grid2' },
+          el('div', null, holdPrev),
+          el('div', null,
+            el('div', { class: 'field' }, el('span', null, 'Show'), select([['clock', 'The time now (clock)'], ['countdown', 'Countdown to a start time'], ['youtube', 'Countdown to the YouTube event time']], H.mode, v => { H.mode = v; done(); draw(); })),
+            H.mode === 'countdown' ? el('div', { class: 'field' }, el('span', null, 'Service starts at'), el('input', { type: 'time', value: H.target, oninput: e => { H.target = e.target.value; done(); } })) : null,
+            H.mode !== 'clock' ? check(' Press START SERVICE automatically when the countdown ends', H.autoStart, v => { H.autoStart = v; done(); }) : null)),
+        el('div', { class: 'grid2', style: 'margin-top:10px' },
+          el('div', { class: 'field' }, el('span', null, 'Top line'), el('input', { type: 'text', value: H.title, oninput: e => { H.title = e.target.value; done(); } })),
+          el('div', { class: 'field' }, el('span', null, 'Bottom line'), el('input', { type: 'text', value: H.subtitle, oninput: e => { H.subtitle = e.target.value; done(); } }))),
+        el('div', { class: 'row wrap', style: 'gap:14px' },
+          el('label', { class: 'inline' }, el('input', { type: 'color', value: H.bgColor, oninput: e => { H.bgColor = e.target.value; done(); } }), el('input', { type: 'color', value: H.bgColor2, oninput: e => { H.bgColor2 = e.target.value; done(); } }), 'Background'),
+          el('label', { class: 'inline' }, el('input', { type: 'color', value: H.textColor, oninput: e => { H.textColor = e.target.value; done(); } }), 'Text'),
+          el('span', { class: 'muted' }, 'or picture:'),
+          select([['', '— none —'], ...imgs().map(f => [f.id, f.name])], H.bgFile, v => { H.bgFile = v; done(); }),
+          el('button', { class: 'btn small', onclick: async () => { const a = await addFiles(); const i = a.find(f => f.kind === 'image'); if (i) { H.bgFile = i.id; setTimeout(done, 300); draw(); } } }, 'Import picture…')),
+
+        el('h3', null, '▶ When I press START SERVICE'),
+        el('div', { class: 'row wrap', style: 'gap:18px;margin-bottom:10px' },
+          check(' Go live on YouTube (if not live yet)', st.goLive, v => { st.goLive = v; done(); }),
+          check(' Start recording', st.record, v => { st.record = v; done(); })),
+        el('div', { class: 'field' }, el('span', null, 'Play this video first'), videoPick(st, 'videoId'), st.videoId ? fileStatus(st.videoId) : null),
+        el('div', { class: 'grid2' },
+          el('div', { class: 'field' }, el('span', null, st.videoId ? 'Then fade into' : 'Fade into'), select(camShots.length ? camShots : [['', '— add a camera —']], st.cameraShot, v => { st.cameraShot = v; done(); })),
+          el('div', { class: 'field' }, el('span', null, 'Fade length'), select([[500, '0.5 second'], [1000, '1 second'], [2000, '2 seconds'], [3000, '3 seconds'], [5000, '5 seconds']], st.fadeMs, v => { st.fadeMs = +v; done(); }))),
+        check(' Start the YouTube event automatically once YouTube is receiving the stream', st.ytLive, v => { st.ytLive = v; done(); }),
+
+        el('h3', null, '■ When I press END SERVICE'),
+        el('div', { class: 'field' }, el('span', null, 'Play this video first'), videoPick(en, 'videoId'), en.videoId ? fileStatus(en.videoId) : null),
+        el('div', { class: 'grid2' },
+          el('div', { class: 'field' }, el('span', null, 'Then show'), select([['hold', 'The holding screen'], ['black', 'Black']], en.then, v => { en.then = v; done(); })),
+          el('div', { class: 'field' }, el('span', null, 'Fade length'), select([[500, '0.5 second'], [1500, '1.5 seconds'], [3000, '3 seconds']], en.fadeMs, v => { en.fadeMs = +v; done(); }))),
+        el('div', { class: 'row wrap', style: 'gap:18px' },
+          check(' Stop recording', en.stopRec, v => { en.stopRec = v; done(); }),
+          check(' End the stream', en.endStream, v => { en.endStream = v; done(); draw(); }),
+          en.endStream ? el('label', { class: 'inline' }, 'after', select([[5, '5 s'], [15, '15 s'], [30, '30 s'], [60, '1 min'], [120, '2 min'], [300, '5 min']], en.endAfter, v => { en.endAfter = +v; done(); })) : null,
+          check(' End the YouTube event too', en.ytComplete, v => { en.ytComplete = v; done(); })),
+        el('div', { class: 'row', style: 'margin-top:16px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => closeModal() }, 'Done')));
+      paintPrev();
+    };
+    draw();
+    openModal('Edit service — what Start and End do', body);
+  }
+
+  /* ================= YouTube: account, upcoming events, stream health ================= */
+  rt.yt = { signedIn: false, configured: false, channel: null, events: [], event: null, health: null, viewers: null, busy: false };
+  const Y = (method, endpoint, query, body) => S.yt.api(method, endpoint, query, body).then(r => { if (r.error) throw new Error(r.error); return r.data; });
+  async function ytInit() {
+    const st = await S.yt.status();
+    Object.assign(rt.yt, { signedIn: st.signedIn, configured: st.configured, channel: st.channel });
+    if (rt.yt.signedIn) {
+      await ytLoadEvents().catch(e => toast('YouTube: ' + e.message, 'error'));
+      if (show.ytEventId) { const ev = rt.yt.events.find(x => x.id === show.ytEventId); if (ev) await ytSelect(ev, true).catch(() => {}); }
+    }
+    refresh('media'); renderHeader();
+  }
+  const mapEvent = b => ({
+    id: b.id, title: b.snippet.title, start: b.snippet.scheduledStartTime || b.snippet.actualStartTime, thumb: ((b.snippet.thumbnails || {}).medium || (b.snippet.thumbnails || {}).default || {}).url,
+    streamId: b.contentDetails.boundStreamId, autoStart: b.contentDetails.enableAutoStart, autoStop: b.contentDetails.enableAutoStop,
+    monitor: b.contentDetails.monitorStream && b.contentDetails.monitorStream.enableMonitorStream, life: b.status.lifeCycleStatus, privacy: b.status.privacyStatus
+  });
+  async function ytLoadEvents() {
+    const part = 'snippet,contentDetails,status';
+    const [up, act] = await Promise.all([
+      Y('GET', 'liveBroadcasts', { part, broadcastStatus: 'upcoming', broadcastType: 'all', maxResults: 25 }),
+      Y('GET', 'liveBroadcasts', { part, broadcastStatus: 'active', broadcastType: 'all', maxResults: 5 })
+    ]);
+    rt.yt.events = [...(act.items || []), ...(up.items || [])].map(mapEvent).sort((a, b) => new Date(a.start || 0) - new Date(b.start || 0));
+    return rt.yt.events;
+  }
+  async function ytSelect(ev, quiet) {
+    rt.yt.busy = true;
+    try {
+      let streamId = ev.streamId;
+      let stream = null;
+      if (streamId) { const r = await Y('GET', 'liveStreams', { part: 'cdn,status', id: streamId }); stream = r.items && r.items[0]; }
+      if (!stream) {
+        // the event has no stream key yet: reuse the one already in Live Studio, or make one, and attach it
+        const mine = await Y('GET', 'liveStreams', { part: 'cdn,status', mine: 'true', maxResults: 50 });
+        stream = (mine.items || []).find(x => x.cdn.ingestionInfo.streamName === settings.youtube.key) || (mine.items || [])[0];
+        if (!stream) stream = await Y('POST', 'liveStreams', { part: 'snippet,cdn,contentDetails,status' }, { snippet: { title: 'Live Studio' }, cdn: { ingestionType: 'rtmp', resolution: 'variable', frameRate: 'variable' }, contentDetails: { isReusable: true } });
+        await Y('POST', 'liveBroadcasts/bind', { id: ev.id, part: 'id,contentDetails', streamId: stream.id });
+        ev.streamId = stream.id;
+      }
+      settings.youtube.key = stream.cdn.ingestionInfo.streamName;
+      if (settings.youtube.server === 'custom') settings.youtube.server = 'rtmps://a.rtmps.youtube.com:443/live2';
+      saveSettings();
+      rt.yt.event = ev; show.ytEventId = ev.id; changed();
+      ytApplyStream(stream);
+      if (!quiet) toast(`YouTube event “${ev.title}” selected — stream key filled in.`, 'ok');
+      ytStartPolling();
+    } finally { rt.yt.busy = false; refresh('media'); }
+  }
+  function ytApplyStream(stream) {
+    const st = stream.status || {}, h = st.healthStatus || {};
+    rt.yt.health = { stream: st.streamStatus, status: h.status || 'noData', issues: (h.configurationIssues || []).filter(i => i.severity !== 'info').map(i => i.description || i.reason) };
+  }
+  let ytTimer = null;
+  function ytStartPolling() {
+    clearInterval(ytTimer);
+    ytTimer = setInterval(ytPoll, rt.live ? 10000 : 30000);
+    ytPoll();
+  }
+  async function ytPoll() {
+    const ev = rt.yt.event;
+    if (!rt.yt.signedIn || !ev || !ev.streamId) return;
+    try {
+      const [st, b] = await Promise.all([
+        Y('GET', 'liveStreams', { part: 'status', id: ev.streamId }),
+        Y('GET', 'liveBroadcasts', { part: 'status,contentDetails,snippet', id: ev.id })
+      ]);
+      if (st.items && st.items[0]) ytApplyStream(st.items[0]);
+      if (b.items && b.items[0]) Object.assign(ev, mapEvent(b.items[0]));
+      if (ev.life === 'live') {
+        const v = await Y('GET', 'videos', { part: 'liveStreamingDetails', id: ev.id });
+        const d = v.items && v.items[0] && v.items[0].liveStreamingDetails;
+        rt.yt.viewers = d && d.concurrentViewers !== undefined ? +d.concurrentViewers : null;
+      }
+      rt.yt.error = null;
+    } catch (e) { rt.yt.error = e.message; }
+    refreshYtLine(); tickHeader();
+  }
+  function ytAfterGoLive() { if (rt.yt.event) ytStartPolling(); }
+  // YouTube only shows the event once it is "live"; do that for events that don't start themselves
+  async function ytGoLiveWhenReady() {
+    const ev = rt.yt.event;
+    if (!ev || !rt.yt.signedIn || ev.autoStart || ev.life === 'live') return;
+    if (rt.yt.starting) return;
+    rt.yt.starting = true;
+    toast('Waiting for YouTube to receive the stream, then starting the event…');
+    try {
+      for (let i = 0; i < 40; i++) {
+        await ytPoll();
+        if (!rt.live) return;
+        if (rt.yt.health && rt.yt.health.stream === 'active') break;
+        await new Promise(r => setTimeout(r, 5000));
+      }
+      if (ev.life !== 'testing' && ev.monitor) { await Y('POST', 'liveBroadcasts/transition', { broadcastStatus: 'testing', id: ev.id, part: 'status' }).catch(() => {}); await new Promise(r => setTimeout(r, 6000)); }
+      await Y('POST', 'liveBroadcasts/transition', { broadcastStatus: 'live', id: ev.id, part: 'status' });
+      toast('YouTube event is live ✓', 'ok');
+      ytPoll();
+    } catch (e) { toast('YouTube could not start the event: ' + e.message + ' — you can start it in YouTube Studio.', 'error'); }
+    finally { rt.yt.starting = false; }
+  }
+  async function ytComplete() {
+    const ev = rt.yt.event;
+    if (!ev || !rt.yt.signedIn || ev.life !== 'live' || ev.autoStop) return;
+    try { await Y('POST', 'liveBroadcasts/transition', { broadcastStatus: 'complete', id: ev.id, part: 'status' }); toast('YouTube event ended.', 'ok'); } catch (e) { toast('YouTube: ' + e.message, 'error'); }
+  }
+  const fmtWhen = iso => { if (!iso) return ''; const d = new Date(iso); return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+  const HEALTH = { good: ['good', 'YouTube: receiving — good'], ok: ['ok', 'YouTube: receiving — OK'], bad: ['bad', 'YouTube: receiving — poor'], noData: ['wait', 'YouTube: not receiving yet'] };
+  function ytHealthText() {
+    const h = rt.yt.health;
+    if (!h) return ['', ''];
+    if (h.stream !== 'active') return [rt.live ? 'wait' : '', rt.live ? 'YouTube: waiting for your stream…' : 'YouTube: ready'];
+    return HEALTH[h.status] || HEALTH.noData;
+  }
+  function ytEventLine() { const n = el('div', { class: 'yt-line', id: 'ytLine' }); fillYtLine(n); return n; }
+  function refreshYtLine() { const n = $('#ytLine'); if (n) fillYtLine(n); }
+  function fillYtLine(n) {
+    n.innerHTML = '';
+    n.append(el('span', { class: 'yt-logo' }, '▶ YouTube'));
+    if (!rt.yt.signedIn) { n.append(el('span', { class: 'muted grow' }, 'Not connected — stream key only'), el('button', { class: 'btn small', onclick: openYouTube }, 'Connect…')); return; }
+    const ev = rt.yt.event;
+    if (!ev) { n.append(el('span', { class: 'muted grow' }, `${rt.yt.events.length} upcoming event${rt.yt.events.length === 1 ? '' : 's'}`), el('button', { class: 'btn small primary', onclick: openYouTube }, 'Choose event…')); return; }
+    const [cls, txt] = ytHealthText();
+    n.append(el('span', { class: 'grow', style: 'min-width:0' }, el('b', null, ev.title), el('span', { class: 'muted' }, ' · ' + fmtWhen(ev.start) + (ev.life === 'live' ? ' · LIVE' : ''))),
+      cls ? el('span', { class: 'yt-dot ' + cls, title: txt }) : null, el('span', { class: 'muted' }, txt.replace('YouTube: ', '')),
+      rt.yt.viewers !== null && ev.life === 'live' ? el('span', null, `👁 ${rt.yt.viewers}`) : null,
+      el('button', { class: 'btn small', onclick: openYouTube }, 'Change'));
+    if (rt.yt.health && rt.yt.health.issues.length && rt.live) n.append(el('div', { class: 'status-bad', style: 'width:100%;font-size:.85em' }, '⚠ ' + rt.yt.health.issues.slice(0, 2).join(' · ')));
+  }
+  async function openYouTube() {
+    const y = settings.youtube;
+    const body = el('div');
+    const draw = async () => {
+      body.innerHTML = '';
+      const st = await S.yt.status();
+      Object.assign(rt.yt, { signedIn: st.signedIn, configured: st.configured, channel: st.channel });
+      if (st.browser) { put(body, el('div', { class: 'empty' }, 'YouTube connection works in the installed app.')); return; }
+      if (!st.signedIn) {
+        put(body,
+          el('div', { class: 'muted', style: 'margin-bottom:12px;line-height:1.55' },
+            'Connecting lets Live Studio show your upcoming YouTube events, fill in the stream key for you, start and end the event, and check that YouTube is receiving your stream well.'),
+          el('h3', null, 'One-time setup (about 10 minutes)'),
+          el('ol', { class: 'yt-steps' },
+            el('li', null, 'Go to ', el('b', null, 'console.cloud.google.com'), ', sign in with the Google account that owns your YouTube channel, and create a project named “Live Studio”.'),
+            el('li', null, 'Open ', el('b', null, 'APIs & Services → Library'), ', search for ', el('b', null, 'YouTube Data API v3'), ' and click ', el('b', null, 'Enable'), '.'),
+            el('li', null, 'Open ', el('b', null, 'OAuth consent screen'), ': choose ', el('b', null, 'External'), ', fill in the app name and your email, then under ', el('b', null, 'Audience'), ' click ', el('b', null, 'Publish app'), ' (so the sign-in doesn’t expire every 7 days).'),
+            el('li', null, 'Open ', el('b', null, 'Credentials → Create credentials → OAuth client ID'), ', choose ', el('b', null, 'Desktop app'), ', and create it.'),
+            el('li', null, 'Copy the ', el('b', null, 'Client ID'), ' and ', el('b', null, 'Client secret'), ' into the boxes below, then click ', el('b', null, 'Sign in with Google'), '. Google will say the app isn’t verified — click ', el('b', null, 'Advanced → Go to Live Studio'), '. That is expected for your own private app.')),
+          el('div', { class: 'field' }, el('span', null, 'Client ID'), el('input', { type: 'text', value: y.clientId || '', placeholder: '…apps.googleusercontent.com', oninput: e => { y.clientId = e.target.value.trim(); saveSettingsNow(); } })),
+          el('div', { class: 'field' }, el('span', null, 'Client secret'), el('input', { type: 'password', value: y.clientSecret || '', oninput: e => { y.clientSecret = e.target.value.trim(); saveSettingsNow(); } })),
+          el('div', { class: 'row' }, el('span', { class: 'grow' }),
+            el('button', { class: 'btn primary', onclick: async e => {
+              e.target.disabled = true; e.target.textContent = 'Finish signing in in your browser…';
+              await S.saveSettings(settings);
+              const r = await S.yt.signIn();
+              if (r.error) toast('YouTube sign-in: ' + r.error, 'error'); else { toast(`Connected to ${r.channel ? r.channel.title : 'YouTube'} ✓`, 'ok'); await ytInit(); }
+              draw();
+            } }, 'Sign in with Google')));
+        return;
+      }
+      const list = el('div', { class: 'yt-list' }, el('div', { class: 'muted' }, 'Loading events…'));
+      const ev = rt.yt.event;
+      const [cls, txt] = ytHealthText();
+      put(body,
+        el('div', { class: 'row', style: 'margin-bottom:12px' },
+          st.channel && st.channel.thumb ? el('img', { src: st.channel.thumb, style: 'width:36px;height:36px;border-radius:50%' }) : null,
+          el('div', { class: 'grow' }, el('b', null, st.channel ? st.channel.title : 'YouTube account'), el('div', { class: 'muted', style: 'font-size:.85em' }, 'Connected')),
+          el('button', { class: 'btn small', onclick: async () => { await ytLoadEvents().catch(e => toast(e.message, 'error')); draw(); } }, '↻ Refresh'),
+          el('button', { class: 'btn small danger', onclick: async () => { await S.yt.signOut(); rt.yt.signedIn = false; rt.yt.event = null; show.ytEventId = ''; changed(); clearInterval(ytTimer); refresh('media'); draw(); } }, 'Disconnect')),
+        el('h3', null, 'Checklist'),
+        el('div', { class: 'yt-checks' },
+          el('div', null, '✅ Connected to YouTube'),
+          el('div', null, ev ? `✅ Event: ${ev.title}` : '⬜ Choose the event for this service below'),
+          el('div', null, settings.youtube.key ? '✅ Stream key filled in' : '⬜ Stream key'),
+          el('div', null, ev ? (cls === 'good' || cls === 'ok' ? '✅ ' : cls === 'bad' ? '⚠️ ' : '⬜ ') + txt.replace('YouTube: ', 'YouTube is ') : '⬜ YouTube receiving the stream'),
+          ev ? el('div', { class: 'muted' }, ev.autoStart ? 'This event starts by itself when YouTube receives your stream.' : 'Live Studio will start this event on YouTube after you press START SERVICE.') : null),
+        el('h3', null, 'Upcoming events'),
+        list,
+        el('div', { class: 'muted', style: 'font-size:.85em;margin-top:8px' }, 'Schedule events in YouTube Studio → Create → Go live → Manage → Schedule stream. They show up here.'));
+      const events = rt.yt.events.length ? rt.yt.events : await ytLoadEvents().catch(e => { toast(e.message, 'error'); return []; });
+      list.innerHTML = '';
+      if (!events.length) list.append(el('div', { class: 'empty' }, 'No upcoming events. Schedule one in YouTube Studio, then click Refresh.'));
+      for (const e2 of events) list.append(el('div', { class: 'yt-item' + (ev && ev.id === e2.id ? ' sel' : ''), onclick: async () => { list.style.opacity = .5; await ytSelect(e2).catch(er => toast('YouTube: ' + er.message, 'error')); draw(); } },
+        e2.thumb ? el('img', { src: e2.thumb }) : null,
+        el('div', { class: 'grow' }, el('b', null, e2.title), el('div', { class: 'muted', style: 'font-size:.85em' }, `${fmtWhen(e2.start)} · ${e2.privacy}${e2.life === 'live' ? ' · LIVE NOW' : ''}`)),
+        ev && ev.id === e2.id ? el('span', { class: 'svc-tag running' }, 'SELECTED') : el('button', { class: 'btn small' }, 'Use this')));
+    };
+    openModal('YouTube', body);
+    draw();
+  }
+  const saveSettingsNow = debounce(() => S.saveSettings(settings), 300);
 
   /* ================= panel: speakers ================= */
   RENDER.speakers = body => {
     body.innerHTML = '';
     const st = show.speakerStyle;
-    const restyle = restyleSpeaker;
-    const grid = el('div', { class: 'spk-grid' });
+    const row = el('div', { class: 'tile-row' });
     show.speakers.forEach(p => {
-      grid.append(el('div', { class: 'spk' + (speakerOnAir(p.id) ? ' on' : ''), dataset: { spk: p.id }, onclick: () => toggleSpeaker(p.id) },
+      row.append(el('div', { class: 'spk' + (speakerOnAir(p.id) ? ' on' : ''), dataset: { spk: p.id }, onclick: () => toggleSpeaker(p.id) },
         el('div', { class: 'spk-name' }, p.name || '(no name)'),
         el('div', { class: 'spk-title' }, p.title || ''),
-        el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, speakerOnAir(p.id) ? 'ON AIR' : ''), keyChip('spk:' + p.id),
-          el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editSpeaker(p); } }, '✎'))));
+        el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, speakerOnAir(p.id) ? 'ON AIR' : ''), keyChip('spk:' + p.id)),
+        el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editSpeaker(p); } }, '✎')));
     });
-    const nm = el('input', { type: 'text', placeholder: 'Name', class: 'grow' });
-    const tt = el('input', { type: 'text', placeholder: 'Title (e.g. Guest Speaker)', class: 'grow' });
-    const add = () => {
-      if (!nm.value.trim()) { nm.focus(); return; }
-      show.speakers.push({ id: uid('spk'), name: nm.value.trim(), title: tt.value.trim(), hotkey: '' });
-      changed(); refresh('speakers'); refresh('editor');
-    };
-    tt.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
-    nm.addEventListener('keydown', e => { if (e.key === 'Enter') tt.focus(); });
+    row.append(el('div', { class: 'spk add', onclick: () => { const p = { id: uid('spk'), name: '', title: '', hotkey: '' }; editSpeaker(p, true); } }, '+ Add person'));
     put(body,
-      show.speakers.length ? grid : el('div', { class: 'empty' }, 'Add the people who speak — pastor, worship leader, guests.'),
-      el('div', { class: 'row', style: 'margin-top:10px' }, nm, tt, el('button', { class: 'btn', onclick: add }, '+ Add')),
-      el('div', { class: 'row wrap', style: 'margin-top:10px' },
-        el('button', { class: 'btn small', onclick: () => { const p = show.speakers[0] || { name: 'John Smith', title: 'Senior Pastor' }; openDesigner(st, { title: p.name, subtitle: p.title }, restyle); } }, '🎨 Design look…'),
-        select([[0, 'Stay on until hidden'], [5, 'Hide after 5 s'], [8, 'Hide after 8 s'], [10, 'Hide after 10 s'], [15, 'Hide after 15 s']], st.autoHide, v => { st.autoHide = +v; changed(); }),
-        el('span', { class: 'grow' }),
-        el('button', { class: 'btn small danger', onclick: hideSpeaker }, 'Hide caption', keyChip('hideAll'))),
-      el('div', { class: 'muted', style: 'font-size:.82em;margin-top:8px' }, 'Click a name to put it on screen; click again to take it off. Picking another name swaps the caption. Set a key for each person in Settings → Keyboard shortcuts.')
-    );
+      el('div', { class: 'spk-tools' },
+        el('button', { class: 'btn small', onclick: () => { const p = show.speakers[0] || { name: 'John Smith', title: 'Senior Pastor' }; openDesigner(st, { title: p.name, subtitle: p.title }, restyleSpeaker); } }, '🎨 Look'),
+        select([[0, 'Stay on'], [5, 'Hide after 5 s'], [8, 'Hide after 8 s'], [10, 'Hide after 10 s'], [15, 'Hide after 15 s']], st.autoHide, v => { st.autoHide = +v; changed(); }),
+        el('button', { class: 'btn small danger', onclick: hideSpeaker }, 'Hide', keyChip('hideAll'))),
+      row);
   };
   function refreshSpeakerStates() {
     document.querySelectorAll('.spk[data-spk]').forEach(c => {
@@ -1126,9 +1488,9 @@
       c.querySelector('.spk-air').textContent = on ? 'ON AIR' : '';
     });
   }
-  function editSpeaker(p) {
+  function editSpeaker(p, isNew) {
     const d = { name: p.name, title: p.title };
-    openModal('Edit speaker', el('div', null,
+    openModal(isNew ? 'Add person' : 'Edit person', el('div', null,
       el('div', { class: 'field' }, el('span', null, 'Name'), el('input', { type: 'text', value: d.name, oninput: e => { d.name = e.target.value; } })),
       el('div', { class: 'field' }, el('span', null, 'Title / role'), el('input', { type: 'text', value: d.title, oninput: e => { d.title = e.target.value; } })),
       el('div', { class: 'row' },
@@ -1136,46 +1498,232 @@
         el('button', { class: 'btn small', onclick: () => { const i = show.speakers.indexOf(p); if (i > 0) { show.speakers.splice(i, 1); show.speakers.splice(i - 1, 0, p); changed(); refresh('speakers'); } } }, '◂ Move'),
         el('button', { class: 'btn small', onclick: () => { const i = show.speakers.indexOf(p); if (i < show.speakers.length - 1) { show.speakers.splice(i, 1); show.speakers.splice(i + 1, 0, p); changed(); refresh('speakers'); } } }, 'Move ▸'),
         el('span', { class: 'grow' }),
-        el('button', { class: 'btn primary', onclick: () => { p.name = d.name; p.title = d.title; if (rt.speakerId === p.id && engine.labelVisible(SPK)) { rt.speakerObj = speakerLabel(p); engine.setLabel(rt.speakerObj); } changed(); closeModal(); refresh('speakers'); refresh('editor'); } }, 'Save'))));
+        el('button', { class: 'btn primary', onclick: () => { if (isNew) { if (!d.name.trim()) return; show.speakers.push(p); } p.name = d.name; p.title = d.title; if (rt.speakerId === p.id && engine.labelVisible(SPK)) { rt.speakerObj = speakerLabel(p); engine.setLabel(rt.speakerObj); } changed(); closeModal(); refresh('speakers'); refresh('editor'); } }, 'Save'))));
   }
 
-  /* ================= panel: audio ================= */
-  function meter(id) { const i = el('i'); const m = el('div', { class: 'meter' }, i); rt.meters.set(id, { i, m }); return m; }
-  function strip({ id, name, cfg, onName, extra, master }) {
-    const db = el('span', { class: 'db mono' }, cfg.gain <= -60 ? '-∞' : `${cfg.gain > 0 ? '+' : ''}${cfg.gain.toFixed(1)} dB`);
-    const fader = el('input', { type: 'range', class: 'fader', min: -60, max: 12, step: 0.5, value: cfg.gain, title: 'Double-click for 0 dB' });
-    const setGain = v => { cfg.gain = v; db.textContent = v <= -60 ? '-∞' : `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`; master ? mixer.setMaster(cfg) : mixer.update(id, cfg); changed(); };
+  /* ================= panel: audio — master meters first, inputs as compact rows ================= */
+  function meter(id) { const i = el('i'); const m = el('div', { class: 'meter-h' }, i); rt.meters.set(id, { i, m }); return m; }
+  const dbText = v => v <= -60 ? '-∞' : `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
+  function inputRow({ id, name, cfg, onName, sub, extra }) {
+    const db = el('span', { class: 'db mono' }, dbText(cfg.gain));
+    const fader = el('input', { type: 'range', class: 'hfader', min: -60, max: 12, step: 0.5, value: cfg.gain, title: 'Volume (double-click for 0 dB)' });
+    const setGain = v => { cfg.gain = v; db.textContent = dbText(v); mixer.update(id, cfg); changed(); };
     fader.addEventListener('input', () => setGain(+fader.value));
     fader.addEventListener('dblclick', () => { fader.value = 0; setGain(0); });
-    const meters = master ? [meter('__L'), meter('__R')] : [meter(id)];
-    const muteBtn = master ? null : el('button', { class: 'btn small mute-btn' + (cfg.mute ? ' on' : ''), onclick: () => { cfg.mute = !cfg.mute; mixer.update(id, cfg); changed(); muteBtn.classList.toggle('on', cfg.mute); meters[0].classList.toggle('muted', cfg.mute); } }, 'MUTE');
-    if (cfg.mute) meters[0].classList.add('muted');
-    return el('div', { class: 'strip' + (master ? ' master' : '') },
-      onName ? el('input', { type: 'text', class: 'nm', value: name, oninput: e => onName(e.target.value) }) : el('div', { class: 'nm' }, name),
-      el('div', { class: 'fader-wrap' }, ...meters, fader), db,
-      el('div', { class: 'btns' }, muteBtn, extra));
+    const m = meter(id);
+    const muteBtn = el('button', { class: 'btn small mute-btn' + (cfg.mute ? ' on' : ''), onclick: () => { cfg.mute = !cfg.mute; mixer.update(id, cfg); changed(); muteBtn.classList.toggle('on', cfg.mute); m.classList.toggle('muted', cfg.mute); } }, 'MUTE');
+    if (cfg.mute) m.classList.add('muted');
+    return el('div', { class: 'in-row' },
+      el('div', { class: 'in-name' }, onName ? el('input', { type: 'text', class: 'nm', value: name, oninput: e => onName(e.target.value) }) : el('div', { class: 'nm' }, name), sub ? el('div', { class: 'tagline' }, sub) : null),
+      el('div', { class: 'in-ctl' }, m, fader), db, muteBtn, extra);
   }
+  const masterCanvas = el('canvas', { class: 'master-meters', width: 150, height: 300 });
+  const gonio = el('canvas', { class: 'gonio', width: 160, height: 160 });
+  const corrCanvas = el('canvas', { class: 'corr', width: 300, height: 26 });
+  const lufsBox = el('div', { class: 'lufs mono' });
   RENDER.audio = body => {
     body.innerHTML = '';
     rt.meters.clear();
-    const mx = el('div', { class: 'mixer' });
-    for (const a of show.audio.inputs) {
-      const s = strip({ id: a.id, name: a.name, cfg: a, onName: v => { a.name = v; changed(); }, extra: el('button', { class: 'btn small', title: 'Input settings', onclick: () => inputSettings(a) }, '⚙') });
-      const dev = rt.devices.audio.find(d => d.id === a.deviceId);
-      s.append(el('div', { class: 'tagline' }, `${dev ? dev.label.replace(/\s*\(.*?\)\s*$/, '') : 'Device missing'} · ${a.channel === 'stereo' ? 'Stereo 1+2' : a.channel === 'mix' ? 'Mix 1+2' : 'In ' + a.channel}`));
-      mx.append(s);
-    }
-    mx.append(strip({ id: 'media', name: 'Video files', cfg: show.audio.media }));
     const m = show.audio.master;
-    const hp = el('button', { class: 'btn small' + (m.monitor ? ' primary' : ''), title: 'Listen to the program on this computer\'s speakers/headphones', onclick: () => { m.monitor = !m.monitor; mixer.setMaster(m); changed(); hp.classList.toggle('primary', m.monitor); } }, '🎧');
-    const lim = el('button', { class: 'btn small' + (m.limiter ? ' primary' : ''), title: 'Limiter protects the stream from distortion', onclick: () => { m.limiter = !m.limiter; mixer.setMaster(m); changed(); lim.classList.toggle('primary', m.limiter); } }, 'LIM');
-    mx.append(strip({ id: 'master', name: 'MASTER', cfg: m, master: true, extra: el('span', { style: 'display:flex;gap:4px;flex:1' }, hp, lim) }));
-    mx.append(el('div', { class: 'strip add', onclick: () => inputSettings(null) }, '+ Add mic / input'));
-    put(body, mx);
+    const tog = (label, key, title, fn) => { const b = el('button', { class: 'btn small' + (m[key] ? ' primary' : ''), title, onclick: () => { m[key] = !m[key]; fn(); changed(); b.classList.toggle('primary', !!m[key]); } }, label); return b; };
+    const mdb = el('span', { class: 'db mono' }, dbText(m.gain));
+    const mf = el('input', { type: 'range', class: 'hfader', min: -30, max: 12, step: 0.5, value: m.gain, title: 'Master volume (double-click for 0 dB)' });
+    const setM = v => { m.gain = v; mdb.textContent = dbText(v); mixer.setMaster(m); changed(); };
+    mf.addEventListener('input', () => setM(+mf.value)); mf.addEventListener('dblclick', () => { mf.value = 0; setM(0); });
+    const master = el('div', { class: 'master-sec' },
+      el('div', { class: 'master-top' },
+        masterCanvas,
+        el('div', { class: 'master-side' },
+          el('div', { class: 'mlabel' }, 'Phase (mono check)'), corrCanvas,
+          el('div', { class: 'corr-scale' }, el('span', null, '−1 out of phase'), el('span', null, '0'), el('span', null, '+1 mono')),
+          gonio,
+          lufsBox)),
+      el('div', { class: 'row', style: 'gap:6px;margin-top:6px' },
+        el('span', { class: 'mlabel' }, 'MASTER'), mf, mdb),
+      el('div', { class: 'row wrap', style: 'gap:6px;margin-top:6px' },
+        tog('🎧 Listen', 'monitor', 'Hear the program on this computer\'s speakers/headphones', () => mixer.setMaster(m)),
+        tog('MONO', 'mono', 'Listen in mono to check phase (only affects your headphones, not the stream)', () => mixer.setMono(!!m.mono)),
+        tog('LIMITER', 'limiter', 'Protects the stream from distortion', () => mixer.setMaster(m))));
+    const rows = el('div', { class: 'in-rows' });
+    for (const a of show.audio.inputs) {
+      const dev = rt.devices.audio.find(d => d.id === a.deviceId);
+      rows.append(inputRow({ id: a.id, name: a.name, cfg: a, onName: v => { a.name = v; changed(); },
+        sub: `${dev ? dev.label.replace(/\s*\(.*?\)\s*$/, '') : 'Device missing'} · ${a.channel === 'stereo' ? 'stereo' : a.channel === 'mix' ? 'mono mix' : 'in ' + a.channel}${a.delay ? ` · delay ${a.delay} ms` : ''}`,
+        extra: el('button', { class: 'btn small', title: 'Input settings', onclick: () => inputSettings(a) }, '⚙') }));
+    }
+    rows.append(inputRow({ id: 'media', name: 'Video files', cfg: show.audio.media, sub: 'opening / closing videos' }));
+    rows.append(el('div', { class: 'row wrap', style: 'gap:6px;margin-top:4px' },
+      el('button', { class: 'btn small', onclick: () => inputSettings(null) }, '+ Add input'),
+      el('button', { class: 'btn small', onclick: openSyncTest, title: 'Measure and fix the delay between picture and sound' }, '⏱ Sync test')));
+    put(body, el('div', { class: 'audio-wrap' }, master, rows));
+    mixer.setMono(!!m.mono);
   };
+  function drawMaster(A) {
+    if (!masterCanvas.isConnected) return;
+    // size canvases to their boxes
+    const fit = (c) => { const r = c.getBoundingClientRect(); const w = Math.max(10, Math.round(r.width * devicePixelRatio)), h = Math.max(10, Math.round(r.height * devicePixelRatio)); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } return c.getContext('2d'); };
+    let g = fit(masterCanvas); const W = masterCanvas.width, H = masterCanvas.height, k = devicePixelRatio;
+    g.clearRect(0, 0, W, H);
+    const top = 22 * k, bot = 22 * k, mh = H - top - bot;
+    const y = db => top + mh * (1 - Math.max(0, Math.min(1, (db + 60) / 60)));
+    const scaleW = 26 * k, gap = 6 * k, bw = (W - scaleW - gap * 3) / 2;
+    g.font = `${10 * k}px Segoe UI, sans-serif`; g.fillStyle = '#8d99b0'; g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (const d of [0, -6, -12, -18, -24, -36, -48, -60]) { g.fillText(String(d), scaleW - 4 * k, y(d)); g.fillStyle = '#1f2737'; g.fillRect(scaleW, y(d), W - scaleW, 1); g.fillStyle = '#8d99b0'; }
+    const bar = (i, peak, rms, hold, clip, label) => {
+      const x = scaleW + gap + i * (bw + gap);
+      g.fillStyle = '#05070b'; g.fillRect(x, top, bw, mh);
+      const grad = g.createLinearGradient(0, top + mh, 0, top);
+      grad.addColorStop(0, '#16a34a'); grad.addColorStop(0.7, '#22c55e'); grad.addColorStop(0.8, '#eab308'); grad.addColorStop(0.9, '#f97316'); grad.addColorStop(0.97, '#ef4444');
+      g.fillStyle = grad; g.fillRect(x, y(peak), bw, top + mh - y(peak));
+      g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(x, y(rms), bw, top + mh - y(rms));
+      g.fillStyle = hold > -6 ? '#ef4444' : '#e8edf6'; g.fillRect(x, y(hold) - 1.5 * k, bw, 3 * k);
+      g.fillStyle = clip ? '#ef4444' : '#2a1416'; g.fillRect(x, 2 * k, bw, 14 * k);
+      g.fillStyle = clip ? '#fff' : '#6b3a3d'; g.textAlign = 'center'; g.font = `700 ${9 * k}px Segoe UI, sans-serif`; g.fillText('CLIP', x + bw / 2, 9 * k);
+      g.fillStyle = '#e8edf6'; g.font = `600 ${11 * k}px Consolas, monospace`; g.fillText(hold <= -60 ? '-∞' : hold.toFixed(1), x + bw / 2, H - 13 * k);
+      g.fillStyle = '#8d99b0'; g.font = `${9 * k}px Segoe UI`; g.fillText(label, x + bw / 2, H - 3 * k);
+    };
+    bar(0, A.peakL, A.rmsL, A.holdL, A.clipL, 'L');
+    bar(1, A.peakR, A.rmsR, A.holdR, A.clipR, 'R');
+    // phase correlation
+    g = fit(corrCanvas); const cw = corrCanvas.width, ch = corrCanvas.height;
+    g.clearRect(0, 0, cw, ch);
+    g.fillStyle = '#05070b'; g.fillRect(0, 0, cw, ch);
+    const grd = g.createLinearGradient(0, 0, cw, 0); grd.addColorStop(0, '#7f1d1d'); grd.addColorStop(0.45, '#3f2a10'); grd.addColorStop(0.55, '#123018'); grd.addColorStop(1, '#14532d');
+    g.fillStyle = grd; g.fillRect(0, ch * 0.3, cw, ch * 0.4);
+    g.fillStyle = '#475569'; g.fillRect(cw / 2, 0, 1, ch);
+    const cx = (A.corr + 1) / 2 * cw;
+    g.fillStyle = A.silent ? '#475569' : A.corr < -0.2 ? '#ef4444' : A.corr < 0.2 ? '#f59e0b' : '#22c55e';
+    g.fillRect(cx - 4 * k, 0, 8 * k, ch);
+    // goniometer (stereo picture: vertical line = mono, horizontal = out of phase)
+    g = fit(gonio); const gw = gonio.width, gh = gonio.height;
+    g.fillStyle = 'rgba(5,7,11,.55)'; g.fillRect(0, 0, gw, gh);
+    g.strokeStyle = '#1f2737'; g.lineWidth = 1; g.beginPath(); g.moveTo(gw / 2, 0); g.lineTo(gw / 2, gh); g.moveTo(0, gh / 2); g.lineTo(gw, gh / 2); g.stroke();
+    g.fillStyle = A.corr < 0 ? 'rgba(239,68,68,.7)' : 'rgba(74,222,128,.7)';
+    const sc = Math.min(gw, gh) * 0.45;
+    for (let i = 0; i < A.L.length; i += 2) {
+      const l = A.L[i], r = A.R[i];
+      const px = gw / 2 + (r - l) * 0.7071 * sc * 1.4, py = gh / 2 - (l + r) * 0.7071 * sc * 1.4;
+      g.fillRect(px, py, 1.4 * k, 1.4 * k);
+    }
+    // loudness
+    const lu = v => v <= -60 ? '—' : v.toFixed(1);
+    const col = v => v <= -60 ? '' : v > -10 ? 'bad' : v < -20 ? 'low' : 'ok';
+    lufsBox.innerHTML = `<div><span class="mlabel">Loudness</span><span class="hint">YouTube aims for −14</span></div><div class="big ${col(A.lufsS)}">${lu(A.lufsS)} <small>LUFS</small></div><div class="hint">now ${lu(A.lufsM)} · phase ${A.silent ? '—' : A.corr.toFixed(2)}</div>`;
+  }
+  /* ================= audio / video sync test ================= */
+  async function openSyncTest() {
+    const inputs = show.audio.inputs;
+    if (!inputs.length || !show.cameras.length) { toast('Add a camera and an audio input first.', 'error'); return; }
+    const st = { input: inputs[0].id, cam: inputs[0].syncCam || show.cameras[0].id, running: false, audio: [], video: [], result: null };
+    const body = el('div');
+    const view = el('canvas', { width: 320, height: 180, style: 'width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;display:block' });
+    const live = el('div', { class: 'sync-live' });
+    const draw = () => {
+      body.innerHTML = '';
+      engine.sourceViews.set(view, st.cam);
+      const inp = inputs.find(i => i.id === st.input);
+      const r = st.result;
+      put(body,
+        el('div', { class: 'muted', style: 'margin-bottom:10px;line-height:1.5' },
+          'This measures how far the sound and picture from your capture card are apart, and fixes it. ',
+          el('b', null, 'Clap your hands sharply in front of the camera, about once a second'),
+          ' (or play an “AV sync test” flash-and-beep video on a phone held up to the camera). Keep other sounds quiet.'),
+        el('div', { class: 'grid2' },
+          el('div', { class: 'field' }, el('span', null, 'Camera'), select(show.cameras.map(c => [c.id, c.name]), st.cam, v => { st.cam = v; draw(); })),
+          el('div', { class: 'field' }, el('span', null, 'Audio input'), select(inputs.map(i => [i.id, i.name]), st.input, v => { st.input = v; draw(); }))),
+        view, live,
+        el('div', { class: 'row', style: 'margin-top:10px' },
+          el('button', { class: 'btn primary big', disabled: st.running, onclick: run }, st.running ? 'Listening… keep clapping' : (r ? '↻ Test again' : '▶ Start test (12 seconds)')),
+          el('span', { class: 'grow' }),
+          el('span', { class: 'muted' }, `Current delay on “${inp.name}”: ${inp.delay || 0} ms`)),
+        r ? el('div', { class: 'sync-result ' + (r.ok ? 'ok' : 'bad') }, ...resultView(r, inp)) : null);
+    };
+    const resultView = (r, inp) => {
+      if (!r.ok) return [el('b', null, 'Not enough claps detected.'), el('div', null, r.msg)];
+      const ms = Math.round(r.offset);
+      const lines = [el('div', { class: 'big' }, Math.abs(ms) < 15 ? 'In sync ✓' : ms > 0 ? `Sound arrives ${ms} ms before the picture` : `Sound arrives ${-ms} ms after the picture`),
+        el('div', { class: 'muted' }, `Measured ${r.pairs} claps · spread ±${Math.round(r.spread)} ms${r.spread > 40 ? ' (uneven — try again with sharper claps)' : ''}`)];
+      if (ms >= 0) {
+        const want = clamp(ms, 0, 2000);
+        lines.push(el('div', { class: 'row', style: 'margin-top:10px' },
+          el('button', { class: 'btn primary', onclick: () => { inp.delay = want; mixer.update(inp.id, inp); inp.syncCam = st.cam; changed(); refresh('audio'); toast(`Audio delay set to ${want} ms.`, 'ok'); draw(); } }, `Fix it — set audio delay to ${want} ms`),
+          el('span', { class: 'muted' }, 'Then run the test again to confirm.')));
+      } else {
+        lines.push(el('div', { style: 'margin-top:8px' }, 'The sound is later than the picture, so delaying the sound won’t help. Check the audio delay setting on your sound desk or camera, and set this input’s delay to 0.'),
+          el('button', { class: 'btn small', style: 'margin-top:6px', onclick: () => { inp.delay = 0; mixer.update(inp.id, inp); changed(); refresh('audio'); draw(); } }, 'Set delay to 0'));
+      }
+      return lines;
+    };
+    async function run() {
+      const inp = inputs.find(i => i.id === st.input);
+      const strip = mixer.strips.get(inp.id);
+      const cam = rt.cams.get(st.cam);
+      if (!strip || !cam) { toast('That camera or audio input is not connected.', 'error'); return; }
+      mixer.resume();
+      st.running = true; st.audio = []; st.video = []; st.result = null; draw();
+      try { if (!rt.syncWorklet) { await mixer.ctx.audioWorklet.addModule('sync-worklet.js'); rt.syncWorklet = true; } }
+      catch (e) { st.running = false; toast('Sync test could not start: ' + e.message, 'error'); draw(); return; }
+      const node = new AudioWorkletNode(mixer.ctx, 'onset-detector');
+      strip.raw.connect(node);
+      const ctx = mixer.ctx;
+      const toPerf = t => { const ts = ctx.getOutputTimestamp(); return ts.performanceTime + (t - ts.contextTime) * 1000 - ((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * 1000; };
+      node.port.onmessage = e => { if (e.data.type === 'onset') { st.audio.push(toPerf(e.data.t)); updLive(); } };
+      // picture: watch brightness and movement in a tiny copy of each new frame
+      const v = cam.v, c = document.createElement('canvas'); c.width = 64; c.height = 36;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      let prev = null, base = 0, lastEv = 0, active = true;
+      const onFrame = (now, meta) => {
+        if (!active) return;
+        g.drawImage(v, 0, 0, 64, 36);
+        const d = g.getImageData(0, 0, 64, 36).data;
+        let lum = 0, diff = 0;
+        const cur = new Uint8Array(64 * 36);
+        for (let i = 0, j = 0; i < d.length; i += 4, j++) { const y = (d[i] * 54 + d[i + 1] * 183 + d[i + 2] * 19) >> 8; cur[j] = y; lum += y; if (prev) diff += Math.abs(y - prev[j]); }
+        const sig = prev ? diff / cur.length : 0;
+        const t = (meta && meta.captureTime) || now;
+        if (prev && sig > Math.max(6, base * 4) && t - lastEv > 300) { lastEv = t; st.video.push(t); updLive(); }
+        base += (sig - base) * 0.08;
+        prev = cur;
+        v.requestVideoFrameCallback(onFrame);
+      };
+      v.requestVideoFrameCallback(onFrame);
+      const t0 = performance.now();
+      const tick = setInterval(updLive, 200);
+      function updLive() {
+        const left = Math.max(0, 12 - (performance.now() - t0) / 1000);
+        live.innerHTML = `<span>🔊 sounds heard: <b>${st.audio.length}</b></span><span>🎥 movements/flashes seen: <b>${st.video.length}</b></span><span>${st.running ? Math.ceil(left) + ' s left' : ''}</span>`;
+      }
+      await new Promise(r => setTimeout(r, 12000));
+      active = false; clearInterval(tick);
+      try { strip.raw.disconnect(node); } catch (e) { /* */ }
+      node.port.onmessage = null;
+      st.running = false;
+      // pair every sound with the nearest movement
+      const diffs = [];
+      for (const a of st.audio) {
+        let best = null;
+        for (const w of st.video) { const dd = w - a; if (Math.abs(dd) < 600 && (best === null || Math.abs(dd) < Math.abs(best))) best = dd; }
+        if (best !== null) diffs.push(best);
+      }
+      if (diffs.length < 3) st.result = { ok: false, msg: `Heard ${st.audio.length} sounds and saw ${st.video.length} movements, but only ${diffs.length} matched. Clap closer to the camera and microphone, with your hands clearly in view.` };
+      else {
+        diffs.sort((x, y) => x - y);
+        const med = diffs[Math.floor(diffs.length / 2)];
+        const near = diffs.filter(x => Math.abs(x - med) < 120);
+        const mean = near.reduce((a, b) => a + b, 0) / near.length;
+        const spread = Math.sqrt(near.reduce((a, b) => a + (b - mean) ** 2, 0) / near.length);
+        st.result = { ok: near.length >= 3, offset: mean, spread, pairs: near.length, msg: 'The measurements didn’t agree. Try again with sharper claps.' };
+      }
+      updLive(); draw();
+    }
+    draw(); updLiveInit();
+    function updLiveInit() { live.innerHTML = '<span class="muted">Press Start, then clap.</span>'; }
+    openModal('Audio / video sync test', body);
+  }
+
   function inputSettings(a) {
     const isNew = !a;
-    const cfg = a ? clone(a) : { id: uid('in'), name: `Mic ${show.audio.inputs.length + 1}`, deviceId: (rt.devices.audio.find(d => /ssl/i.test(d.label)) || rt.devices.audio[0] || {}).id || '', channel: '1', gain: 0, mute: false, delay: 0, lowcut: true, voice: true, pan: 0 };
+    const cfg = a ? clone(a) : { id: uid('in'), name: `Mic ${show.audio.inputs.length + 1}`, deviceId: (rt.devices.audio.find(d => /blackmagic|decklink/i.test(d.label)) || rt.devices.audio.find(d => /ssl/i.test(d.label)) || rt.devices.audio[0] || {}).id || '', channel: 'stereo', gain: 0, mute: false, delay: 0, lowcut: false, voice: false, pan: 0 };
     const devSel = select(rt.devices.audio.map(d => [d.id, d.label]), cfg.deviceId, v => { cfg.deviceId = v; });
     const chSel = select([['1', 'Input 1 (mono)'], ['2', 'Input 2 (mono)'], ['3', 'Input 3 (mono)'], ['4', 'Input 4 (mono)'], ['stereo', 'Inputs 1+2 as stereo'], ['mix', 'Inputs 1+2 mixed to mono']], cfg.channel, v => { cfg.channel = v; });
     const body = el('div', null,
@@ -1183,9 +1731,9 @@
       el('div', { class: 'grid2' },
         el('div', { class: 'field' }, el('span', null, 'Audio device'), devSel),
         el('div', { class: 'field' }, el('span', null, 'Which input'), chSel)),
-      el('div', { class: 'muted', style: 'font-size:.85em;margin:-4px 0 12px' }, 'SSL 2 / 2+: mic or instrument on input 1 or 2. For camera audio over HDMI/SDI choose the Blackmagic audio device.'),
+      el('div', { class: 'muted', style: 'font-size:.85em;margin:-4px 0 12px' }, 'Capture card sound (from your sound desk into the camera/SDI): choose the Blackmagic audio device, inputs 1+2 as stereo. SSL interface: mic on input 1 or 2.'),
       el('div', { class: 'grid2' },
-        el('div', { class: 'field' }, el('span', null, 'Audio delay (lip sync)'), el('div', { class: 'row' }, el('input', { type: 'number', min: 0, max: 2000, step: 10, value: cfg.delay, oninput: e => { cfg.delay = +e.target.value || 0; } }), 'ms')),
+        el('div', { class: 'field' }, el('span', null, 'Audio delay (lip sync)'), el('div', { class: 'row' }, el('input', { type: 'number', min: 0, max: 2000, step: 5, value: cfg.delay, oninput: e => { cfg.delay = +e.target.value || 0; } }), 'ms', el('button', { class: 'btn small', onclick: () => { closeModal(); openSyncTest(); } }, '⏱ Measure…'))),
         el('div', { class: 'field' }, el('span', null, 'Pan'), el('input', { type: 'range', min: -1, max: 1, step: 0.05, value: cfg.pan, oninput: e => { cfg.pan = +e.target.value; } }))),
       el('div', { class: 'row wrap', style: 'gap:18px;margin-bottom:14px' },
         check(' Low-cut (removes rumble)', cfg.lowcut, v => { cfg.lowcut = v; }),
@@ -1210,10 +1758,12 @@
   }
   function tickMeters() {
     const lv = mixer.levels();
+    const MA = mixer.masterAnalysis();
+    drawMaster(MA); drawMonMeter(MA);
     for (const [id, m] of rt.meters) {
       const db = lv[id];
       if (db === undefined) continue;
-      m.i.style.height = `${clamp((db + 60) / 60, 0, 1) * 100}%`;
+      m.i.style.width = `${clamp((db + 60) / 60, 0, 1) * 100}%`;
     }
     // media progress on program monitor
     const s = getShot(engine.programId);
@@ -1224,7 +1774,6 @@
       progInfo.textContent = `−${fmtShort(f.el.duration - f.el.currentTime)}`;
       progBar.firstChild.style.width = `${(f.el.currentTime / f.el.duration) * 100}%`;
     } else { progInfo.classList.add('hidden'); progBar.classList.add('hidden'); }
-    tickIntroStatus();
     requestAnimationFrame(tickMeters);
   }
 
@@ -1288,7 +1837,10 @@
     if (inUse.some(s => s.id === engine.programId)) { toast('This file is on air — switch away first.', 'error'); return; }
     unloadFile(f.id);
     show.files = show.files.filter(x => x !== f);
-    for (const r of ['intro', 'ending']) if (show[r].fileId === f.id) { show[r].fileId = ''; show.shots = show.shots.filter(s => s.role !== r); }
+    if (SV().start.videoId === f.id) SV().start.videoId = '';
+    if (SV().end.videoId === f.id) SV().end.videoId = '';
+    if (SV().hold.bgFile === f.id) SV().hold.bgFile = '';
+    syncRoleShots();
     changed(); refreshAll();
   }
 
@@ -1316,6 +1868,8 @@
     };
     const body = el('div', null,
       el('h3', { id: 'set-youtube' }, 'YouTube'),
+      el('div', { class: 'row', style: 'margin-bottom:10px' }, el('span', { class: 'muted grow' }, rt.yt.signedIn ? `Connected${rt.yt.channel ? ' to ' + rt.yt.channel.title : ''}. Choosing an event fills in the stream key.` : 'Connect your YouTube account to pick upcoming events and check stream health — or just paste a stream key below.'),
+        el('button', { class: 'btn primary', onclick: () => { closeModal(); openYouTube(); } }, rt.yt.signedIn ? 'YouTube events…' : 'Connect YouTube…')),
       el('div', { class: 'field' }, el('span', null, 'Server'), select([['rtmps://a.rtmps.youtube.com:443/live2', 'YouTube — primary (secure RTMPS, recommended)'], ['rtmp://a.rtmp.youtube.com/live2', 'YouTube — primary (RTMP)'], ['custom', 'Custom server (Facebook, Vimeo, other)…']], y.server, v => { y.server = v; customRow.classList.toggle('hidden', v !== 'custom'); saveSettings(); })),
       customRow,
       el('div', { class: 'field' }, el('span', null, 'Stream key'), el('div', { class: 'row' }, keyInput, el('button', { class: 'btn small', onclick: e => { keyInput.type = keyInput.type === 'password' ? 'text' : 'password'; e.target.textContent = keyInput.type === 'password' ? 'Show' : 'Hide'; } }, 'Show'))),
@@ -1403,9 +1957,9 @@
     A('ftb', 'Switching', 'Fade to black / back', 'KeyB', () => setBlack(!engine.isBlack));
     A('nextShot', 'Switching', 'Next shot into Preview', 'ArrowRight', () => stepPreview(1));
     A('prevShot', 'Switching', 'Previous shot into Preview', 'ArrowLeft', () => stepPreview(-1));
-    A('intro', 'Videos', 'Play before-service video', 'KeyI', () => playRole('intro'));
-    A('startService', 'Videos', 'Start service — fade video into camera', 'KeyS', startService);
-    A('ending', 'Videos', 'Play closing video', '', () => playRole('ending'));
+    A('startService', 'Service', 'START SERVICE', 'Ctrl+KeyS', startService);
+    A('endService', 'Service', 'END SERVICE', 'Ctrl+KeyE', endService);
+    A('hold', 'Service', 'Show the holding screen (clock)', 'KeyC', showHold);
     A('hideAll', 'Labels & speakers', 'Hide all labels and name captions', 'KeyH', hideAllGraphics);
     show.speakers.forEach((p, i) => A('spk:' + p.id, 'Speakers (show / hide name caption)', `${p.name}${p.title ? ' — ' + p.title : ''}`, i < 9 ? `Alt+Digit${i + 1}` : '', () => toggleSpeaker(p.id)));
     show.labels.forEach((L, i) => A('lbl:' + L.id, 'Labels (show / hide)', L.title || 'Label', i < 8 ? `F${i + 1}` : '', () => toggleLabel(L.id)));
@@ -1534,20 +2088,26 @@
       camShots.push(close);
     });
     show.shots = [...camShots, ...show.shots];
-    const ssl = rt.devices.audio.find(d => /ssl/i.test(d.label)) || rt.devices.audio.find(d => d.id === 'default') || rt.devices.audio[0];
-    if (ssl) {
-      show.audio.inputs.push({ id: uid('in'), name: 'Mic 1', deviceId: ssl.id, channel: '1', gain: 0, mute: false, delay: 0, lowcut: true, voice: true, pan: 0 });
-      if (/ssl/i.test(ssl.label)) show.audio.inputs.push({ id: uid('in'), name: 'Mic 2', deviceId: ssl.id, channel: '2', gain: 0, mute: false, delay: 0, lowcut: true, voice: true, pan: 0 });
-    }
+    // audio normally comes from the capture card (sound mixed in with the camera signal); an SSL interface is the fallback
+    const card = rt.devices.audio.find(d => /blackmagic|decklink|intensity|ultrastudio/i.test(d.label));
+    const ssl = rt.devices.audio.find(d => /ssl/i.test(d.label));
+    const dev = card || ssl || rt.devices.audio.find(d => d.id === 'default') || rt.devices.audio[0];
+    if (dev) show.audio.inputs.push({ id: uid('in'), name: card ? 'Capture card' : ssl ? 'SSL' : 'Audio in', deviceId: dev.id, channel: 'stereo', gain: 0, mute: false, delay: 0, lowcut: false, voice: false, pan: 0, syncCam: show.cameras[0] ? show.cameras[0].id : '' });
     show.firstRunDone = true;
     changed();
   }
   async function bootShow() {
     if (!show.firstRunDone) await firstRun();
     show.labels.forEach(l => engine.setLabel(l, false));
+    // older shows: carry the before-service / ending video over to Start / End Service
+    if (show.intro && show.intro.fileId && !SV().start.videoId) SV().start.videoId = show.intro.fileId;
+    if (show.ending && show.ending.fileId && !SV().end.videoId) SV().end.videoId = show.ending.fileId;
+    delete show.intro; delete show.ending; delete show.autoIntro;
     syncRoleShots();
-    const prog = show.shots[0], prev = show.shots[1] || show.shots[0];
-    engine.cut(prog ? prog.id : null);
+    drawHold();
+    engine.cut('shot_hold');
+    rt.service = 'hold';
+    const prev = getShot(SV().start.cameraShot) || show.shots.find(x => !x.role) || show.shots[0];
     setPreview(prev ? prev.id : null);
     rt.editingId = prev ? prev.id : null;
     renderGrid();
@@ -1566,5 +2126,6 @@
   await bootShow();
   renderHeader();
   checkWake();
-  window.__live = { engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, playRole, toggleLabel, setBlack };
+  ytInit().catch(e => console.warn('youtube', e));
+  window.__live = { engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack };
 })();

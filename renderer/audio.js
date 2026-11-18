@@ -28,16 +28,32 @@
       this.dest = ctx.createMediaStreamDestination();
       this.dest.channelCount = 2;
       this.masterOut.connect(this.dest);
+      // headphone / speaker monitoring, with an optional mono check
       this.monitor = ctx.createGain();
       this.monitor.gain.value = 0;
+      this.monoSum = ctx.createGain(); this.monoSum.channelCount = 1; this.monoSum.channelCountMode = 'explicit'; this.monoSum.channelInterpretation = 'speakers';
+      this.monoOn = false;
       this.masterOut.connect(this.monitor);
       this.monitor.connect(ctx.destination);
-      // master meters (L / R)
+      // master meters (L / R), plus K-weighted copies for loudness (LUFS)
       const split = ctx.createChannelSplitter(2);
       this.masterOut.connect(split);
       this.mL = ctx.createAnalyser(); this.mR = ctx.createAnalyser();
-      this.mL.fftSize = this.mR.fftSize = 1024;
+      this.mL.fftSize = this.mR.fftSize = 2048;
       split.connect(this.mL, 0); split.connect(this.mR, 1);
+      const kw = ch => {
+        const shelf = ctx.createBiquadFilter(); shelf.type = 'highshelf'; shelf.frequency.value = 1681; shelf.gain.value = 4;
+        const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 38; hp.Q.value = 0.5;
+        const an = ctx.createAnalyser(); an.fftSize = 2048;
+        split.connect(shelf, ch); shelf.connect(hp); hp.connect(an);
+        return an;
+      };
+      this.kL = kw(0); this.kR = kw(1);
+      this._bL = new Float32Array(2048); this._bR = new Float32Array(2048); this._kL = new Float32Array(2048); this._kR = new Float32Array(2048);
+      this._ms = []; // recent loudness blocks for short-term LUFS
+      this.hold = { L: -90, R: -90, tL: 0, tR: 0 };
+      this.clip = { L: 0, R: 0 };
+      this.corr = 1;
 
       this.strips = new Map();
       this.devices = new Map(); // deviceId -> { stream, node, splitter, users }
@@ -58,6 +74,14 @@
       if (on) { this.masterFader.connect(this.limiter); this.limiter.connect(this.masterOut); }
       else this.masterFader.connect(this.masterOut);
       this.limiterOn = on;
+    }
+    setMono(on) {
+      if (on === this.monoOn) return;
+      try { this.masterOut.disconnect(this.monitor); } catch (e) { /* */ }
+      try { this.masterOut.disconnect(this.monoSum); this.monoSum.disconnect(); } catch (e) { /* */ }
+      if (on) { this.masterOut.connect(this.monoSum); this.monoSum.connect(this.monitor); }
+      else this.masterOut.connect(this.monitor);
+      this.monoOn = on;
     }
     setMaster({ gain = 0, limiter = true, monitor = false, monitorGain = 0 }) {
       this.masterFader.gain.setTargetAtTime(dbToGain(gain), this.ctx.currentTime, 0.02);
@@ -82,6 +106,7 @@
       s.pan = ctx.createStereoPanner();
       s.mute = ctx.createGain();
       s.meter = ctx.createAnalyser(); s.meter.fftSize = 1024;
+      s.raw = ctx.createGain(); input.connect(s.raw); // untouched input, used by the sync test
       input.connect(s.delay); s.delay.connect(s.lowcut); s.lowcut.connect(s.comp); s.comp.connect(s.fader);
       s.fader.connect(s.pan); s.pan.connect(s.mute); s.mute.connect(this.masterIn);
       s.fader.connect(s.meter);
@@ -199,6 +224,45 @@
       g.cancelScheduledValues(t);
       g.setValueAtTime(g.value, t);
       g.linearRampToValueAtTime(on ? 1 : 0, t + Math.max(0.01, ms / 1000));
+    }
+
+    /* everything the master section shows: peak, RMS, peak hold, clip, phase correlation, loudness */
+    masterAnalysis() {
+      const L = this._bL, R = this._bR, now = performance.now();
+      this.mL.getFloatTimeDomainData(L); this.mR.getFloatTimeDomainData(R);
+      let pl = 0, pr = 0, sl = 0, sr = 0, slr = 0;
+      for (let i = 0; i < L.length; i++) {
+        const l = L[i], r = R[i];
+        const al = l < 0 ? -l : l, ar = r < 0 ? -r : r;
+        if (al > pl) pl = al; if (ar > pr) pr = ar;
+        sl += l * l; sr += r * r; slr += l * r;
+      }
+      const db = v => v > 1e-6 ? 20 * Math.log10(v) : -90;
+      const peakL = db(pl), peakR = db(pr);
+      const rmsL = db(Math.sqrt(sl / L.length)), rmsR = db(Math.sqrt(sr / R.length));
+      for (const [ch, v] of [['L', peakL], ['R', peakR]]) {
+        if (v >= this.hold[ch] || now - this.hold['t' + ch] > 1500) { this.hold[ch] = v; this.hold['t' + ch] = now; }
+        if (v > -0.3) this.clip[ch] = now;
+      }
+      const den = Math.sqrt(sl * sr);
+      if (den > 1e-9) this.corr += (slr / den - this.corr) * 0.15; // phase: +1 = mono-safe, 0 = wide, -1 = out of phase
+      else this.corr += (1 - this.corr) * 0.02;
+      // loudness (approximate ITU-R BS.1770, K-weighted)
+      const KL = this._kL, KR = this._kR;
+      this.kL.getFloatTimeDomainData(KL); this.kR.getFloatTimeDomainData(KR);
+      let kl = 0, kr = 0;
+      for (let i = 0; i < KL.length; i++) { kl += KL[i] * KL[i]; kr += KR[i] * KR[i]; }
+      const ms = (kl + kr) / L.length;
+      this._ms.push({ t: now, ms });
+      while (this._ms.length && now - this._ms[0].t > 3000) this._ms.shift();
+      const avg = (from) => { let a = 0, n = 0; for (const b of this._ms) if (now - b.t <= from) { a += b.ms; n++; } return n ? a / n : 0; };
+      const lufs = m => m > 1e-10 ? -0.691 + 10 * Math.log10(m) : -70;
+      return {
+        peakL, peakR, rmsL, rmsR, holdL: this.hold.L, holdR: this.hold.R,
+        clipL: now - this.clip.L < 2000, clipR: now - this.clip.R < 2000,
+        corr: this.corr, lufsM: lufs(avg(400)), lufsS: lufs(avg(3000)), L: this._bL, R: this._bR,
+        silent: pl < 1e-4 && pr < 1e-4
+      };
     }
 
     _peak(an) {

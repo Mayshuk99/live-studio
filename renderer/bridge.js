@@ -74,6 +74,12 @@
     onUpdate: () => {},
     checkUpdates: async () => ({ status: 'dev' }),
     installUpdate: () => {},
-    confirmQuit: () => {}
+    confirmQuit: () => {},
+    yt: {
+      status: async () => ({ configured: false, signedIn: false, channel: null, browser: true }),
+      signIn: async () => ({ error: 'YouTube sign-in works in the installed app.' }),
+      signOut: async () => true,
+      api: async () => ({ error: 'Not available in browser mode' })
+    }
   };
 })();
