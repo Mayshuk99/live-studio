@@ -1,0 +1,44 @@
+{
+  "name": "live-studio",
+  "productName": "Live Studio",
+  "version": "1.2.0",
+  "description": "Live video production and streaming for Blackmagic capture cards and YouTube",
+  "main": "main.js",
+  "author": "Konstantin",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.0"
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.konstantin.livestudio",
+    "productName": "Live Studio",
+    "copyright": "Konstantin",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "preload.js", "streamer.js", "renderer/**/*", "build/icon.png", "package.json"],
+    "extraResources": [{ "from": "resources/ffmpeg", "to": "ffmpeg", "filter": ["**/*"] }],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico",
+      "artifactName": "Live-Studio-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Live Studio",
+      "runAfterFinish": true
+    }
+  }
+}

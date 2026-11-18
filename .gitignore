@@ -1,0 +1,3 @@
+node_modules/
+dist/
+resources/ffmpeg/*.exe

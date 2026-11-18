@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data: mediastream:; connect-src 'self' blob:; worker-src 'self' blob:">
+  <title>Live Studio</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo-dot"></span>Live Studio</div>
+    <input id="showName" class="show-name" spellcheck="false" title="Show name (used for recordings)">
+    <div class="view-tabs"><button id="viewLive" class="sel">▶ Run Show</button><button id="viewSetup">🛠 Setup</button></div>
+    <div class="status-strip">
+      <div id="liveStatus" class="pill off"><span class="dot"></span><span class="txt">OFF AIR</span></div>
+      <div id="recStatus" class="pill off"><span class="dot"></span><span class="txt">NOT RECORDING</span></div>
+      <div id="health" class="health"></div>
+    </div>
+    <div class="top-actions">
+      <button id="btnRec" class="btn rec-btn">● REC</button>
+      <button id="btnLive" class="btn live-btn">GO LIVE</button>
+      <button id="btnLayout" class="btn ghost" title="Arrange the interface">▦ Layout</button>
+      <button id="btnSettings" class="btn ghost" title="Settings">⚙ Settings</button>
+    </div>
+  </header>
+
+  <div id="updateBar" class="update-bar hidden"></div>
+  <div id="audioWake" class="wake hidden">Click anywhere to turn on audio</div>
+
+  <div id="layoutBar" class="layout-bar hidden">
+    <strong>Arrange your interface</strong>
+    <span class="hint">Arranging this screen only. Drag panels by their title, resize with the buttons, hide what you don't need.</span>
+    <select id="addPanel"><option value="">+ Show hidden panel…</option></select>
+    <label class="inline">Text size <input id="uiScale" type="range" min="0.85" max="1.5" step="0.05"></label>
+    <label class="inline">Accent <input id="uiAccent" type="color"></label>
+    <button id="layoutReset" class="btn small">Reset to standard</button>
+    <button id="layoutDone" class="btn primary">Done</button>
+  </div>
+
+  <main id="grid" class="grid"></main>
+
+  <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h2 id="modalTitle"></h2><button class="btn ghost" id="modalClose">✕</button></div><div id="modalBody" class="modal-body"></div></div></div>
+  <div id="toasts" class="toasts"></div>
+  <div id="sourceBin" class="source-bin" aria-hidden="true"></div>
+
+  <script src="bridge.js"></script>
+  <script src="engine.js"></script>
+  <script src="audio.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

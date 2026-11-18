@@ -1,0 +1,35 @@
+/* Live Studio — safe bridge between the interface and the desktop app */
+'use strict';
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('studio', {
+  isApp: true,
+  platform: process.platform,
+  version: () => ipcRenderer.invoke('app:version'),
+  loadShow: () => ipcRenderer.invoke('show:load'),
+  saveShow: obj => ipcRenderer.invoke('show:save', obj),
+  loadSettings: () => ipcRenderer.invoke('settings:load'),
+  saveSettings: obj => ipcRenderer.invoke('settings:save', obj),
+  pickMedia: () => ipcRenderer.invoke('media:pick'),
+  // reads a video/image file; the interface turns it into a playable in-memory URL
+  readMedia: p => ipcRenderer.invoke('media:read', p),
+  // converts a video the app can't play (e.g. ProRes .mov) into an MP4 copy; reports progress 0–100
+  convertMedia: (p, onProgress) => {
+    const h = (e, d) => { if (d && d.src === p && typeof onProgress === 'function') onProgress(d.percent); };
+    ipcRenderer.on('media:progress', h);
+    return ipcRenderer.invoke('media:convert', p).finally(() => ipcRenderer.removeListener('media:progress', h));
+  },
+  pickFolder: () => ipcRenderer.invoke('folder:pick'),
+  openFolder: p => ipcRenderer.invoke('folder:open', p),
+  showFile: p => ipcRenderer.invoke('file:show', p),
+  exportShow: obj => ipcRenderer.invoke('show:export', obj),
+  importShow: () => ipcRenderer.invoke('show:import'),
+  outStart: opts => ipcRenderer.invoke('out:start', opts),
+  outWrite: (id, buf) => ipcRenderer.send('out:data', id, new Uint8Array(buf)),
+  outStop: id => ipcRenderer.invoke('out:stop', id),
+  onOutEvent: cb => ipcRenderer.on('out:event', (e, ev) => cb(ev)),
+  setLive: live => ipcRenderer.send('app:live', live),
+  onUpdate: cb => ipcRenderer.on('update:status', (e, s) => cb(s)),
+  checkUpdates: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.send('update:install')
+});
