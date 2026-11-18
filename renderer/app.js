@@ -97,7 +97,7 @@
       audio: { inputs: [], media: { gain: 0, mute: false }, master: { gain: 0, limiter: true, monitor: false, monitorGain: -6, mono: false } },
       transition: { ms: 600 },
       service: {
-        hold: { mode: 'clock', target: '10:00', org: 'Pilgrim Baptist Church · Spokane, WA', title: 'Welcome', subtitle: 'Service will begin shortly', title2: 'Добро пожаловать', subtitle2: 'Служение скоро начнётся', lang2: 'ru', layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c', bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
+        hold: { mode: 'clock', target: '10:00', org: 'Pilgrim Baptist Church · Spokane, WA', title: 'Welcome', subtitle: 'Service will begin shortly', title2: 'Добро пожаловать', subtitle2: 'Служение скоро начнётся', lang2: 'ru', layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c', zoom: 1.12, focusX: 0.3, focusY: 0, bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
         start: { record: true, goLive: true, videoId: '', fadeMs: 2000, cameraShot: '', ytLive: true },
         end: { videoId: '', fadeMs: 1500, then: 'hold', stopRec: true, endStream: true, endAfter: 30, ytComplete: true }
       },
@@ -451,13 +451,13 @@
         const x0 = W * 0.30, rw = W - x0;
         g.fillStyle = '#090b12'; g.fillRect(0, 0, W, H);
         g.filter = h.blur ? `blur(${h.blur}px)` : 'none';
-        const sc = Math.max(rw / iw, H / ih), dw = iw * sc, dh = ih * sc;
-        const fx = h.focusX ?? 0.5;
+        const sc = Math.max(rw / iw, H / ih) * (h.zoom || 1), dw = iw * sc, dh = ih * sc;
+        const fx = h.focusX ?? 0.5, fy = h.focusY ?? 0.5;
         g.save(); g.beginPath(); g.rect(x0, 0, rw, H); g.clip();
-        g.drawImage(holdBg, x0 + (rw - dw) * fx, (H - dh) / 2, dw, dh);
+        g.drawImage(holdBg, x0 + (rw - dw) * fx, (H - dh) * fy, dw, dh);
         g.restore(); g.filter = 'none';
         // fade the picture's left edge into the panel (drawn per row so the panel's own shading matches)
-        const fw = rw * 0.5;
+        const fw = rw * (h.fade ?? 0.5);
         const gr = g.createLinearGradient(x0 - 1, 0, x0 + fw, 0);
         gr.addColorStop(0, 'rgba(9,11,18,1)'); gr.addColorStop(0.3, 'rgba(9,11,18,.82)'); gr.addColorStop(0.65, 'rgba(9,11,18,.35)'); gr.addColorStop(1, 'rgba(9,11,18,0)');
         g.fillStyle = gr; g.fillRect(x0 - 1, 0, fw + 1, H);
@@ -465,9 +465,9 @@
         const gb = g.createLinearGradient(0, H * 0.6, 0, H); gb.addColorStop(0, 'rgba(6,8,14,0)'); gb.addColorStop(1, `rgba(6,8,14,${h.dim * 0.7})`);
         g.fillStyle = gb; g.fillRect(0, 0, W, H);
       } else {
-        const s = Math.max(W / iw, H / ih) * (h.blur ? 1.04 : 1);
+        const s = Math.max(W / iw, H / ih) * (h.blur ? 1.04 : 1) * (h.zoom || 1);
         if (h.blur) g.filter = `blur(${h.blur}px)`;
-        g.drawImage(holdBg, (W - iw * s) / 2, (H - ih * s) / 2, iw * s, ih * s);
+        g.drawImage(holdBg, (W - iw * s) * (h.focusX ?? 0.5), (H - ih * s) * (h.focusY ?? 0.5), iw * s, ih * s);
         g.filter = 'none';
         g.fillStyle = `rgba(6,8,14,${h.dim})`; g.fillRect(0, 0, W, H);
       }
@@ -1308,7 +1308,9 @@
           el('div', null,
             slider({ label: 'Darken picture', min: 0, max: 0.85, step: 0.01, value: H.dim ?? 0.35, reset: 0.35, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { H.dim = v; done(); } }),
             slider({ label: 'Blur picture', min: 0, max: 20, step: 1, value: H.blur || 0, reset: 0, fmt: v => v ? `${v}` : 'off', onInput: v => { H.blur = v; done(); } }),
-            slider({ label: 'Picture position', min: 0, max: 1, step: 0.01, value: H.focusX ?? 0.5, reset: 0.5, fmt: v => v < 0.4 ? 'left' : v > 0.6 ? 'right' : 'middle', onInput: v => { H.focusX = v; done(); } }))),
+            slider({ label: 'Zoom picture', min: 1, max: 2, step: 0.01, value: H.zoom || 1, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { H.zoom = v; done(); } }),
+            slider({ label: 'Move left / right', min: 0, max: 1, step: 0.01, value: H.focusX ?? 0.5, reset: 0.5, fmt: v => `${Math.round(v * 100)}`, onInput: v => { H.focusX = v; done(); } }),
+            slider({ label: 'Move up / down', min: 0, max: 1, step: 0.01, value: H.focusY ?? 0.5, reset: 0.5, fmt: v => `${Math.round(v * 100)}`, onInput: v => { H.focusY = v; done(); } }))),
 
         el('h3', null, '▶ When I press START SERVICE'),
         el('div', { class: 'row wrap', style: 'gap:18px;margin-bottom:10px' },
