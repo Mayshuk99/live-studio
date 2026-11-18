@@ -97,7 +97,7 @@
       audio: { inputs: [], media: { gain: 0, mute: false }, master: { gain: 0, limiter: true, monitor: false, monitorGain: -6, mono: false } },
       transition: { ms: 600 },
       service: {
-        hold: { mode: 'clock', target: '10:00', title: 'Welcome', subtitle: 'The service will begin shortly', bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
+        hold: { mode: 'clock', target: '10:00', title: 'Welcome', subtitle: 'Service will begin shortly', layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c', bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
         start: { record: true, goLive: true, videoId: '', fadeMs: 2000, cameraShot: '', ytLive: true },
         end: { videoId: '', fadeMs: 1500, then: 'hold', stopRec: true, endStream: true, endAfter: 30, ytComplete: true }
       },
@@ -439,21 +439,44 @@
     return t;
   }
   function drawHold() {
-    const h = SV().hold, W = 1920, H = 1080, g = holdCtx;
+    const h = Object.assign({ layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c' }, SV().hold), W = 1920, H = 1080, g = holdCtx;
     const f = h.bgFile && rt.files.get(h.bgFile);
     if (holdBgKey !== h.bgFile) { holdBgKey = h.bgFile; holdBg = null; }
     if (f && f.ok && f.el && f.el.tagName === 'IMG') holdBg = f.el;
+    g.save();
     if (holdBg) {
-      const s = Math.max(W / holdBg.naturalWidth, H / holdBg.naturalHeight);
-      g.drawImage(holdBg, (W - holdBg.naturalWidth * s) / 2, (H - holdBg.naturalHeight * s) / 2, holdBg.naturalWidth * s, holdBg.naturalHeight * s);
-      g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(0, 0, W, H);
+      const iw = holdBg.naturalWidth, ih = holdBg.naturalHeight;
+      if (h.layout === 'side') {
+        // picture fills the right part of the screen and fades into a dark panel behind the text
+        const x0 = W * 0.30, rw = W - x0;
+        g.fillStyle = '#090b12'; g.fillRect(0, 0, W, H);
+        g.filter = h.blur ? `blur(${h.blur}px)` : 'none';
+        const sc = Math.max(rw / iw, H / ih), dw = iw * sc, dh = ih * sc;
+        const fx = h.focusX ?? 0.5;
+        g.save(); g.beginPath(); g.rect(x0, 0, rw, H); g.clip();
+        g.drawImage(holdBg, x0 + (rw - dw) * fx, (H - dh) / 2, dw, dh);
+        g.restore(); g.filter = 'none';
+        // fade the picture's left edge into the panel (drawn per row so the panel's own shading matches)
+        const fw = rw * 0.5;
+        const gr = g.createLinearGradient(x0 - 1, 0, x0 + fw, 0);
+        gr.addColorStop(0, 'rgba(9,11,18,1)'); gr.addColorStop(0.3, 'rgba(9,11,18,.82)'); gr.addColorStop(0.65, 'rgba(9,11,18,.35)'); gr.addColorStop(1, 'rgba(9,11,18,0)');
+        g.fillStyle = gr; g.fillRect(x0 - 1, 0, fw + 1, H);
+        g.fillStyle = `rgba(6,8,14,${h.dim * 0.45})`; g.fillRect(x0, 0, rw, H);
+        const gb = g.createLinearGradient(0, H * 0.6, 0, H); gb.addColorStop(0, 'rgba(6,8,14,0)'); gb.addColorStop(1, `rgba(6,8,14,${h.dim * 0.7})`);
+        g.fillStyle = gb; g.fillRect(0, 0, W, H);
+      } else {
+        const s = Math.max(W / iw, H / ih) * (h.blur ? 1.04 : 1);
+        if (h.blur) g.filter = `blur(${h.blur}px)`;
+        g.drawImage(holdBg, (W - iw * s) / 2, (H - ih * s) / 2, iw * s, ih * s);
+        g.filter = 'none';
+        g.fillStyle = `rgba(6,8,14,${h.dim})`; g.fillRect(0, 0, W, H);
+      }
     } else {
       const gr = g.createLinearGradient(0, 0, W, H); gr.addColorStop(0, h.bgColor); gr.addColorStop(1, h.bgColor2 || h.bgColor);
       g.fillStyle = gr; g.fillRect(0, 0, W, H);
     }
-    const font = '"Segoe UI", system-ui, sans-serif';
-    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = h.textColor;
-    g.shadowColor = 'rgba(0,0,0,.5)'; g.shadowBlur = 20;
+    g.restore();
+    const font = '"Segoe UI", "Segoe UI Variable Display", system-ui, sans-serif';
     const now = new Date();
     let big, small;
     if (h.mode === 'clock') { big = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); small = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); }
@@ -463,13 +486,33 @@
       else { big = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); small = 'Starting now'; }
       if (left <= 0 && h.autoStart && rt.service === 'hold' && !rt.autoStarted) { rt.autoStarted = true; startService(); }
     }
-    g.font = `600 64px ${font}`; g.globalAlpha = 0.95; g.fillText(h.title || '', W / 2, H / 2 - 230);
-    g.font = `500 40px ${font}`; g.globalAlpha = 0.75; g.fillText(small, W / 2, H / 2 - 120);
-    g.font = `300 230px ${font}`; g.globalAlpha = 1; g.fillText(big, W / 2, H / 2 + 30);
-    g.font = `400 44px ${font}`; g.globalAlpha = 0.8; g.fillText(h.subtitle || '', W / 2, H / 2 + 220);
-    g.globalAlpha = 1; g.shadowBlur = 0;
+    g.fillStyle = h.textColor; g.textBaseline = 'alphabetic';
+    g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 24; g.shadowOffsetY = 2;
+    if (h.layout === 'side') {
+      const x = 150; g.textAlign = 'left';
+      g.shadowBlur = 0; g.fillStyle = h.accent; g.fillRect(x, 300, 90, 8); g.shadowBlur = 24; g.fillStyle = h.textColor;
+      g.font = `700 140px ${font}`; g.fillText(h.title || '', x - 6, 450);
+      g.font = `300 58px ${font}`; g.globalAlpha = 0.92; g.fillText(h.subtitle || '', x, 535);
+      // clock card
+      g.globalAlpha = 1; g.shadowBlur = 0;
+      g.font = `200 150px ${font}`; const tw = g.measureText(big).width;
+      const cw = Math.max(tw, 420) + 90, cy = 640, ch = 250;
+      g.fillStyle = 'rgba(255,255,255,.08)'; roundRectPath(g, x - 4, cy, cw, ch, 22); g.fill();
+      g.strokeStyle = 'rgba(255,255,255,.16)'; g.lineWidth = 2; g.stroke();
+      g.fillStyle = h.accent; g.font = `600 30px ${font}`; g.fillText(small.toUpperCase(), x + 40, cy + 60);
+      g.fillStyle = h.textColor; g.font = `200 150px ${font}`; g.fillText(big, x + 34, cy + 205);
+    } else {
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `700 110px ${font}`; g.fillText(h.title || '', W / 2, H / 2 - 250);
+      g.font = `300 52px ${font}`; g.globalAlpha = 0.9; g.fillText(h.subtitle || '', W / 2, H / 2 - 150);
+      g.globalAlpha = 1; g.shadowBlur = 0; g.fillStyle = h.accent; g.fillRect(W / 2 - 60, H / 2 - 95, 120, 6); g.fillStyle = h.textColor; g.shadowBlur = 24;
+      g.font = `500 36px ${font}`; g.globalAlpha = 0.8; g.fillText(small.toUpperCase(), W / 2, H / 2 - 20);
+      g.font = `200 220px ${font}`; g.globalAlpha = 1; g.fillText(big, W / 2, H / 2 + 130);
+    }
+    g.globalAlpha = 1; g.shadowBlur = 0; g.shadowOffsetY = 0;
     const src = engine.sources.get('hold'); if (src) src.dirty = true;
   }
+  function roundRectPath(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
   engine.setSource('hold', holdCanvas, 'image');
   let lastHoldSec = -1;
   setInterval(() => { const s2 = Math.floor(Date.now() / 1000); if (s2 !== lastHoldSec) { lastHoldSec = s2; drawHold(); } }, 100);
@@ -1242,6 +1285,14 @@
           el('span', { class: 'muted' }, 'or picture:'),
           select([['', '— none —'], ...imgs().map(f => [f.id, f.name])], H.bgFile, v => { H.bgFile = v; done(); }),
           el('button', { class: 'btn small', onclick: async () => { const a = await addFiles(); const i = a.find(f => f.kind === 'image'); if (i) { H.bgFile = i.id; setTimeout(done, 300); draw(); } } }, 'Import picture…')),
+        el('div', { class: 'grid2', style: 'margin-top:10px' },
+          el('div', null,
+            el('div', { class: 'field' }, el('span', null, 'Layout'), select([['side', 'Text on the left, picture on the right'], ['center', 'Everything in the centre']], H.layout || 'side', v => { H.layout = v; done(); })),
+            el('label', { class: 'inline' }, el('input', { type: 'color', value: H.accent || '#d4a24c', oninput: e => { H.accent = e.target.value; done(); } }), 'Accent colour')),
+          el('div', null,
+            slider({ label: 'Darken picture', min: 0, max: 0.85, step: 0.01, value: H.dim ?? 0.35, reset: 0.35, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { H.dim = v; done(); } }),
+            slider({ label: 'Blur picture', min: 0, max: 20, step: 1, value: H.blur || 0, reset: 0, fmt: v => v ? `${v}` : 'off', onInput: v => { H.blur = v; done(); } }),
+            slider({ label: 'Picture position', min: 0, max: 1, step: 0.01, value: H.focusX ?? 0.5, reset: 0.5, fmt: v => v < 0.4 ? 'left' : v > 0.6 ? 'right' : 'middle', onInput: v => { H.focusX = v; done(); } }))),
 
         el('h3', null, '▶ When I press START SERVICE'),
         el('div', { class: 'row wrap', style: 'gap:18px;margin-bottom:10px' },
