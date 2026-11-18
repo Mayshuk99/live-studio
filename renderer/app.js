@@ -97,7 +97,7 @@
       audio: { inputs: [], media: { gain: 0, mute: false }, master: { gain: 0, limiter: true, monitor: false, monitorGain: -6, mono: false } },
       transition: { ms: 600 },
       service: {
-        hold: { mode: 'clock', target: '10:00', title: 'Welcome', subtitle: 'Service will begin shortly', layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c', bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
+        hold: { mode: 'clock', target: '10:00', org: 'Pilgrim Baptist Church · Spokane, WA', title: 'Welcome', subtitle: 'Service will begin shortly', title2: 'Добро пожаловать', subtitle2: 'Служение скоро начнётся', lang2: 'ru', layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c', bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
         start: { record: true, goLive: true, videoId: '', fadeMs: 2000, cameraShot: '', ytLive: true },
         end: { videoId: '', fadeMs: 1500, then: 'hold', stopRec: true, endStream: true, endAfter: 30, ytComplete: true }
       },
@@ -479,20 +479,30 @@
     const font = '"Segoe UI", "Segoe UI Variable Display", system-ui, sans-serif';
     const now = new Date();
     let big, small;
-    if (h.mode === 'clock') { big = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); small = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); }
+    const second = h.lang2 && Math.floor(now / 6000) % 2 === 1; // alternate languages every 6 seconds
+    const loc = second ? h.lang2 : 'en-US';
+    const TX = { en: ['Service starts in', 'Starting now'], ru: ['Служение начнётся через', 'Начинаем'], uk: ['Служіння почнеться через', 'Починаємо'] };
+    const tx = TX[second ? h.lang2 : 'en'] || TX.en;
+    if (h.mode === 'clock') { big = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); small = now.toLocaleDateString(loc, { weekday: 'long', month: 'long', day: 'numeric' }); }
     else {
       const left = Math.round((holdTarget() - now) / 1000);
-      if (left > 0) { const m = Math.floor(left / 60), sec = left % 60, hr = Math.floor(m / 60); big = hr ? `${hr}:${String(m % 60).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`; small = 'Service starts in'; }
-      else { big = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); small = 'Starting now'; }
+      if (left > 0) { const m = Math.floor(left / 60), sec = left % 60, hr = Math.floor(m / 60); big = hr ? `${hr}:${String(m % 60).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`; small = tx[0]; }
+      else { big = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); small = tx[1]; }
       if (left <= 0 && h.autoStart && rt.service === 'hold' && !rt.autoStarted) { rt.autoStarted = true; startService(); }
     }
     g.fillStyle = h.textColor; g.textBaseline = 'alphabetic';
     g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 24; g.shadowOffsetY = 2;
     if (h.layout === 'side') {
       const x = 150; g.textAlign = 'left';
-      g.shadowBlur = 0; g.fillStyle = h.accent; g.fillRect(x, 300, 90, 8); g.shadowBlur = 24; g.fillStyle = h.textColor;
-      g.font = `700 140px ${font}`; g.fillText(h.title || '', x - 6, 450);
-      g.font = `300 58px ${font}`; g.globalAlpha = 0.92; g.fillText(h.subtitle || '', x, 535);
+      const fitFont = (text, weight, size, maxW) => { let z = size; g.font = `${weight} ${z}px ${font}`; while (z > 20 && g.measureText(text).width > maxW) { z -= 2; g.font = `${weight} ${z}px ${font}`; } };
+      const maxW = 820;
+      if (h.org) { g.shadowBlur = 8; g.letterSpacing = '4px'; fitFont(h.org.toUpperCase(), 600, 30, maxW); g.globalAlpha = 0.88; g.fillText(h.org.toUpperCase(), x, 150); g.letterSpacing = '0px'; g.globalAlpha = 1; }
+      g.shadowBlur = 0; g.fillStyle = h.accent; g.fillRect(x, 190, 90, 8); g.shadowBlur = 24; g.fillStyle = h.textColor;
+      fitFont(h.title || '', 700, 124, maxW); g.fillText(h.title || '', x - 5, 320);
+      let y = 320;
+      if (h.title2) { fitFont(h.title2, 600, 66, maxW); g.globalAlpha = 0.92; g.fillText(h.title2, x - 2, y += 86); g.globalAlpha = 1; }
+      fitFont(h.subtitle || '', 300, 46, maxW); g.globalAlpha = 0.92; g.fillText(h.subtitle || '', x, y += 80);
+      if (h.subtitle2) { fitFont(h.subtitle2, 300, 46, maxW); g.globalAlpha = 0.78; g.fillText(h.subtitle2, x, y += 58); }
       // clock card
       g.globalAlpha = 1; g.shadowBlur = 0;
       g.font = `200 150px ${font}`; const tw = g.measureText(big).width;
@@ -503,8 +513,10 @@
       g.fillStyle = h.textColor; g.font = `200 150px ${font}`; g.fillText(big, x + 34, cy + 205);
     } else {
       g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = `700 110px ${font}`; g.fillText(h.title || '', W / 2, H / 2 - 250);
-      g.font = `300 52px ${font}`; g.globalAlpha = 0.9; g.fillText(h.subtitle || '', W / 2, H / 2 - 150);
+      if (h.org) { g.letterSpacing = '4px'; g.font = `600 30px ${font}`; g.globalAlpha = 0.85; g.fillText(h.org.toUpperCase(), W / 2, 90); g.letterSpacing = '0px'; g.globalAlpha = 1; }
+      g.font = `700 104px ${font}`; g.fillText(h.title || '', W / 2, H / 2 - 300);
+      if (h.title2) { g.font = `600 60px ${font}`; g.globalAlpha = 0.9; g.fillText(h.title2, W / 2, H / 2 - 215); }
+      g.font = `300 46px ${font}`; g.globalAlpha = 0.9; g.fillText([h.subtitle, h.subtitle2].filter(Boolean).join('  ·  '), W / 2, H / 2 - 145);
       g.globalAlpha = 1; g.shadowBlur = 0; g.fillStyle = h.accent; g.fillRect(W / 2 - 60, H / 2 - 95, 120, 6); g.fillStyle = h.textColor; g.shadowBlur = 24;
       g.font = `500 36px ${font}`; g.globalAlpha = 0.8; g.fillText(small.toUpperCase(), W / 2, H / 2 - 20);
       g.font = `200 220px ${font}`; g.globalAlpha = 1; g.fillText(big, W / 2, H / 2 + 130);
@@ -1276,9 +1288,13 @@
             el('div', { class: 'field' }, el('span', null, 'Show'), select([['clock', 'The time now (clock)'], ['countdown', 'Countdown to a start time'], ['youtube', 'Countdown to the YouTube event time']], H.mode, v => { H.mode = v; done(); draw(); })),
             H.mode === 'countdown' ? el('div', { class: 'field' }, el('span', null, 'Service starts at'), el('input', { type: 'time', value: H.target, oninput: e => { H.target = e.target.value; done(); } })) : null,
             H.mode !== 'clock' ? check(' Press START SERVICE automatically when the countdown ends', H.autoStart, v => { H.autoStart = v; done(); }) : null)),
-        el('div', { class: 'grid2', style: 'margin-top:10px' },
-          el('div', { class: 'field' }, el('span', null, 'Top line'), el('input', { type: 'text', value: H.title, oninput: e => { H.title = e.target.value; done(); } })),
-          el('div', { class: 'field' }, el('span', null, 'Bottom line'), el('input', { type: 'text', value: H.subtitle, oninput: e => { H.subtitle = e.target.value; done(); } }))),
+        el('div', { class: 'field', style: 'margin-top:10px' }, el('span', null, 'Church name (small line at the top)'), el('input', { type: 'text', value: H.org || '', oninput: e => { H.org = e.target.value; done(); } })),
+        el('div', { class: 'grid2' },
+          el('div', { class: 'field' }, el('span', null, 'Big title — English'), el('input', { type: 'text', value: H.title, oninput: e => { H.title = e.target.value; done(); } })),
+          el('div', { class: 'field' }, el('span', null, 'Big title — second language'), el('input', { type: 'text', value: H.title2 || '', placeholder: 'optional', oninput: e => { H.title2 = e.target.value; done(); } })),
+          el('div', { class: 'field' }, el('span', null, 'Message — English'), el('input', { type: 'text', value: H.subtitle, oninput: e => { H.subtitle = e.target.value; done(); } })),
+          el('div', { class: 'field' }, el('span', null, 'Message — second language'), el('input', { type: 'text', value: H.subtitle2 || '', placeholder: 'optional', oninput: e => { H.subtitle2 = e.target.value; done(); } }))),
+        el('div', { class: 'field' }, el('span', null, 'Date and countdown words'), select([['', 'English only'], ['ru', 'English and Russian (switch every 6 s)'], ['uk', 'English and Ukrainian (switch every 6 s)']], H.lang2 || '', v => { H.lang2 = v; done(); })),
         el('div', { class: 'row wrap', style: 'gap:14px' },
           el('label', { class: 'inline' }, el('input', { type: 'color', value: H.bgColor, oninput: e => { H.bgColor = e.target.value; done(); } }), el('input', { type: 'color', value: H.bgColor2, oninput: e => { H.bgColor2 = e.target.value; done(); } }), 'Background'),
           el('label', { class: 'inline' }, el('input', { type: 'color', value: H.textColor, oninput: e => { H.textColor = e.target.value; done(); } }), 'Text'),
