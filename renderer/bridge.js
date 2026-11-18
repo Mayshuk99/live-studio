@@ -11,6 +11,8 @@
   };
   const urls = new Map();
   const outListeners = [];
+  const webListeners = { frame: [], status: [] };
+  const webTimers = new Map();
   const outs = new Map();
   let n = 0;
   const emit = ev => outListeners.forEach(cb => cb(ev));
@@ -75,6 +77,31 @@
     checkUpdates: async () => ({ status: 'dev' }),
     installUpdate: () => {},
     confirmQuit: () => {},
+    // browser stand-in for web overlays: draws a fake caption page (the real app renders the actual web page)
+    webOpen: async (id, cfg) => {
+      clearInterval(webTimers.get(id));
+      const c = document.createElement('canvas'); c.width = cfg.width; c.height = cfg.height;
+      const g = c.getContext('2d');
+      const lines = ['Добро пожаловать на служение', 'Welcome to the service', 'Today we read from the Gospel of John', 'Сегодня мы читаем Евангелие от Иоанна'];
+      let n = 0;
+      const tick = () => {
+        g.clearRect(0, 0, c.width, c.height);
+        if (!cfg.transparent) { g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height); }
+        g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(c.width * 0.08, c.height * 0.25, c.width * 0.84, c.height * 0.5);
+        g.fillStyle = '#fff'; g.font = `600 ${Math.round(c.height * 0.2 * (cfg.zoom || 1))}px Inter, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(lines[n++ % lines.length], c.width / 2, c.height / 2);
+        const d = g.getImageData(0, 0, c.width, c.height).data, out = new Uint8Array(d.length);
+        for (let i = 0; i < d.length; i += 4) { const a = d[i + 3] / 255; out[i] = d[i + 2] * a; out[i + 1] = d[i + 1] * a; out[i + 2] = d[i] * a; out[i + 3] = d[i + 3]; }
+        webListeners.frame.forEach(cb => cb({ id, w: c.width, h: c.height, x: 0, y: 0, rw: c.width, rh: c.height, data: out }));
+      };
+      webListeners.status.forEach(cb => cb({ id, ok: true, text: 'Browser preview (simulated page)' }));
+      tick(); webTimers.set(id, setInterval(tick, 2500));
+      return true;
+    },
+    webClose: async id => { clearInterval(webTimers.get(id)); webTimers.delete(id); return true; },
+    webReload: async () => true,
+    onWebFrame: cb => webListeners.frame.push(cb),
+    onWebStatus: cb => webListeners.status.push(cb),
     yt: {
       status: async () => ({ configured: false, signedIn: false, channel: null, browser: true }),
       signIn: async () => ({ error: 'YouTube sign-in works in the installed app.' }),

@@ -61,7 +61,7 @@
     audio: { title: 'Audio', hint: 'what the stream hears' },
     shots: { title: 'Shots', hint: 'click = next · double-click = on air' },
     media: { title: 'Service', hint: 'start and end the service' },
-    speakers: { title: 'People', hint: 'click a name to put it on screen' },
+    speakers: { title: 'People', hint: 'double-click a name to put it on screen' },
     labels: { title: 'Titles & Graphics', hint: 'click to show / hide' },
     inputs: { title: 'Cameras & Files' },
     editor: { title: 'Shot Framing', hint: 'zoom and move the picture' },
@@ -101,6 +101,7 @@
         start: { record: true, goLive: true, videoId: '', fadeMs: 2000, cameraShot: '', ytLive: true },
         end: { videoId: '', fadeMs: 1500, then: 'hold', stopRec: true, endStream: true, endAfter: 30, ytComplete: true }
       },
+      webs: [],
       speakers: [
         { id: uid('spk'), name: 'Pastor Name', title: 'Senior Pastor', hotkey: '' },
         { id: uid('spk'), name: 'Worship Leader', title: 'Worship Team', hotkey: '' }
@@ -345,6 +346,8 @@
     startProgram(to, from, ms);
     if (ms) engine.fade(to, ms); else engine.cut(to);
     rt.previewId = from || to; engine.previewId = rt.previewId;
+    rt.webSuppress.clear();
+    refreshWebs();
     renderTally();
   }
   function takeShot(id, kind, ms) { if (!getShot(id) || id === engine.programId) return; setPreview(id); take(kind, ms); }
@@ -1010,6 +1013,12 @@
           el('div', { class: 'corner-pick' }, [['tl', '↖'], ['tr', '↗'], ['bl', '↙'], ['br', '↘']].map(([c, t]) => el('button', { class: 'btn small' + (s.pip.corner === c ? ' sel' : ''), onclick: () => { s.pip.corner = c; changed(); refresh('editor'); } }, t))),
           el('label', { class: 'inline grow' }, 'Size', el('input', { type: 'range', min: 0.15, max: 0.5, step: 0.01, value: s.pip.size, class: 'grow', oninput: e => { s.pip.size = +e.target.value; changed(); } }))) : null),
 
+      el('div', { class: 'section' }, el('h4', null, 'Web pages on this shot'),
+        show.webs.length ? el('div', { class: 'row wrap', style: 'gap:14px' }, show.webs.map(w => check(' 🌐 ' + (w.name || 'Web page'), (s.webIds || []).includes(w.id), v => { s.webIds = (s.webIds || []).filter(i => i !== w.id); if (v) s.webIds.push(w.id); changed(); refreshWebs(); })))
+          : el('div', { class: 'muted', style: 'font-size:.85em' }, 'Add a web page (e.g. live translation) with “+ Web page” in Titles & Graphics.'),
+        show.webs.length ? el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, 'Ticked pages appear automatically while this shot is live.') : null,
+        el('button', { class: 'btn small', style: 'margin-top:6px', onclick: () => editWeb(newWeb(), true) }, '+ Add web page')),
+
       el('div', { class: 'section' }, el('h4', null, 'Automatic label'),
         select([['', 'No label'], ...show.speakers.map(p => [p.id, `Speaker: ${p.name}${p.title ? ' — ' + p.title : ''}`]), ...show.labels.map(l => [l.id, `${l.title}${l.subtitle ? ' — ' + l.subtitle : ''}`])], s.labelId, v => { s.labelId = v; changed(); }),
         el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, 'Shown when this shot goes live, hidden when you switch away.')),
@@ -1081,6 +1090,119 @@
       el('div', { class: 'muted', style: 'font-size:.82em;margin-top:8px' }, 'Zebra stripes on the Preview screen show parts that are too bright. Double-click a slider to reset it.')
     );
   };
+
+  /* ================= web page overlays (live translation captions, scoreboards, any link) ================= */
+  rt.webManual = new Set(); rt.webSuppress = new Set(); rt.webStatus = new Map(); rt.webCanvas = new Map();
+  const WEB_POS = {
+    bottom: ['Bottom third', [0, 0.667, 1, 0.333]],
+    bottom4: ['Bottom quarter', [0, 0.75, 1, 0.25]],
+    top: ['Top third', [0, 0, 1, 0.333]],
+    full: ['Full screen', [0, 0, 1, 1]],
+    right: ['Right third', [0.667, 0, 0.333, 1]],
+    left: ['Left third', [0, 0, 0.333, 1]],
+    custom: ['Custom…', null]
+  };
+  const newWeb = () => ({ id: uid('web'), name: 'Translation', url: '', pos: 'bottom', rect: WEB_POS.bottom[1].slice(), autoSize: true, width: 1920, height: 360, fps: 15, zoom: 1, transparent: true, key: { on: false, color: '#000000', tol: 0.15 }, opacity: 1, fadeMs: 400, css: '' });
+  function webPageSize(w) {
+    if (!w.autoSize) return [w.width, w.height];
+    return [Math.round(1920 * w.rect[2]), Math.round(1080 * w.rect[3])];
+  }
+  function openWeb(w) {
+    const [pw, ph] = webPageSize(w);
+    let c = rt.webCanvas.get(w.id);
+    if (!c) { c = el('canvas', { width: pw, height: ph }); rt.webCanvas.set(w.id, c); }
+    c.width = pw; c.height = ph;
+    engine.setSource(w.id, c, 'image');
+    engine.setWeb(engineWeb(w), webWanted(w.id));
+    S.webOpen(w.id, { url: w.url, width: pw, height: ph, fps: w.fps, zoom: w.zoom, transparent: w.transparent, css: w.css });
+  }
+  function closeWeb(id) { S.webClose(id); engine.removeWeb(id); engine.removeSource(id); rt.webCanvas.delete(id); }
+  const engineWeb = w => ({ id: w.id, rect: w.rect, opacity: w.opacity, key: w.key, fadeMs: w.fadeMs });
+  S.onWebFrame(f => {
+    const c = rt.webCanvas.get(f.id);
+    if (!c) return;
+    if (c.width !== f.w || c.height !== f.h) { c.width = f.w; c.height = f.h; }
+    const src = f.data, img = new ImageData(f.rw, f.rh), d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const a = src[i + 3];
+      if (a === 255 || a === 0) { d[i] = src[i + 2]; d[i + 1] = src[i + 1]; d[i + 2] = src[i]; }
+      else { const k = 255 / a; d[i] = Math.min(255, src[i + 2] * k); d[i + 1] = Math.min(255, src[i + 1] * k); d[i + 2] = Math.min(255, src[i] * k); }
+      d[i + 3] = a;
+    }
+    c.getContext('2d').putImageData(img, f.x, f.y);
+    const s2 = engine.sources.get(f.id); if (s2) s2.dirty = true;
+  });
+  S.onWebStatus(st => {
+    rt.webStatus.set(st.id, st);
+    document.querySelectorAll(`[data-web-status="${st.id}"]`).forEach(n => { n.textContent = st.text; n.className = st.ok ? 'muted' : 'status-bad'; });
+  });
+  function webWanted(id) {
+    if (rt.webManual.has(id)) return true;
+    const s2 = getShot(engine.trans ? engine.trans.to : engine.programId);
+    return !!(s2 && (s2.webIds || []).includes(id) && !rt.webSuppress.has(id));
+  }
+  function refreshWebs() { for (const w of show.webs) engine.setWeb(engineWeb(w), webWanted(w.id)); refreshWebStates(); }
+  function toggleWeb(id) {
+    if (engine.webVisible(id)) { rt.webManual.delete(id); rt.webSuppress.add(id); }
+    else { rt.webManual.add(id); rt.webSuppress.delete(id); }
+    refreshWebs();
+  }
+  function refreshWebStates() {
+    document.querySelectorAll('.gtile[data-web]').forEach(t => {
+      const on = engine.webVisible(t.dataset.web);
+      t.classList.toggle('on', on);
+      t.querySelector('.spk-air').textContent = on ? 'ON AIR' : '';
+    });
+  }
+  function editWeb(w, isNew) {
+    const body = el('div');
+    const view = el('canvas', { width: 480, height: 270, style: 'width:100%;aspect-ratio:16/9;border-radius:8px;display:block;background:repeating-conic-gradient(#2a2a2e 0% 25%, #1c1c1f 0% 50%) 50% / 24px 24px' });
+    const reopen = debounce(() => { if (show.webs.includes(w)) openWeb(w); }, 700);
+    const live = () => { engine.setWeb(engineWeb(w)); changed(); };
+    let raf = 0;
+    const paint = () => { if (!view.isConnected) return; const c = rt.webCanvas.get(w.id), g = view.getContext('2d'); g.clearRect(0, 0, 480, 270); g.fillStyle = 'rgba(37,99,235,.25)'; const r = w.rect; g.fillRect(r[0] * 480, r[1] * 270, r[2] * 480, r[3] * 270); if (c) g.drawImage(c, r[0] * 480, r[1] * 270, r[2] * 480, r[3] * 270); raf = requestAnimationFrame(paint); };
+    const draw = () => {
+      body.innerHTML = '';
+      const st = rt.webStatus.get(w.id) || { ok: false, text: w.url ? '' : 'Enter the web address of the page' };
+      const custom = w.pos === 'custom';
+      const rs = (label, i) => slider({ label, min: 0, max: 1, step: 0.005, value: w.rect[i], reset: (WEB_POS.bottom[1])[i], fmt: v => `${Math.round(v * 100)}%`, onInput: v => { w.rect[i] = v; live(); if (w.autoSize) reopen(); } });
+      put(body,
+        el('div', { class: 'field' }, el('span', null, 'Name'), el('input', { type: 'text', value: w.name, oninput: e => { w.name = e.target.value; changed(); } })),
+        el('div', { class: 'field' }, el('span', null, 'Web address (link)'), el('div', { class: 'row' },
+          el('input', { type: 'text', class: 'grow', value: w.url, placeholder: 'https://… (the page that shows the live translation)', oninput: e => { w.url = e.target.value.trim(); changed(); reopen(); } }),
+          el('button', { class: 'btn small', onclick: () => S.webReload(w.id) }, '↻ Reload'))),
+        el('div', { style: 'font-size:.85em;margin:-4px 0 10px' }, el('span', { class: st.ok ? 'muted' : 'status-bad', dataset: { webStatus: w.id } }, st.text)),
+        view,
+        el('div', { class: 'grid2', style: 'margin-top:12px' },
+          el('div', null,
+            el('div', { class: 'field' }, el('span', null, 'Position on screen'), select(Object.entries(WEB_POS).map(([k, v]) => [k, v[0]]), w.pos, v => { w.pos = v; if (WEB_POS[v][1]) w.rect = WEB_POS[v][1].slice(); live(); if (w.autoSize) reopen(); draw(); })),
+            custom ? el('div', null, rs('Left', 0), rs('Top', 1), rs('Width', 2), rs('Height', 3)) : null,
+            slider({ label: 'Text size', min: 0.5, max: 3, step: 0.05, value: w.zoom, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { w.zoom = v; changed(); reopen(); } }),
+            slider({ label: 'Opacity', min: 0.1, max: 1, step: 0.01, value: w.opacity, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { w.opacity = v; live(); } })),
+          el('div', null,
+            el('div', { style: 'margin-bottom:8px' }, check(' See-through page background', w.transparent, v => { w.transparent = v; changed(); reopen(); })),
+            el('div', { class: 'row wrap' }, check(' Remove a colour', w.key.on, v => { w.key.on = v; live(); }),
+              el('input', { type: 'color', value: w.key.color, title: 'Colour to remove (e.g. the page’s black or green background)', oninput: e => { w.key.color = e.target.value; live(); } })),
+            slider({ label: 'Removal strength', min: 0.02, max: 0.6, step: 0.01, value: w.key.tol, reset: 0.15, fmt: v => `${Math.round(v * 100)}`, onInput: v => { w.key.tol = v; live(); } }),
+            el('div', { class: 'field' }, el('span', null, 'Fade in / out'), select([[0, 'Instant'], [200, 'Fast'], [400, 'Normal'], [800, 'Smooth'], [1500, 'Slow']], w.fadeMs, v => { w.fadeMs = +v; live(); })),
+            el('div', { class: 'field' }, el('span', null, 'Updates per second'), select([[5, '5 (very light)'], [15, '15 (captions)'], [30, '30 (animations)']], w.fps, v => { w.fps = +v; changed(); reopen(); })))),
+        el('details', { style: 'margin-top:8px' }, el('summary', { class: 'muted', style: 'cursor:pointer' }, 'Advanced'),
+          el('div', { class: 'row wrap', style: 'margin:8px 0' }, check(' Page size follows position', w.autoSize, v => { w.autoSize = v; changed(); reopen(); draw(); }),
+            !w.autoSize ? el('label', { class: 'inline' }, 'Width', el('input', { type: 'number', value: w.width, style: 'width:90px', onchange: e => { w.width = +e.target.value || 1920; changed(); reopen(); } })) : null,
+            !w.autoSize ? el('label', { class: 'inline' }, 'Height', el('input', { type: 'number', value: w.height, style: 'width:90px', onchange: e => { w.height = +e.target.value || 1080; changed(); reopen(); } })) : null),
+          el('div', { class: 'field' }, el('span', null, 'Custom CSS (to restyle the page)'), el('textarea', { rows: 3, style: 'font-family:Consolas,monospace', placeholder: 'e.g.  body { font-size: 48px; color: white; }', oninput: e => { w.css = e.target.value; changed(); reopen(); } }, w.css || ''))),
+        el('div', { class: 'row', style: 'margin-top:14px' },
+          isNew ? null : el('button', { class: 'btn danger', onclick: () => { closeWeb(w.id); show.webs = show.webs.filter(x => x !== w); show.shots.forEach(sh => { if (sh.webIds) sh.webIds = sh.webIds.filter(i => i !== w.id); }); delete settings.hotkeys['web:' + w.id]; saveSettings(); changed(); closeModal(); refresh('labels'); refresh('editor'); } }, 'Delete'),
+          el('span', { class: 'grow' }),
+          el('button', { class: 'btn', onclick: () => toggleWeb(w.id) }, 'Show / hide on air'),
+          el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('labels'); refresh('editor'); } }, 'Done')));
+      cancelAnimationFrame(raf); paint();
+    };
+    if (isNew) { show.webs.push(w); changed(); openWeb(w); }
+    draw();
+    openModal(isNew ? 'Add web page overlay' : `Web page — ${w.name}`, body);
+    cancelAnimationFrame(raf); raf = requestAnimationFrame(paint);
+  }
 
   /* ================= label designer: build how a label looks ================= */
   function restyleSpeaker() {
@@ -1170,6 +1292,14 @@
         el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''), keyChip('lbl:' + L.id)),
         el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editLabel(L); } }, '✎')));
     });
+    for (const w of show.webs) {
+      const on = engine.webVisible(w.id), st = rt.webStatus.get(w.id) || { ok: true, text: '' };
+      row.append(el('div', { class: 'gtile web' + (on ? ' on' : ''), dataset: { web: w.id }, onclick: () => toggleWeb(w.id) },
+        el('div', { class: 'g-title' }, '🌐 ' + (w.name || 'Web page')), el('div', { class: 'g-sub', dataset: { webStatus: w.id } }, st.ok ? (w.url || '').replace(/^https?:\/\//, '') : st.text),
+        el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''), keyChip('web:' + w.id)),
+        el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editWeb(w); } }, '✎')));
+    }
+    row.append(el('div', { class: 'gtile add web-add', onclick: () => editWeb(newWeb(), true) }, '+ Web page'));
     row.append(el('div', { class: 'gtile add', onclick: () => {
       const last = show.labels[show.labels.length - 1] || show.speakerStyle;
       const L = { id: uid('lbl'), title: 'New title', subtitle: '', style: last.style || 'lower', color: last.color || settings.ui.accent, design: clone(last.design || {}), autoHide: 0 };
@@ -1536,7 +1666,7 @@
     const st = show.speakerStyle;
     const row = el('div', { class: 'tile-row' });
     show.speakers.forEach(p => {
-      row.append(el('div', { class: 'spk' + (speakerOnAir(p.id) ? ' on' : ''), dataset: { spk: p.id }, onclick: () => toggleSpeaker(p.id) },
+      row.append(el('div', { class: 'spk' + (speakerOnAir(p.id) ? ' on' : ''), dataset: { spk: p.id }, title: 'Double-click to show / hide', onclick: e => { if (e.detail === 1) spkHint(e.currentTarget); }, ondblclick: () => toggleSpeaker(p.id) },
         el('div', { class: 'spk-name' }, p.name || '(no name)'),
         el('div', { class: 'spk-title' }, p.title || ''),
         el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, speakerOnAir(p.id) ? 'ON AIR' : ''), keyChip('spk:' + p.id)),
@@ -1550,6 +1680,9 @@
         el('button', { class: 'btn small danger', onclick: hideSpeaker }, 'Hide', keyChip('hideAll'))),
       row);
   };
+  function spkHint(t) {
+    t.classList.add('hint'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('hint'), 1200);
+  }
   function refreshSpeakerStates() {
     document.querySelectorAll('.spk[data-spk]').forEach(c => {
       const on = speakerOnAir(c.dataset.spk) || (rt.speakerId === c.dataset.spk);
@@ -1997,6 +2130,8 @@
     for (const id of [...rt.files.keys()]) unloadFile(id);
     for (const a of show.audio.inputs) mixer.removeInput(a.id);
     for (const L of show.labels) engine.removeLabel(L.id);
+    for (const w of show.webs) closeWeb(w.id);
+    rt.webManual.clear(); rt.webSuppress.clear();
     show = merge(defaultShow(), obj);
     show.firstRunDone = true;
     changed();
@@ -2029,6 +2164,7 @@
     A('startService', 'Service', 'START SERVICE', 'Ctrl+KeyS', startService);
     A('endService', 'Service', 'END SERVICE', 'Ctrl+KeyE', endService);
     A('hold', 'Service', 'Show the holding screen (clock)', 'KeyC', showHold);
+    show.webs.forEach(w => A('web:' + w.id, 'Web page overlays (show / hide)', w.name || 'Web page', '', () => toggleWeb(w.id)));
     A('hideAll', 'Labels & speakers', 'Hide all labels and name captions', 'KeyH', hideAllGraphics);
     show.speakers.forEach((p, i) => A('spk:' + p.id, 'Speakers (show / hide name caption)', `${p.name}${p.title ? ' — ' + p.title : ''}`, i < 9 ? `Alt+Digit${i + 1}` : '', () => toggleSpeaker(p.id)));
     show.labels.forEach((L, i) => A('lbl:' + L.id, 'Labels (show / hide)', L.title || 'Label', i < 8 ? `F${i + 1}` : '', () => toggleLabel(L.id)));
@@ -2184,7 +2320,8 @@
     await Promise.all([
       ...show.cameras.map(c => openCamera(c)),
       ...show.files.map(f => loadFile(f)),
-      ...show.audio.inputs.map(a => openAudioInput(a, true))
+      ...show.audio.inputs.map(a => openAudioInput(a, true)),
+      ...show.webs.map(w => openWeb(w))
     ]);
     refreshAll();
   }

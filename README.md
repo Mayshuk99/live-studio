@@ -60,6 +60,16 @@ Click **Connect…** in the Service panel. The window walks through a one-time G
 - shows whether YouTube is receiving your stream (good / OK / poor) and the viewer count,
 - starts the event on YouTube after START SERVICE and ends it after END SERVICE.
 
+## Web page overlays (live translation)
+
+In **Titles & Graphics**, click **+ Web page** and paste the link of your live translation page. Live Studio loads the page in the background and puts it over the video, like a browser source.
+- Choose where it sits: bottom third, top, full screen, a side, or custom.
+- **See-through page background** makes the page's own background invisible. **Remove a colour** keys out a solid background, such as black or green.
+- Set the text size, opacity, fade speed and updates per second. Under *Advanced* you can add custom CSS to restyle the page.
+- **On air:** click the 🌐 tile (or give it a key in Keyboard shortcuts). It then stays on screen through every shot change until you turn it off.
+- **Per shot:** in Shot Framing, tick the page under *Web pages on this shot* so it appears automatically whenever that shot is live.
+- The page's own sound is muted.
+
 ## Audio
 
 - The master section shows peak and RMS levels with peak hold and clip lights, plus a **phase (mono check)** meter and stereo picture, and loudness in LUFS (YouTube aims for about −14).
@@ -77,7 +87,7 @@ Click **Connect…** in the Service panel. The window walks through a one-time G
 | Two screens | **▶ Run Show** has what you use during the service (video, audio, shots, speaker names, labels, videos). **🛠 Setup** has cameras, shot framing and color. |
 | Design how labels look | **🎨 Design look…** on any label or in Speaker Names: font, size, colors, box, corners, position on screen, animation and fade speed, with a live preview. |
 | Show or hide a label | **SHOW** button, or `F1`–`F8` |
-| Caption the person speaking | **Speakers** panel: click a name to show it, click again to hide it. Clicking another name swaps the caption. Keys `Alt`+`1`–`9`. Add people with the Name / Title row. |
+| Caption the person speaking | **People** panel: double-click a name to show it, double-click again to hide it. Clicking another name swaps the caption. Keys `Alt`+`1`–`9`. Add people with the Name / Title row. |
 | Before-service video | **Before Service** panel: **Import video…**, then choose *Play once* or *Loop until I start the service*. Pick which camera it fades into and how long the fade is. Press **▶ PLAY** (`I`). When looping, press **START SERVICE** (`S`) to fade into the camera. |
 | Play the ending | **▶ PLAY ENDING**. It can fade to black and end the stream automatically. |
 | Fade to black | **FADE TO BLACK** or `B` |

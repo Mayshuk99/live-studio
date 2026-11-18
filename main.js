@@ -84,6 +84,8 @@ function createWindow() {
     if (input.type === 'keyDown' && input.key === 'F11') win.setFullScreen(!win.isFullScreen());
   });
 
+  // hidden web-overlay pages must not keep the app running after the main window closes
+  win.on('closed', () => { for (const id of [...webPages.keys()]) webClose(id); app.quit(); });
   win.on('close', e => {
     if (!isLive && !outputs.active) return;
     const r = dialog.showMessageBoxSync(win, {
@@ -204,6 +206,55 @@ ipcMain.handle('out:start', (e, opts) => {
 ipcMain.on('out:data', (e, id, data) => outputs.write(id, data));
 ipcMain.handle('out:stop', (e, id) => outputs.stop(id));
 ipcMain.on('app:live', (e, live) => { isLive = !!live; });
+
+/* ---------- web page overlays: pages rendered off-screen (like a browser source) ---------- */
+const webPages = new Map(); // id -> { win, cfg }
+function webSend(ch, payload) { if (win && !win.isDestroyed()) win.webContents.send(ch, payload); }
+function webClose(id) {
+  const w = webPages.get(id);
+  if (w) { try { w.win.destroy(); } catch (e) { /* */ } webPages.delete(id); }
+}
+function webOpen(id, cfg) {
+  webClose(id);
+  const width = Math.max(64, Math.min(3840, Math.round(cfg.width || 1920)));
+  const height = Math.max(64, Math.min(2160, Math.round(cfg.height || 1080)));
+  const page = new BrowserWindow({
+    show: false, width, height, useContentSize: true, frame: false, transparent: true, backgroundColor: '#00000000',
+    webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, partition: 'persist:web-overlays' }
+  });
+  const entry = { win: page, cfg };
+  webPages.set(id, entry);
+  const wc = page.webContents;
+  wc.setAudioMuted(cfg.muted !== false);
+  wc.setFrameRate(Math.max(1, Math.min(60, cfg.fps || 15)));
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  wc.on('paint', (e, dirty, image) => {
+    if (webPages.get(id) !== entry) return;
+    // always send the whole page picture: simple and correct with Windows display scaling (paints only happen when the page changes)
+    const size = image.getSize();
+    const buf = image.toBitmap(); // BGRA, premultiplied
+    webSend('web:frame', { id, w: size.width, h: size.height, x: 0, y: 0, rw: size.width, rh: size.height, data: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) });
+  });
+  const css = () => {
+    let c = cfg.transparent ? 'html, body { background: transparent !important; background-color: transparent !important; }\n' : '';
+    if (cfg.css) c += cfg.css;
+    if (c) wc.insertCSS(c).catch(() => {});
+    if (cfg.zoom) wc.setZoomFactor(Math.max(0.25, Math.min(5, cfg.zoom)));
+  };
+  wc.on('dom-ready', css);
+  wc.on('did-finish-load', () => { entry.needFull = true; wc.invalidate(); webSend('web:status', { id, ok: true, text: 'Loaded' }); });
+  wc.on('did-fail-load', (e, code, desc, url, isMain) => { if (isMain && code !== -3) webSend('web:status', { id, ok: false, text: `Could not load page (${desc})` }); });
+  wc.on('render-process-gone', () => { webSend('web:status', { id, ok: false, text: 'Page crashed — reloading…' }); setTimeout(() => { if (webPages.get(id) === entry) wc.reload(); }, 2000); });
+  let url = String(cfg.url || '').trim();
+  if (url && !/^[a-z]+:/i.test(url)) url = 'https://' + url;
+  if (!/^https?:/i.test(url)) { webSend('web:status', { id, ok: false, text: 'Enter a web address (https://…)' }); return; }
+  webSend('web:status', { id, ok: false, text: 'Loading…' });
+  wc.loadURL(url).catch(() => {});
+}
+ipcMain.handle('web:open', (e, id, cfg) => { webOpen(id, cfg); return true; });
+ipcMain.handle('web:close', (e, id) => { webClose(id); return true; });
+ipcMain.handle('web:reload', (e, id) => { const w = webPages.get(id); if (w) { w.needFull = true; w.win.webContents.reloadIgnoringCache(); } return true; });
+app.on('before-quit', () => { for (const id of [...webPages.keys()]) webClose(id); });
 
 /* ---------- YouTube account (Google sign-in + YouTube Live API) ---------- */
 const ytFile = () => path.join(userDir(), 'youtube-account.json');

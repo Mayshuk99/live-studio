@@ -387,3 +387,12 @@ body.is-live .ldot.red { animation: blink 1.2s infinite; }
 .yt-line { margin-bottom: 8px; padding: 5px 8px; }
 .svc-btns { grid-template-columns: minmax(0, 1fr); }
 .svc-start, .svc-end { min-width: 0; width: 100%; overflow: hidden; }
+
+/* web page overlays & double-click people */
+.gtile.web { border-top-color: #0ea5e9; }
+.gtile.web:hover { border-top-color: #0ea5e9; }
+.gtile.web-add { border-color: #0ea5e955; color: #7dd3fc; }
+.spk { position: relative; }
+.spk.hint::after { content: 'Double-click'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(10,12,18,.82); color: #fcd34d; font-weight: 800; letter-spacing: .04em; border-radius: 7px; }
+details > summary { list-style: revert; }
+textarea { width: 100%; box-sizing: border-box; }

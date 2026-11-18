@@ -32,10 +32,17 @@
   uniform float u_gamma;     // midtones
   uniform float u_black;     // black level
   uniform int u_zebra;
+  uniform int u_keyOn;       // remove one background colour from an overlay (web pages)
+  uniform vec3 u_keyColor;
+  uniform float u_keyTol;
   void main() {
     if (u_mode == 2) { o = vec4(u_solid.rgb, u_solid.a * u_opacity); return; }
     vec4 t = texture(u_tex, v_uv);
-    if (u_mode == 1) { o = vec4(t.rgb, t.a * u_opacity); return; }
+    if (u_mode == 1) {
+      float a = t.a;
+      if (u_keyOn == 1) { float d = distance(t.rgb, u_keyColor); a *= smoothstep(u_keyTol, u_keyTol + 0.12, d); }
+      o = vec4(t.rgb, a * u_opacity); return;
+    }
     vec3 c = t.rgb;
     vec3 lin = pow(max(c, 0.0), vec3(2.2));
     lin *= exp2(u_exposure);
@@ -79,6 +86,7 @@
       this.sources = new Map();   // id -> { el, kind, tex, w, h, ready, fresh }
       this.colors = new Map();    // sourceId -> colour params
       this.labels = new Map();    // labelId -> { canvas, ctx, tex, alpha, target, data, dirty }
+      this.webs = new Map();      // web overlay id -> { data, alpha, target }
       this.frames = new Map();    // smoothed framing per shot layer
       this.thumbs = new Map();    // shotId -> 2D canvas
       this.sourceViews = new Map(); // canvas -> sourceId (full uncropped source)
@@ -123,7 +131,7 @@
       gl.useProgram(p);
       this.u = {};
       ['u_dst', 'u_src', 'u_tex', 'u_mode', 'u_solid', 'u_opacity', 'u_exposure', 'u_contrast', 'u_saturation',
-        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
+        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra', 'u_keyOn', 'u_keyColor', 'u_keyTol'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
       const vao = gl.createVertexArray();
       gl.bindVertexArray(vao);
       const buf = gl.createBuffer();
@@ -228,6 +236,41 @@
       if (L) { this.gl.deleteTexture(L.tex); this.labels.delete(id); }
     }
     labelVisible(id) { const L = this.labels.get(id); return !!(L && L.target > 0); }
+
+    /* ---------- web page overlays (e.g. live translation captions) ---------- */
+    setWeb(cfg, visible) {
+      let w = this.webs.get(cfg.id);
+      if (!w) { w = { alpha: 0, target: 0 }; this.webs.set(cfg.id, w); }
+      w.data = cfg;
+      if (visible !== undefined) w.target = visible ? 1 : 0;
+    }
+    removeWeb(id) { this.webs.delete(id); }
+    webVisible(id) { const w = this.webs.get(id); return !!(w && w.target > 0); }
+    _drawWebs(dt) {
+      const gl = this.gl;
+      for (const [id, w] of this.webs) {
+        const fade = w.data.fadeMs ?? 400;
+        const step = fade > 0 ? dt / fade : 1;
+        if (w.alpha < w.target) w.alpha = Math.min(w.target, w.alpha + step);
+        else if (w.alpha > w.target) w.alpha = Math.max(w.target, w.alpha - step);
+        if (w.alpha <= 0) continue;
+        const s = this.sources.get(id);
+        if (!s || !s.ready) continue;
+        const d = w.data, r = d.rect || [0, 0, 1, 1];
+        gl.bindTexture(gl.TEXTURE_2D, s.tex);
+        gl.uniform1i(this.u.u_mode, 1);
+        gl.uniform1f(this.u.u_opacity, ease(w.alpha) * (d.opacity ?? 1));
+        const k = d.key || {};
+        gl.uniform1i(this.u.u_keyOn, k.on ? 1 : 0);
+        const hex = /^#?([0-9a-f]{6})$/i.exec(k.color || '#000000'), n = hex ? parseInt(hex[1], 16) : 0;
+        gl.uniform3f(this.u.u_keyColor, (n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255);
+        gl.uniform1f(this.u.u_keyTol, k.tol ?? 0.15);
+        gl.uniform4fv(this.u.u_dst, r);
+        gl.uniform4fv(this.u.u_src, [0, 0, 1, 1]);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.uniform1i(this.u.u_keyOn, 0);
+      }
+    }
 
     _drawLabelCanvas(L) { drawLabel(L.ctx, this.W, this.H, L.data); }
 
@@ -396,6 +439,7 @@
       addShot(shot(this.programId));
       if (this.trans) { addShot(shot(this.trans.from)); addShot(shot(this.trans.to)); }
       addShot(shot(this.previewId));
+      for (const [id, w] of this.webs) if (w.alpha > 0 || w.target > 0) need.add(id);
       const thumbsDue = now - this.lastThumbAt > this.thumbEvery;
       if (thumbsDue) {
         for (const id of this.thumbs.keys()) addShot(shot(id));
@@ -455,6 +499,7 @@
       } else {
         this._drawShot(shot(this.programId), 1, true, false);
       }
+      this._drawWebs(dt);
       this._drawLabels(now, dt);
       const b = this.black;
       const bp = clamp((now - b.start) / b.dur, 0, 1);
