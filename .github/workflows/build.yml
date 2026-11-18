@@ -52,7 +52,7 @@ jobs:
       - name: Build installer and publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish always -c.publish.provider=github -c.publish.releaseType=release -c.publish.owner=${{ github.repository_owner }} -c.publish.repo=${{ github.event.repository.name }}
+        run: npx electron-builder --win --publish always
 
       - name: Keep a copy of the installer on this run
         uses: actions/upload-artifact@v4

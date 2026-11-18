@@ -68,6 +68,12 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Live Studio",
       "runAfterFinish": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Mayshuk99",
+      "repo": "live-studio",
+      "releaseType": "release"
     }
   }
 }
