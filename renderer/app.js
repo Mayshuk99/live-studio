@@ -382,6 +382,9 @@
   function audioGate(ms, targetId) {
     const sh = getShot(targetId || (engine.trans ? engine.trans.to : engine.programId));
     const silent = (engine.isBlack && settings.ftbAudio) || (!!sh && sh.role === 'hold' && SV().hold.mute !== false);
+    // coming out of the holding slide, the sound fades in gently even on a hard cut
+    if (!silent && rt.holdSilent) ms = Math.max(ms || 0, SV().hold.audioFade ?? 1500);
+    rt.holdSilent = !!sh && sh.role === 'hold' && SV().hold.mute !== false;
     rt.gated = silent;
     mixer.fadeMaster(!silent, Math.max(50, ms || 300));
   }
@@ -673,6 +676,7 @@
           h.mode !== 'clock' ? check(' Press START SERVICE automatically when the countdown ends', h.autoStart, v => { h.autoStart = v; done(); }) : null,
           el('div', { class: 'field', style: 'margin-top:10px' }, el('span', null, 'Date and countdown words'), select([['', 'English only'], ['ru', 'English and Russian (switch every 6 s)'], ['uk', 'English and Ukrainian (switch every 6 s)']], h.lang2 || '', v => { h.lang2 = v; done(); })),
           el('div', { style: 'margin:10px 0' }, check(' Mute all audio while the holding slide is on air', h.mute !== false, v => { h.mute = v; done(); audioGate(200); })),
+          el('div', { class: 'field' }, el('span', null, 'Sound fades in when leaving the slide'), select([[300, 'Quick — 0.3 s'], [1000, '1 second'], [1500, '1.5 seconds'], [2000, '2 seconds'], [3000, '3 seconds'], [5000, '5 seconds']], h.audioFade ?? 1500, v => { h.audioFade = +v; done(); })),
           el('div', { class: 'muted', style: 'font-size:.85em' }, 'To move or resize the clock, click it on the slide (Text & items tab).'));
       }
       put(side, el('div', { class: 'row', style: 'margin-top:16px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('media'); refresh('shots'); } }, 'Done')));
@@ -2539,7 +2543,7 @@
     A('prevShot', 'Switching', 'Previous shot into Preview', 'ArrowLeft', () => stepPreview(-1));
     A('startService', 'Service', 'START SERVICE', 'Ctrl+KeyS', startService);
     A('endService', 'Service', 'END SERVICE', 'Ctrl+KeyE', endService);
-    A('hold', 'Service', 'Show the holding screen (clock)', 'KeyC', showHold);
+    A('hold', 'Service', 'Show the holding screen (clock)', '', showHold); // no default key, so it can't be hit by accident mid-service
     show.pics.forEach(p2 => A('pic:' + p2.id, 'Pictures — logo / decorations (show / hide)', p2.name || 'Picture', '', () => togglePic(p2.id)));
     show.webs.forEach(w => A('web:' + w.id, 'Web page overlays (show / hide)', w.name || 'Web page', '', () => toggleWeb(w.id)));
     A('hideAll', 'Labels & speakers', 'Hide all labels and name captions', 'KeyH', hideAllGraphics);
