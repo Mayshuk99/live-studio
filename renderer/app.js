@@ -914,8 +914,8 @@
     return { engine: engine.stats.missed, enc, cam, total: engine.stats.missed + enc }; // camera skips are shown in the window only
   }
   function resetFrameStats() {
-    engine.stats.frames = 0; engine.stats.missed = 0; engine.stats.since = performance.now();
-    for (const c of show.cameras) { const src = engine.sources.get(c.id); if (src) { src.skipBase = src.skipped || 0; src.count = 0; src.countAt = performance.now(); } }
+    engine.stats.frames = 0; engine.stats.missed = 0; engine.stats.recent = []; engine.stats.worst = 0; engine.stats.since = performance.now();
+    for (const c of show.cameras) { const src = engine.sources.get(c.id); if (src) { src.skipBase = src.skipped || 0; src.pfBase = src.pf || 0; src.fpsNow = 0; src.countAt = performance.now(); } }
     rt.dropSeen = 0;
   }
   function openPerf() {
@@ -930,7 +930,9 @@
         el('h3', null, 'Program output'),
         row('Frames made', `${st.frames.toLocaleString()}  (${fmt(secs)})`),
         row('Frame rate now / target', `${st.fps} / ${engine.fps} fps`, st.fps < engine.fps - 2),
-        row('Frames missed by this computer', String(d.engine), d.engine > 0),
+        row('Frames missed by this computer', `${d.engine}${d.engine ? `  (${(d.engine / Math.max(1, st.frames + d.engine) * 100).toFixed(d.engine / Math.max(1, st.frames + d.engine) < 0.001 ? 3 : 2)}%)` : ''}`, d.engine / Math.max(1, st.frames + d.engine) > 0.001),
+        row('…in the last minute', String((st.recent || []).filter(x => performance.now() - x[0] < 60000).reduce((a, x) => a + x[1], 0)), (st.recent || []).filter(x => performance.now() - x[0] < 60000).length > 3),
+        row('Longest hiccup', st.worst ? `${Math.round(st.worst)} ms` : '—', st.worst > 100),
         row('Time to draw one frame', `${st.renderMs.toFixed(1)} ms of ${(1000 / engine.fps).toFixed(1)} ms`, st.renderMs > 1000 / engine.fps),
         el('h3', null, 'This computer'),
         rt.pc && rt.pc.cpu !== null ? [
@@ -942,9 +944,10 @@
         el('h3', null, 'Cameras'),
         show.cameras.length ? show.cameras.map(c => {
           const src = engine.sources.get(c.id), now = performance.now();
-          if (src && !src.countAt) { src.count = 0; src.countAt = now; }
+          // counted from the card's own frame numbers, averaged over ~10 s, so a busy moment in this window can't fake a low reading
+          if (src && (!src.countAt || src.pfBase === undefined)) { src.pfBase = src.pf || 0; src.countAt = now; }
           const secs = src ? (now - src.countAt) / 1000 : 0;
-          if (src && secs >= 2) { src.fpsNow = (src.count || 0) / secs; if (secs > 6) { src.count = 0; src.countAt = now; } }
+          if (src && secs >= 3) { src.fpsNow = ((src.pf || 0) - src.pfBase) / secs; if (secs > 10) { src.pfBase = src.pf || 0; src.countAt = now; } }
           const want = +c.fps || 0, got = src && src.fpsNow;
           const low = got && want && got < want - 2;
           return row(`${c.name} — frames arriving`, got ? `${got.toFixed(1)} fps${want ? ` of ${want}` : ''} ${low ? '⚠ low' : '✓'}` : 'measuring…', low);
@@ -2784,6 +2787,7 @@
     await refreshDevices(); resolveDevices();
     await Promise.all(show.audio.inputs.map(a => openAudioInput(a, true)));
     refreshAll();
+    setTimeout(resetFrameStats, 8000); // starting up (opening cards, loading videos) is not counted as dropped frames
   }
 
   applyUI();

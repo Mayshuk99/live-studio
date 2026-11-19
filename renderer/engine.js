@@ -435,7 +435,6 @@
     _render(now) {
       const t0 = performance.now();
       // frame counter: every output frame is counted; a gap longer than one frame time means frames were missed
-      if (this.lastFrameAt) { const n = Math.round((now - this.lastFrameAt) / (1000 / this.fps)) - 1; if (n > 0) this.stats.missed += n; }
       this.stats.frames++;
       const dt = this.lastFrameAt ? Math.min(200, now - this.lastFrameAt) : 1000 / this.fps;
       this.lastFrameAt = now;
@@ -535,7 +534,13 @@
       const now = performance.now();
       const interval = 1000 / this.fps;
       if (this._next && now < this._next - 1.5) return;
-      this._next = (!this._next || now - this._next > interval * 3) ? now + interval : this._next + interval;
+      // frame counter: a frame is "missed" only when it comes out a whole frame (or more) behind schedule.
+      // A frame that is a few ms late still goes out in its own slot and is not a drop.
+      if (this._next) {
+        const late = Math.floor((now - this._next) / interval);
+        if (late >= 1) { this.stats.missed += late; const L = this.stats.recent || (this.stats.recent = []); L.push([now, late]); while (L.length && now - L[0][0] > 60000) L.shift(); this.stats.worst = Math.max(this.stats.worst || 0, now - this._next); }
+      }
+      this._next = (!this._next || now - this._next > interval) ? now + interval : this._next + interval;
       this._render(now);
     }
     start() {
