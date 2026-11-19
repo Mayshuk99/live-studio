@@ -1105,22 +1105,39 @@
     if (!c) { c = el('canvas', { width: 320, height: 180 }); rt.thumbs.set(id, c); engine.thumbs.set(id, c); }
     return c;
   }
+  // opening / closing videos are run by START / END SERVICE, so they are hidden from the Shots panel unless you un-hide them
+  const shotHidden = s => s.hidden === undefined ? (s.role === 'open' || s.role === 'close') : !!s.hidden;
+  let shotDrag = null;
   RENDER.shots = body => {
     body.innerHTML = '';
     const wrap = el('div', { class: 'shots' });
-    show.shots.forEach((s, i) => {
-      const card = el('div', { class: 'shot', style: `--shot-color:${s.color}`, dataset: { id: s.id } },
+    const hiddenN = show.shots.filter(shotHidden).length;
+    show.shots.forEach(s => {
+      const hid = shotHidden(s);
+      if (hid && !rt.showHiddenShots) return;
+      const card = el('div', { class: 'shot' + (hid ? ' is-hidden' : ''), style: `--shot-color:${s.color}`, dataset: { id: s.id }, draggable: 'true', title: 'Click = preview · double-click = on air · drag to reorder' },
         thumbFor(s.id),
         el('span', { class: 'badge' }),
         mediaOf(s).length ? el('span', { class: 'film' }, '🎞') : null,
         el('button', { class: 'edit', title: 'Edit shot', onclick: e => { e.stopPropagation(); editShot(s.id); } }, '✎'),
-        el('div', { class: 'meta' }, el('span', { class: 'nm' }, s.name), keyChip('shot:' + s.id)));
+        el('button', { class: 'edit hide-btn', title: hid ? 'Show this shot again' : 'Hide this shot from the list', onclick: e => { e.stopPropagation(); s.hidden = !hid; changed(); refresh('shots'); } }, hid ? '👁 Show' : '🚫'),
+        el('div', { class: 'meta' }, el('span', { class: 'nm' }, s.name), hid ? el('span', { class: 'muted', style: 'font-size:.75em' }, 'hidden') : keyChip('shot:' + s.id)));
       card.addEventListener('click', () => { setPreview(s.id); editShot(s.id, true); });
       card.addEventListener('dblclick', () => takeShot(s.id, 'auto'));
+      card.addEventListener('dragstart', e => { shotDrag = s.id; e.dataTransfer.effectAllowed = 'move'; });
+      card.addEventListener('dragover', e => { if (shotDrag && shotDrag !== s.id) { e.preventDefault(); card.classList.add('drop'); } });
+      card.addEventListener('dragleave', () => card.classList.remove('drop'));
+      card.addEventListener('drop', e => {
+        e.preventDefault(); card.classList.remove('drop');
+        const moved = getShot(shotDrag); shotDrag = null; if (!moved) return;
+        show.shots = show.shots.filter(x => x !== moved);
+        show.shots.splice(show.shots.indexOf(s), 0, moved);
+        changed(); refresh('shots');
+      });
       wrap.append(card);
     });
     wrap.append(el('div', { class: 'shot add', onclick: addShot }, '+ New shot'));
-    put(body, wrap);
+    put(body, wrap, hiddenN ? el('button', { class: 'btn small ghost', style: 'margin-top:8px', onclick: () => { rt.showHiddenShots = !rt.showHiddenShots; refresh('shots'); } }, rt.showHiddenShots ? 'Done — hide them again' : `Show ${hiddenN} hidden shot${hiddenN > 1 ? 's' : ''}…`) : null);
     for (const id of [...rt.thumbs.keys()]) if (!getShot(id)) { rt.thumbs.delete(id); engine.thumbs.delete(id); }
     renderTally();
   };
@@ -2528,8 +2545,9 @@
     A('hideAll', 'Labels & speakers', 'Hide all labels and name captions', 'KeyH', hideAllGraphics);
     show.speakers.forEach((p, i) => A('spk:' + p.id, 'Speakers (show / hide name caption)', `${p.name}${p.title ? ' — ' + p.title : ''}`, i < 9 ? `Alt+Digit${i + 1}` : '', () => toggleSpeaker(p.id)));
     show.labels.forEach((L, i) => A('lbl:' + L.id, 'Labels (show / hide)', L.title || 'Label', i < 8 ? `F${i + 1}` : '', () => toggleLabel(L.id)));
-    show.shots.forEach((sh, i) => A('shot:' + sh.id, 'Shots — put in Preview', sh.name, i < 9 ? `Digit${i + 1}` : '', () => { setPreview(sh.id); editShot(sh.id, true); }));
-    show.shots.forEach((sh, i) => A('air:' + sh.id, 'Shots — straight to air', sh.name, i < 9 ? `Shift+Digit${i + 1}` : '', () => takeShot(sh.id, 'auto')));
+    const visShots = show.shots.filter(x => !shotHidden(x)); // number keys follow the order you see
+    visShots.forEach((sh, i) => A('shot:' + sh.id, 'Shots — put in Preview', sh.name, i < 9 ? `Digit${i + 1}` : '', () => { setPreview(sh.id); editShot(sh.id, true); }));
+    visShots.forEach((sh, i) => A('air:' + sh.id, 'Shots — straight to air', sh.name, i < 9 ? `Shift+Digit${i + 1}` : '', () => takeShot(sh.id, 'auto')));
     A('goLive', 'Streaming', 'Go live', '', () => { if (!rt.live) goLive(); });
     A('endLive', 'Streaming', 'End stream (press twice)', '', () => { if (rt.live) $('#btnLive').click(); });
     A('rec', 'Streaming', 'Start / stop recording (stop: press twice)', '', () => $('#btnRec').click());
@@ -2562,7 +2580,7 @@
     return c ? el('kbd', { class: 'keychip', title: 'Keyboard shortcut' }, keyName(c)) : null;
   }
   function stepPreview(d) {
-    const list = show.shots;
+    const list = show.shots.filter(x => !shotHidden(x));
     if (!list.length) return;
     const i = list.findIndex(x => x.id === rt.previewId);
     const n = list[(i + d + list.length) % list.length];
