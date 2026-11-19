@@ -371,15 +371,23 @@
     const ms = kind === 'cut' ? 0 : (msOverride !== undefined ? msOverride : show.transition.ms);
     startProgram(to, from, ms);
     if (ms) engine.fade(to, ms); else engine.cut(to);
+    audioGate(ms, to);
     rt.previewId = from || to; engine.previewId = rt.previewId;
     rt.webSuppress.clear();
     refreshWebs();
     renderTally();
   }
   function takeShot(id, kind, ms) { if (!getShot(id) || id === engine.programId) return; setPreview(id); take(kind, ms); }
+  // the stream is silent while the holding slide is on air (and during fade to black)
+  function audioGate(ms, targetId) {
+    const sh = getShot(targetId || (engine.trans ? engine.trans.to : engine.programId));
+    const silent = (engine.isBlack && settings.ftbAudio) || (!!sh && sh.role === 'hold' && SV().hold.mute !== false);
+    rt.gated = silent;
+    mixer.fadeMaster(!silent, Math.max(50, ms || 300));
+  }
   function setBlack(on) {
     engine.setBlack(on, show.transition.ms || 500);
-    if (settings.ftbAudio) mixer.fadeMaster(!on, show.transition.ms || 500);
+    audioGate(show.transition.ms || 500);
     renderTally();
   }
   function onMediaEnded(fileId) {
@@ -664,6 +672,7 @@
           h.mode === 'countdown' ? el('div', { class: 'field' }, el('span', null, 'Service starts at'), el('input', { type: 'time', value: h.target, oninput: e => { h.target = e.target.value; done(); } })) : null,
           h.mode !== 'clock' ? check(' Press START SERVICE automatically when the countdown ends', h.autoStart, v => { h.autoStart = v; done(); }) : null,
           el('div', { class: 'field', style: 'margin-top:10px' }, el('span', null, 'Date and countdown words'), select([['', 'English only'], ['ru', 'English and Russian (switch every 6 s)'], ['uk', 'English and Ukrainian (switch every 6 s)']], h.lang2 || '', v => { h.lang2 = v; done(); })),
+          el('div', { style: 'margin:10px 0' }, check(' Mute all audio while the holding slide is on air', h.mute !== false, v => { h.mute = v; done(); audioGate(200); })),
           el('div', { class: 'muted', style: 'font-size:.85em' }, 'To move or resize the clock, click it on the slide (Text & items tab).'));
       }
       put(side, el('div', { class: 'row', style: 'margin-top:16px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('media'); refresh('shots'); } }, 'Done')));
@@ -2656,6 +2665,7 @@
     drawHold();
     engine.cut('shot_hold');
     rt.service = 'hold';
+    audioGate(50, 'shot_hold');
     const prev = getShot(SV().start.cameraShot) || show.shots.find(x => !x.role) || show.shots[0];
     setPreview(prev ? prev.id : null);
     rt.editingId = prev ? prev.id : null;
