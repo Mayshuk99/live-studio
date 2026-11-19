@@ -465,3 +465,7 @@ textarea { width: 100%; box-sizing: border-box; }
 .hd-item span { overflow: hidden; text-overflow: ellipsis; }
 .hd-item.sel { border-color: var(--accent); }
 .hd-item input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* countdown bar on captions that hide by themselves */
+.spk.counting::before, .gtile.counting::before { content: ''; position: absolute; left: 0; bottom: 0; height: 5px; width: calc(var(--cd, 0) * 100%); background: #fbbf24; border-radius: 0 3px 3px 6px; transition: width .15s linear; }
+#spkHide span { font-variant-numeric: tabular-nums; }

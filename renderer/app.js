@@ -665,7 +665,8 @@
     if (!L) return;
     engine.setLabel(L, on);
     clearTimeout(rt.labelTimers.get(id));
-    if (on && L.autoHide > 0) rt.labelTimers.set(id, setTimeout(() => setLabelVisible(id, false), L.autoHide * 1000));
+    rt.hideAt.delete(id);
+    if (on && L.autoHide > 0) { rt.labelTimers.set(id, setTimeout(() => setLabelVisible(id, false), L.autoHide * 1000)); rt.hideAt.set(id, { at: Date.now() + L.autoHide * 1000, total: L.autoHide * 1000 }); }
     refreshLabelStates();
   }
   const toggleLabel = id => setLabelVisible(id, !engine.labelVisible(id));
@@ -674,6 +675,24 @@
   /* ================= speakers: one-click name captions for the person talking ================= */
   const SPK = '__speaker';
   const speakerLabel = p => ({ id: SPK, title: p.name, subtitle: p.title, style: show.speakerStyle.style, color: show.speakerStyle.color, design: show.speakerStyle.design });
+  // countdown until a caption hides itself: shown on its tile and on the Hide button
+  rt.hideAt = new Map();
+  setInterval(() => {
+    const now = Date.now();
+    let spkLeft = 0;
+    document.querySelectorAll('.spk[data-spk], .gtile[data-label]').forEach(t => {
+      const id = t.dataset.spk || t.dataset.label, h = rt.hideAt.get(id);
+      const left = h ? Math.max(0, h.at - now) : 0;
+      t.style.setProperty('--cd', h ? left / h.total : 0);
+      t.classList.toggle('counting', !!h && left > 0);
+      const air = t.querySelector('.spk-air');
+      if (air && h && left > 0) air.textContent = `ON AIR · ${Math.ceil(left / 1000)} s`;
+      if (t.dataset.spk && left > 0) spkLeft = left;
+    });
+    const b = document.querySelector('#spkHide span');
+    if (b) b.textContent = spkLeft ? `Hide · ${Math.ceil(spkLeft / 1000)} s` : 'Hide';
+    for (const [id, h] of rt.hideAt) if (h.at < now - 500) rt.hideAt.delete(id);
+  }, 150);
   function showSpeaker(id) {
     const p = show.speakers.find(x => x.id === id);
     if (!p) return;
@@ -684,7 +703,7 @@
       rt.speakerId = id;
       refreshSpeakerStates();
       const sec = show.speakerStyle.autoHide;
-      if (sec > 0) rt.speakerTimer = setTimeout(hideSpeaker, sec * 1000);
+      if (sec > 0) { rt.speakerTimer = setTimeout(hideSpeaker, sec * 1000); rt.hideAt.set(id, { at: Date.now() + sec * 1000, total: sec * 1000 }); }
     };
     if (rt.speakerObj && engine.labelVisible(SPK) && rt.speakerId !== id) {
       // another person's caption is up: slide it out, then bring the new one in
@@ -695,6 +714,7 @@
   }
   function hideSpeaker() {
     clearTimeout(rt.speakerTimer); clearTimeout(rt.speakerSwap);
+    show.speakers.forEach(p => rt.hideAt.delete(p.id));
     if (rt.speakerObj) engine.setLabel(rt.speakerObj, false);
     rt.speakerId = null;
     refreshSpeakerStates();
@@ -1851,7 +1871,7 @@
       el('div', { class: 'spk-tools' },
         el('button', { class: 'btn small', onclick: () => { const p = show.speakers[0] || { name: 'John Smith', title: 'Senior Pastor' }; openDesigner(st, { title: p.name, subtitle: p.title }, restyleSpeaker); } }, '🎨 Look'),
         select([[0, 'Stay on'], [5, 'Hide after 5 s'], [8, 'Hide after 8 s'], [10, 'Hide after 10 s'], [15, 'Hide after 15 s']], st.autoHide, v => { st.autoHide = +v; changed(); }),
-        el('button', { class: 'btn small danger', onclick: hideSpeaker }, 'Hide', keyChip('hideAll'))),
+        el('button', { class: 'btn small danger', id: 'spkHide', onclick: hideSpeaker }, el('span', null, 'Hide'), keyChip('hideAll'))),
       row);
   };
   function spkHint(t) {
