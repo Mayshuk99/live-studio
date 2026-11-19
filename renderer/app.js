@@ -200,6 +200,31 @@
   const sourceName = id => (camById(id) || fileById(id) || { name: (BUILTIN.find(b => b[0] === id) || [0, '—'])[1] }).name;
 
   /* ================= cameras ================= */
+  /* Windows hands out new device ids each time the program starts, so devices are remembered by
+     name + position among same-named devices (e.g. the 2nd "Blackmagic WDM Capture") and matched again on start-up. */
+  function rememberDevice(item, kind) {
+    const list = rt.devices[kind], d = list.find(x => x.id === item.deviceId);
+    if (!d) return;
+    item.deviceLabel = d.label; item.deviceIdx = list.filter(x => x.label === d.label).indexOf(d);
+  }
+  function resolveDevices() {
+    for (const [kind, items] of [['video', show.cameras], ['audio', show.audio.inputs]]) {
+      const list = rt.devices[kind], claimed = new Set();
+      for (const it of items) {                       // 1st pass: by remembered name + position
+        if (!it.deviceLabel) { if (list.find(d => d.id === it.deviceId)) { rememberDevice(it, kind); claimed.add(it.deviceId); } continue; }
+        const same = list.filter(d => d.label === it.deviceLabel);
+        const d = it.deviceIdx !== undefined ? same[it.deviceIdx] : null;
+        if (d && !claimed.has(d.id)) { it.deviceId = d.id; claimed.add(d.id); it._ok = true; } else it._ok = false;
+      }
+      for (const it of items) {                       // 2nd pass: next free device with the same name
+        if (!it.deviceLabel || it._ok) { delete it._ok; continue; }
+        delete it._ok;
+        const d = list.find(x => x.label === it.deviceLabel && !claimed.has(x.id));
+        if (d) { it.deviceId = d.id; claimed.add(d.id); rememberDevice(it, kind); }
+      }
+    }
+    changed();
+  }
   async function refreshDevices() {
     try {
       let list = await navigator.mediaDevices.enumerateDevices();
@@ -213,7 +238,9 @@
   }
   navigator.mediaDevices && navigator.mediaDevices.addEventListener('devicechange', async () => {
     await refreshDevices();
+    resolveDevices();
     for (const c of show.cameras) if (!rt.cams.has(c.id) && rt.devices.video.find(d => d.id === c.deviceId)) openCamera(c);
+    for (const a of show.audio.inputs) if (!mixer.strips.has(a.id) && rt.devices.audio.find(d => d.id === a.deviceId)) openAudioInput(a, true);
     refresh('inputs');
   });
   function closeCamera(id) {
@@ -930,6 +957,15 @@
   }
   $('#health').addEventListener('click', openPerf);
   $('#btnSettings').addEventListener('click', () => openSettings());
+  // Save button: everything also saves by itself, this writes it to disk right now and confirms it
+  async function saveAll(quiet) {
+    try { await S.saveShow(show); await S.saveSettings(settings); if (!quiet) { const b = $('#btnSave'); b.textContent = '✓ Saved'; b.classList.add('ok'); setTimeout(() => { b.textContent = '💾 Save'; b.classList.remove('ok'); }, 2000); } }
+    catch (e) { toast('Could not save: ' + e.message, 'error'); }
+  }
+  $('#btnSave').addEventListener('click', () => saveAll());
+  window.addEventListener('beforeunload', () => { S.saveShow(show); S.saveSettings(settings); });
+  setInterval(() => saveAll(true), 60000);
+  document.addEventListener('keydown', e => { if (e.ctrlKey && e.shiftKey && e.code === 'KeyS') { e.preventDefault(); saveAll(); } });
   $('#btnLayout').addEventListener('click', () => setEditing(!rt.editing));
   const showNameInput = $('#showName');
   showNameInput.value = show.showName;
@@ -2333,6 +2369,7 @@
         isNew ? null : el('button', { class: 'btn danger', onclick: () => { mixer.removeInput(cfg.id); show.audio.inputs = show.audio.inputs.filter(x => x.id !== cfg.id); changed(); closeModal(); refresh('audio'); } }, 'Remove input'),
         el('span', { class: 'grow' }),
         el('button', { class: 'btn primary', onclick: async () => {
+          rememberDevice(cfg, 'audio');
           if (isNew) show.audio.inputs.push(cfg); else Object.assign(a, cfg);
           const target = isNew ? cfg : a;
           changed(); closeModal();
@@ -2392,7 +2429,7 @@
           el('div', { class: 'row' }, el('input', { type: 'text', class: 'grow', value: cam.name, oninput: e => { cam.name = e.target.value; changed(); } }),
             el('button', { class: 'btn small danger', title: 'Remove camera', onclick: () => { closeCamera(cam.id); show.cameras = show.cameras.filter(c => c !== cam); changed(); refreshAll(); } }, '✕')),
           el('div', { class: 'row', style: 'margin-top:6px' },
-            select(devOpts, cam.deviceId, v => { cam.deviceId = v; cam.deviceLabel = (rt.devices.video.find(d => d.id === v) || {}).label || ''; changed(); openCamera(cam); }, { class: 'grow' }),
+            select(devOpts, cam.deviceId, v => { cam.deviceId = v; delete cam.fps; rememberDevice(cam, 'video'); changed(); openCamera(cam); }, { class: 'grow' }),
             select([['720', '720p'], ['1080', '1080p'], ['2160', '4K']], cam.res || '1080', v => { cam.res = v; changed(); openCamera(cam); }),
             select([['', 'Auto fps'], ['23.98', '23.98'], ['24', '24'], ['25', '25'], ['29.97', '29.97'], ['30', '30'], ['50', '50'], ['59.94', '59.94'], ['60', '60']], cam.fps || '', v => { cam.fps = v; changed(); openCamera(cam); }, { title: 'Must match the signal your camera sends' })),
           el('div', { style: 'font-size:.85em;margin-top:5px' }, el('span', { dataset: { camStatus: cam.id } })))));
@@ -2692,6 +2729,7 @@
     const ssl = rt.devices.audio.find(d => /ssl/i.test(d.label));
     const dev = card || ssl || rt.devices.audio.find(d => d.id === 'default') || rt.devices.audio[0];
     if (dev) show.audio.inputs.push({ id: uid('in'), name: card ? 'Capture card' : ssl ? 'SSL' : 'Audio in', deviceId: dev.id, channel: 'stereo', gain: 0, mute: false, delay: 0, lowcut: false, voice: false, pan: 0, syncCam: show.cameras[0] ? show.cameras[0].id : '' });
+    show.cameras.forEach(c => rememberDevice(c, 'video')); show.audio.inputs.forEach(a => rememberDevice(a, 'audio'));
     show.firstRunDone = true;
     changed();
   }
@@ -2712,6 +2750,7 @@
     setPreview(prev ? prev.id : null);
     rt.editingId = prev ? prev.id : null;
     renderGrid();
+    resolveDevices();
     await Promise.all([
       ...show.cameras.map(c => openCamera(c)),
       ...show.files.map(f => loadFile(f)),
