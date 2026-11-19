@@ -60,6 +60,10 @@ Click **Connect…** in the Service panel. The window walks through a one-time G
 - shows whether YouTube is receiving your stream (good / OK / poor) and the viewer count,
 - starts the event on YouTube after START SERVICE and ends it after END SERVICE.
 
+## Pictures: logo and seasonal decorations
+
+In **Titles & Graphics**, click **+ Picture**, then **Import picture…** (a PNG with a transparent background works best). Choose a corner, centre or full screen (for a frame or border), plus size, distance from the edge, opacity and fade. Click the 🖼 tile to show or hide it. It stays on through shot changes and is still on the next time you open Live Studio. You can also tick it per shot in Shot Framing, or give it a key.
+
 ## Web page overlays (live translation)
 
 In **Titles & Graphics**, click **+ Web page** and paste the link of your live translation page. Live Studio loads the page in the background and puts it over the video, like a browser source.

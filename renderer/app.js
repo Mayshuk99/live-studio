@@ -102,6 +102,7 @@
         end: { videoId: '', fadeMs: 1500, then: 'hold', stopRec: true, endStream: true, endAfter: 30, ytComplete: true }
       },
       webs: [],
+      pics: [],
       speakers: [
         { id: uid('spk'), name: 'Pastor Name', title: 'Senior Pastor', hotkey: '' },
         { id: uid('spk'), name: 'Worship Leader', title: 'Worship Team', hotkey: '' }
@@ -295,6 +296,7 @@
       else rt.files.set(f.id, { ok: false, text: S.isApp ? `Missing or unreadable: ${e.message}` : 'Re-add this file (browser mode)' });
     }
     refresh('inputs'); refresh('media');
+    if (show.pics.some(p2 => p2.fileId === f.id)) { refreshWebs(); refresh('labels'); }
   }
   async function addFiles() {
     const picked = await S.pickMedia();
@@ -1019,11 +1021,11 @@
           el('div', { class: 'corner-pick' }, [['tl', '↖'], ['tr', '↗'], ['bl', '↙'], ['br', '↘']].map(([c, t]) => el('button', { class: 'btn small' + (s.pip.corner === c ? ' sel' : ''), onclick: () => { s.pip.corner = c; changed(); refresh('editor'); } }, t))),
           el('label', { class: 'inline grow' }, 'Size', el('input', { type: 'range', min: 0.15, max: 0.5, step: 0.01, value: s.pip.size, class: 'grow', oninput: e => { s.pip.size = +e.target.value; changed(); } }))) : null),
 
-      el('div', { class: 'section' }, el('h4', null, 'Web pages on this shot'),
-        show.webs.length ? el('div', { class: 'row wrap', style: 'gap:14px' }, show.webs.map(w => check(' 🌐 ' + (w.name || 'Web page'), (s.webIds || []).includes(w.id), v => { s.webIds = (s.webIds || []).filter(i => i !== w.id); if (v) s.webIds.push(w.id); changed(); refreshWebs(); })))
-          : el('div', { class: 'muted', style: 'font-size:.85em' }, 'Add a web page (e.g. live translation) with “+ Web page” in Titles & Graphics.'),
-        show.webs.length ? el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, 'Ticked pages appear automatically while this shot is live.') : null,
-        el('button', { class: 'btn small', style: 'margin-top:6px', onclick: () => editWeb(newWeb(), true) }, '+ Add web page')),
+      el('div', { class: 'section' }, el('h4', null, 'Pictures & web pages on this shot'),
+        show.webs.length || show.pics.length ? el('div', { class: 'row wrap', style: 'gap:14px' }, [...show.pics.map(p2 => ({ id: p2.id, name: '🖼 ' + (p2.name || 'Picture') })), ...show.webs.map(w => ({ id: w.id, name: '🌐 ' + (w.name || 'Web page') }))].map(w => check(' ' + w.name, (s.webIds || []).includes(w.id), v => { s.webIds = (s.webIds || []).filter(i => i !== w.id); if (v) s.webIds.push(w.id); changed(); refreshWebs(); })))
+          : el('div', { class: 'muted', style: 'font-size:.85em' }, 'Add a logo with “+ Picture” or live translation with “+ Web page” in Titles & Graphics.'),
+        show.webs.length || show.pics.length ? el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, 'Ticked pages appear automatically while this shot is live.') : null,
+        el('div', { class: 'row', style: 'margin-top:6px' }, el('button', { class: 'btn small', onclick: () => editPic(newPic(), true) }, '+ Add picture'), el('button', { class: 'btn small', onclick: () => editWeb(newWeb(), true) }, '+ Add web page'))),
 
       el('div', { class: 'section' }, el('h4', null, 'Automatic label'),
         select([['', 'No label'], ...show.speakers.map(p => [p.id, `Speaker: ${p.name}${p.title ? ' — ' + p.title : ''}`]), ...show.labels.map(l => [l.id, `${l.title}${l.subtitle ? ' — ' + l.subtitle : ''}`])], s.labelId, v => { s.labelId = v; changed(); }),
@@ -1147,15 +1149,15 @@
     const s2 = getShot(engine.trans ? engine.trans.to : engine.programId);
     return !!(s2 && (s2.webIds || []).includes(id) && !rt.webSuppress.has(id));
   }
-  function refreshWebs() { for (const w of show.webs) engine.setWeb(engineWeb(w), webWanted(w.id)); refreshWebStates(); }
+  function refreshWebs() { for (const w of show.webs) engine.setWeb(engineWeb(w), webWanted(w.id)); for (const p2 of show.pics) applyPic(p2); refreshWebStates(); }
   function toggleWeb(id) {
     if (engine.webVisible(id)) { rt.webManual.delete(id); rt.webSuppress.add(id); }
     else { rt.webManual.add(id); rt.webSuppress.delete(id); }
     refreshWebs();
   }
   function refreshWebStates() {
-    document.querySelectorAll('.gtile[data-web]').forEach(t => {
-      const on = engine.webVisible(t.dataset.web);
+    document.querySelectorAll('.gtile[data-web], .gtile[data-pic]').forEach(t => {
+      const on = engine.webVisible(t.dataset.web || t.dataset.pic);
       t.classList.toggle('on', on);
       t.querySelector('.spk-air').textContent = on ? 'ON AIR' : '';
     });
@@ -1208,6 +1210,66 @@
     draw();
     openModal(isNew ? 'Add web page overlay' : `Web page — ${w.name}`, body);
     cancelAnimationFrame(raf); raf = requestAnimationFrame(paint);
+  }
+
+  /* ================= picture graphics: logo, seasonal decor, frames (PNG with transparency works best) ================= */
+  const PIC_POS = { tl: 'Top left', tr: 'Top right', bl: 'Bottom left', br: 'Bottom right', tc: 'Top centre', bc: 'Bottom centre', center: 'Centre', full: 'Full screen (frame / border)' };
+  const newPic = () => ({ id: uid('pic'), name: 'Logo', fileId: '', pos: 'tr', size: 0.12, margin: 0.03, opacity: 1, fadeMs: 500 });
+  function picRect(p2) {
+    const f = rt.files.get(p2.fileId), img = f && f.el;
+    if (p2.pos === 'full') return [0, 0, 1, 1];
+    const iw = (img && (img.naturalWidth || img.videoWidth)) || 1, ih = (img && (img.naturalHeight || img.videoHeight)) || 1;
+    const w = p2.size, h = w * (engine.W / engine.H) * (ih / iw);
+    const mx = p2.margin, my = p2.margin * engine.W / engine.H;
+    const x = p2.pos.endsWith('l') ? mx : p2.pos.endsWith('r') ? 1 - w - mx : (1 - w) / 2;
+    const y = p2.pos.startsWith('t') ? my : p2.pos.startsWith('b') ? 1 - h - my : (1 - h) / 2;
+    return [x, y, w, h];
+  }
+  const applyPic = p2 => engine.setWeb({ id: p2.id, src: p2.fileId, rect: picRect(p2), opacity: p2.opacity, fadeMs: p2.fadeMs, key: {} }, !!p2.fileId && webWanted(p2.id));
+  // pictures remember whether they were on air, so a logo stays up after restarting Live Studio
+  function togglePic(id) { toggleWeb(id); const p2 = show.pics.find(x => x.id === id); if (p2) { p2.on = rt.webManual.has(id); changed(); } }
+  function editPic(p2, isNew) {
+    const body = el('div');
+    const view = el('canvas', { width: 480, height: 270, style: 'width:100%;aspect-ratio:16/9;border-radius:8px;display:block;background:#000' });
+    let raf = 0;
+    const paint = () => {
+      if (!view.isConnected) return;
+      const g = view.getContext('2d');
+      g.drawImage(engine.canvas, 0, 0, 480, 270);
+      const f = rt.files.get(p2.fileId), r = picRect(p2);
+      if (f && f.el && !engine.webVisible(p2.id)) { g.globalAlpha = p2.opacity * 0.85; g.drawImage(f.el, r[0] * 480, r[1] * 270, r[2] * 480, r[3] * 270); g.globalAlpha = 1; }
+      g.strokeStyle = '#38bdf8'; g.setLineDash([6, 4]); g.lineWidth = 2; g.strokeRect(r[0] * 480, r[1] * 270, r[2] * 480, r[3] * 270); g.setLineDash([]);
+      raf = requestAnimationFrame(paint);
+    };
+    const upd = () => { applyPic(p2); changed(); };
+    const draw = () => {
+      body.innerHTML = '';
+      const imgs = show.files.filter(f => f.kind === 'image');
+      put(body,
+        el('div', { class: 'field' }, el('span', null, 'Name'), el('input', { type: 'text', value: p2.name, oninput: e => { p2.name = e.target.value; changed(); } })),
+        el('div', { class: 'field' }, el('span', null, 'Picture'), el('div', { class: 'row' },
+          select([['', imgs.length ? '— choose a picture —' : '— no pictures yet —'], ...imgs.map(f => [f.id, f.name])], p2.fileId, v => { p2.fileId = v; upd(); }, { class: 'grow' }),
+          el('button', { class: 'btn small primary', onclick: async () => { const a2 = await addFiles(); const i = a2.find(f => f.kind === 'image'); if (i) { p2.fileId = i.id; if (p2.name === 'Logo' || !p2.name) p2.name = i.name; upd(); draw(); } } }, 'Import picture…'))),
+        el('div', { class: 'muted', style: 'font-size:.82em;margin:-4px 0 10px' }, 'Use a PNG with a transparent background for logos and decorations. The dashed box shows where it goes on the live picture.'),
+        view,
+        el('div', { class: 'grid2', style: 'margin-top:12px' },
+          el('div', null,
+            el('div', { class: 'field' }, el('span', null, 'Position'), select(Object.entries(PIC_POS), p2.pos, v => { p2.pos = v; upd(); draw(); })),
+            p2.pos !== 'full' ? slider({ label: 'Size', min: 0.04, max: 0.6, step: 0.005, value: p2.size, reset: 0.12, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { p2.size = v; upd(); } }) : null,
+            p2.pos !== 'full' ? slider({ label: 'From edge', min: 0, max: 0.12, step: 0.002, value: p2.margin, reset: 0.03, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { p2.margin = v; upd(); } }) : null),
+          el('div', null,
+            slider({ label: 'Opacity', min: 0.1, max: 1, step: 0.01, value: p2.opacity, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { p2.opacity = v; upd(); } }),
+            el('div', { class: 'field' }, el('span', null, 'Fade in / out'), select([[0, 'Instant'], [300, 'Fast'], [500, 'Normal'], [1000, 'Smooth'], [2000, 'Slow']], p2.fadeMs, v => { p2.fadeMs = +v; upd(); })))),
+        el('div', { class: 'row', style: 'margin-top:14px' },
+          isNew ? null : el('button', { class: 'btn danger', onclick: () => { engine.removeWeb(p2.id); show.pics = show.pics.filter(x => x !== p2); show.shots.forEach(sh => { if (sh.webIds) sh.webIds = sh.webIds.filter(i => i !== p2.id); }); delete settings.hotkeys['pic:' + p2.id]; saveSettings(); changed(); closeModal(); refresh('labels'); refresh('editor'); } }, 'Delete'),
+          el('span', { class: 'grow' }),
+          el('button', { class: 'btn', onclick: () => togglePic(p2.id) }, 'Show / hide on air'),
+          el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('labels'); refresh('editor'); } }, 'Done')));
+      cancelAnimationFrame(raf); raf = requestAnimationFrame(paint);
+    };
+    if (isNew) { show.pics.push(p2); changed(); }
+    draw();
+    openModal(isNew ? 'Add picture (logo / decoration)' : `Picture — ${p2.name}`, body);
   }
 
   /* ================= label designer: build how a label looks ================= */
@@ -1305,6 +1367,15 @@
         el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''), keyChip('web:' + w.id)),
         el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editWeb(w); } }, '✎')));
     }
+    for (const p2 of show.pics) {
+      const on = engine.webVisible(p2.id), f = rt.files.get(p2.fileId);
+      row.append(el('div', { class: 'gtile pic' + (on ? ' on' : ''), dataset: { pic: p2.id }, onclick: () => togglePic(p2.id) },
+        f && f.url ? el('img', { class: 'pic-thumb', src: f.url }) : null,
+        el('div', { class: 'g-title' }, '🖼 ' + (p2.name || 'Picture')), el('div', { class: 'g-sub' }, PIC_POS[p2.pos] || ''),
+        el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''), keyChip('pic:' + p2.id)),
+        el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editPic(p2); } }, '✎')));
+    }
+    row.append(el('div', { class: 'gtile add pic-add', onclick: () => editPic(newPic(), true) }, '+ Picture'));
     row.append(el('div', { class: 'gtile add web-add', onclick: () => editWeb(newWeb(), true) }, '+ Web page'));
     row.append(el('div', { class: 'gtile add', onclick: () => {
       const last = show.labels[show.labels.length - 1] || show.speakerStyle;
@@ -2026,6 +2097,7 @@
     if (SV().start.videoId === f.id) SV().start.videoId = '';
     if (SV().end.videoId === f.id) SV().end.videoId = '';
     if (SV().hold.bgFile === f.id) SV().hold.bgFile = '';
+    show.pics.forEach(p2 => { if (p2.fileId === f.id) { p2.fileId = ''; engine.removeWeb(p2.id); } });
     syncRoleShots();
     changed(); refreshAll();
   }
@@ -2115,6 +2187,7 @@
     for (const a of show.audio.inputs) mixer.removeInput(a.id);
     for (const L of show.labels) engine.removeLabel(L.id);
     for (const w of show.webs) closeWeb(w.id);
+    for (const p2 of show.pics) engine.removeWeb(p2.id);
     rt.webManual.clear(); rt.webSuppress.clear();
     show = merge(defaultShow(), obj);
     show.firstRunDone = true;
@@ -2148,6 +2221,7 @@
     A('startService', 'Service', 'START SERVICE', 'Ctrl+KeyS', startService);
     A('endService', 'Service', 'END SERVICE', 'Ctrl+KeyE', endService);
     A('hold', 'Service', 'Show the holding screen (clock)', 'KeyC', showHold);
+    show.pics.forEach(p2 => A('pic:' + p2.id, 'Pictures — logo / decorations (show / hide)', p2.name || 'Picture', '', () => togglePic(p2.id)));
     show.webs.forEach(w => A('web:' + w.id, 'Web page overlays (show / hide)', w.name || 'Web page', '', () => toggleWeb(w.id)));
     A('hideAll', 'Labels & speakers', 'Hide all labels and name captions', 'KeyH', hideAllGraphics);
     show.speakers.forEach((p, i) => A('spk:' + p.id, 'Speakers (show / hide name caption)', `${p.name}${p.title ? ' — ' + p.title : ''}`, i < 9 ? `Alt+Digit${i + 1}` : '', () => toggleSpeaker(p.id)));
@@ -2305,7 +2379,8 @@
       ...show.cameras.map(c => openCamera(c)),
       ...show.files.map(f => loadFile(f)),
       ...show.audio.inputs.map(a => openAudioInput(a, true)),
-      ...show.webs.map(w => openWeb(w))
+      ...show.webs.map(w => openWeb(w)),
+      (async () => { for (const p2 of show.pics) if (p2.on) rt.webManual.add(p2.id); })()
     ]);
     refreshAll();
   }

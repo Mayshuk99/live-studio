@@ -441,3 +441,7 @@ textarea { width: 100%; box-sizing: border-box; }
 .aud-tools { margin-top: auto; }
 
 .ch-level { width: 100%; clip-path: inset(0 100% 0 0); background: linear-gradient(to right, #15803d 0%, #22c55e 62%, #eab308 75%, #f97316 80%, #ef4444 83.3%, #ef4444 100%); }
+
+.gtile.pic { border-top-color: #f59e0b; } .gtile.pic:hover { border-top-color: #f59e0b; }
+.gtile.pic-add { border-color: #f59e0b55; color: #fcd34d; }
+.pic-thumb { position: absolute; right: 8px; bottom: 26px; max-width: 46px; max-height: 34px; object-fit: contain; opacity: .9; pointer-events: none; }

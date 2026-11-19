@@ -254,9 +254,9 @@
         if (w.alpha < w.target) w.alpha = Math.min(w.target, w.alpha + step);
         else if (w.alpha > w.target) w.alpha = Math.max(w.target, w.alpha - step);
         if (w.alpha <= 0) continue;
-        const s = this.sources.get(id);
+        const d = w.data, s = this.sources.get(d.src || id);
         if (!s || !s.ready) continue;
-        const d = w.data, r = d.rect || [0, 0, 1, 1];
+        const r = d.rect || [0, 0, 1, 1];
         gl.bindTexture(gl.TEXTURE_2D, s.tex);
         gl.uniform1i(this.u.u_mode, 1);
         gl.uniform1f(this.u.u_opacity, ease(w.alpha) * (d.opacity ?? 1));
@@ -439,7 +439,7 @@
       addShot(shot(this.programId));
       if (this.trans) { addShot(shot(this.trans.from)); addShot(shot(this.trans.to)); }
       addShot(shot(this.previewId));
-      for (const [id, w] of this.webs) if (w.alpha > 0 || w.target > 0) need.add(id);
+      for (const [id, w] of this.webs) if (w.alpha > 0 || w.target > 0) need.add(w.data.src || id);
       const thumbsDue = now - this.lastThumbAt > this.thumbEvery;
       if (thumbsDue) {
         for (const id of this.thumbs.keys()) addShot(shot(id));
