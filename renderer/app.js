@@ -387,6 +387,7 @@
     // if the slide's picture source was swapped for a photo (older versions allowed that), use the photo as the slide's background instead
     if (h.main.source !== 'hold') { const f = fileById(h.main.source); if (f && f.kind === 'image') SV().hold.bgFile = f.id; h.main.frame = { zoom: 1, x: 0.5, y: 0.5 }; }
     h.main.source = 'hold';
+    h.main.frame = { zoom: 1, x: 0.5, y: 0.5 }; h.pip.enabled = false;
     for (const [role, cfg, name] of [['open', SV().start, 'Opening video'], ['close', SV().end, 'Closing video']]) {
       let s = roleShot(role);
       if (!cfg.videoId || !fileById(cfg.videoId)) { if (s && s.id !== engine.programId) show.shots = show.shots.filter(x => x !== s); continue; }
@@ -1126,6 +1127,16 @@
     const s = getShot(rt.editingId) || getShot(rt.previewId);
     if (!s) { put(body, el('div', { class: 'empty' }, 'Click a shot to edit it.')); return; }
     rt.editingId = s.id;
+    if (s.role === 'hold') {
+      // the holding slide is built in its own designer; framing controls here could only break it
+      const pvw = el('canvas', { width: 480, height: 270, style: 'width:100%;aspect-ratio:16/9;border-radius:8px;display:block;background:#000;margin-bottom:10px' });
+      pvw.getContext('2d').drawImage(holdCanvas, 0, 0, 480, 270);
+      put(body, pvw,
+        el('div', { class: 'muted', style: 'margin-bottom:10px' }, 'This is the holding slide (clock / welcome). Its picture, text and clock are set in the slide designer.'),
+        el('button', { class: 'btn primary big', onclick: openHoldDesigner }, '🎨 Design the slide…'),
+        el('div', { class: 'section row' }, el('button', { class: 'btn small', onclick: () => takeShot(s.id, 'auto') }, 'Take this shot')));
+      return;
+    }
     const L = padLayer(s);
     engine.sourceViews.set(padCanvas, L.source);
     const idx = show.shots.indexOf(s);
