@@ -107,7 +107,7 @@
       this.lastFrameAt = 0;
       this.lastThumbAt = 0;
       this.thumbEvery = 250;
-      this.stats = { fps: 0, renderMs: 0 };
+      this.stats = { fps: 0, renderMs: 0, frames: 0, missed: 0, since: performance.now() };
       this._fpsCount = 0; this._fpsAt = performance.now();
       this._stream = null;
       this.running = false;
@@ -163,7 +163,7 @@
       const s = { el, kind, tex: this._newTex(), w: 0, h: 0, ready: false, fresh: true, uploaded: false };
       if (kind === 'video' && el.requestVideoFrameCallback) {
         // only re-upload when the camera/video actually delivers a new frame
-        const cb = () => { s.fresh = true; s.lastFresh = performance.now(); if (this.sources.get(id) === s && s.rvfc) el.requestVideoFrameCallback(cb); };
+        const cb = (t, meta) => { s.fresh = true; s.lastFresh = performance.now(); s.count = (s.count || 0) + 1; if (meta && meta.presentedFrames) { if (s.pf && meta.presentedFrames > s.pf + 1) s.skipped = (s.skipped || 0) + (meta.presentedFrames - s.pf - 1); s.pf = meta.presentedFrames; } if (this.sources.get(id) === s && s.rvfc) el.requestVideoFrameCallback(cb); };
         el.requestVideoFrameCallback(cb);
         s.rvfc = true;
         s.lastFresh = performance.now();
@@ -428,6 +428,9 @@
 
     _render(now) {
       const t0 = performance.now();
+      // frame counter: every output frame is counted; a gap longer than one frame time means frames were missed
+      if (this.lastFrameAt) { const n = Math.round((now - this.lastFrameAt) / (1000 / this.fps)) - 1; if (n > 0) this.stats.missed += n; }
+      this.stats.frames++;
       const dt = this.lastFrameAt ? Math.min(200, now - this.lastFrameAt) : 1000 / this.fps;
       this.lastFrameAt = now;
       this.frameNo++;

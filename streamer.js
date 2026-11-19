@@ -67,7 +67,7 @@ function parseStats(line) {
   const drop = num(/drop=\s*(\d+)/);
   return {
     frame: num(/frame=\s*(\d+)/), fps: num(/fps=\s*([\d.]+)/), bitrate: num(/bitrate=\s*([\d.]+)kbits/),
-    speed: num(/speed=\s*([\d.]+)x/), drop: drop || 0,
+    speed: num(/speed=\s*([\d.]+)x/), drop: drop || 0, dup: num(/dup=\s*(\d+)/) || 0,
     time: t ? (+t[1]) * 3600 + (+t[2]) * 60 + (+t[3]) : null
   };
 }

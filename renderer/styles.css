@@ -490,3 +490,5 @@ textarea { width: 100%; box-sizing: border-box; }
 .gtile.big .g-thumb { position: static; inset: auto; flex: 1; min-height: 0; width: 100%; height: auto; }
 .gtile.big .g-cap { position: static; background: #141417; padding: 4px 8px; flex: 0 0 auto; }
 .gtile-adds { flex: 0 0 104px; }
+
+.health { cursor: pointer; } .health .good { color: #4ade80; } .health:hover { color: var(--text); }

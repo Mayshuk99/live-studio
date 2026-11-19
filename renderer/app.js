@@ -785,7 +785,7 @@
     try {
       rt.live = new Output('stream');
       await rt.live.start();
-      rt.liveStart = Date.now(); rt.liveStats = null; rt.reconnects = 0;
+      rt.liveStart = Date.now(); rt.liveStats = null; rt.reconnects = 0; resetFrameStats();
       S.setLive(true);
       document.body.classList.add('is-live');
       if (settings.autoRecord && !rt.rec) startRec();
@@ -852,6 +852,44 @@
     if (Date.now() - recConfirm < 3000) { recConfirm = 0; stopRec(); return; }
     recConfirm = Date.now(); renderHeader(); setTimeout(renderHeader, 3100);
   });
+  /* ---------- frame counter & drop statistics ---------- */
+  function frameDrops() {
+    const enc = (rt.live && rt.liveStats ? (rt.liveStats.drop || 0) : 0) + (rt.rec && rt.recStats ? (rt.recStats.drop || 0) : 0);
+    let cam = 0; for (const c of show.cameras) { const src = engine.sources.get(c.id); if (src) cam += (src.skipped || 0) - (src.skipBase || 0); }
+    return { engine: engine.stats.missed, enc, cam, total: engine.stats.missed + enc }; // camera skips are shown in the window only
+  }
+  function resetFrameStats() {
+    engine.stats.frames = 0; engine.stats.missed = 0; engine.stats.since = performance.now();
+    for (const c of show.cameras) { const src = engine.sources.get(c.id); if (src) { src.skipBase = src.skipped || 0; src.count = 0; src.countAt = performance.now(); } }
+    rt.dropSeen = 0;
+  }
+  function openPerf() {
+    const body = el('div');
+    const draw = () => {
+      if (!body.isConnected && body.dataset.open) return clearInterval(timer);
+      body.dataset.open = '1';
+      const d = frameDrops(), st = engine.stats, secs = (performance.now() - st.since) / 1000;
+      const row = (a, b, bad) => el('div', { class: 'key-row' }, el('span', { class: 'grow' }, a), el('b', { class: 'mono ' + (bad ? 'status-bad' : '') }, b));
+      body.innerHTML = '';
+      put(body,
+        el('h3', null, 'Program output'),
+        row('Frames made', `${st.frames.toLocaleString()}  (${fmt(secs)})`),
+        row('Frame rate now / target', `${st.fps} / ${engine.fps} fps`, st.fps < engine.fps - 2),
+        row('Frames missed by this computer', String(d.engine), d.engine > 0),
+        row('Time to draw one frame', `${st.renderMs.toFixed(1)} ms of ${(1000 / engine.fps).toFixed(1)} ms`, st.renderMs > 1000 / engine.fps),
+        el('h3', null, 'Cameras'),
+        show.cameras.length ? show.cameras.map(c => { const src = engine.sources.get(c.id), now = performance.now(); let f = '—'; if (src && src.countAt) { f = ((src.count || 0) / ((now - src.countAt) / 1000)).toFixed(2) + ' fps'; } if (src && (!src.countAt || now - src.countAt > 5000)) { src.count = 0; src.countAt = now; } const sk = src ? (src.skipped || 0) - (src.skipBase || 0) : 0; return row(`${c.name} — arriving at`, `${f} · ${sk} skipped`, sk > 0); }) : el('div', { class: 'muted' }, 'No cameras.'),
+        el('h3', null, 'YouTube stream encoder'),
+        rt.live && rt.liveStats ? [row('Frames sent', (rt.liveStats.frame || 0).toLocaleString()), row('Dropped by the encoder', String(rt.liveStats.drop || 0), rt.liveStats.drop > 0), row('Repeated to fill gaps', String(rt.liveStats.dup || 0), rt.liveStats.dup > engine.fps), row('Encoder speed', `${(rt.liveStats.speed || 0).toFixed(2)}×`, rt.liveStats.speed && rt.liveStats.speed < 0.97)] : el('div', { class: 'muted' }, 'Not live.'),
+        rt.rec && rt.recStats ? [el('h3', null, 'Recording'), row('Frames written', (rt.recStats.frame || 0).toLocaleString()), row('Dropped', String(rt.recStats.drop || 0), rt.recStats.drop > 0)] : null,
+        el('div', { class: 'muted', style: 'font-size:.85em;margin-top:12px' }, d.total ? 'If frames are being missed: close other programs, use a hardware encoder (Settings → Encoder), or lower the frame rate or resolution.' : 'No dropped frames. ✓'),
+        el('div', { class: 'row', style: 'margin-top:14px' }, el('button', { class: 'btn', onclick: () => { resetFrameStats(); draw(); } }, 'Reset counters'), el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { clearInterval(timer); closeModal(); } }, 'Done')));
+    };
+    openModal('Frame counter', body);
+    draw();
+    const timer = setInterval(draw, 1000);
+  }
+  $('#health').addEventListener('click', openPerf);
   $('#btnSettings').addEventListener('click', () => openSettings());
   $('#btnLayout').addEventListener('click', () => setEditing(!rt.editing));
   const showNameInput = $('#showName');
@@ -893,7 +931,14 @@
       yp.querySelector('.txt').textContent = txt + (rt.yt && rt.yt.viewers ? ` · 👁 ${rt.yt.viewers}` : '');
     }
     parts.push(`engine ${engine.stats.fps} fps`);
+    const drops = frameDrops();
+    parts.push(`frame ${engine.stats.frames.toLocaleString()}`);
+    parts.push(drops.total ? `<span class="bad">⚠ ${drops.total} dropped</span>` : '<span class="good">0 dropped</span>');
     hl.innerHTML = parts.join(' · ');
+    hl.title = 'Click for frame statistics';
+    // warn once when frames start dropping while live or recording
+    if ((rt.live || rt.rec) && drops.total - (rt.dropSeen || 0) >= Math.max(5, engine.fps / 2) && Date.now() - (rt.dropWarnAt || 0) > 60000) { rt.dropWarnAt = Date.now(); toast(`Frames are being dropped (${drops.total} so far). Click the frame counter at the top for details.`, 'error'); }
+    if (Date.now() - (rt.dropSeenAt || 0) > 10000) { rt.dropSeenAt = Date.now(); rt.dropSeen = drops.total; }
   }
   setInterval(tickHeader, 500);
 
@@ -2611,6 +2656,7 @@
   await bootShow();
   renderHeader();
   checkWake();
+  setTimeout(resetFrameStats, 4000); // don't count the start-up hiccups
   ytInit().catch(e => console.warn('youtube', e));
   window.__live = { engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack };
 })();
