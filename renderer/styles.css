@@ -469,3 +469,24 @@ textarea { width: 100%; box-sizing: border-box; }
 /* countdown bar on captions that hide by themselves */
 .spk.counting::before, .gtile.counting::before { content: ''; position: absolute; left: 0; bottom: 0; height: 5px; width: calc(var(--cd, 0) * 100%); background: #fbbf24; border-radius: 0 3px 3px 6px; transition: width .15s linear; }
 #spkHide span { font-variant-numeric: tabular-nums; }
+
+/* big preview tiles in Titles & Graphics */
+.tile-row .gtile.big { flex: 0 0 auto; height: 100%; max-height: none; min-height: 90px; aspect-ratio: 16 / 9.6; padding: 0; overflow: hidden; border-top-width: 2px; border-color: var(--line); }
+.gtile.big.label { border-bottom: 4px solid #a855f7; } .gtile.big.pic { border-bottom: 4px solid #f59e0b; } .gtile.big.web { border-bottom: 4px solid #0ea5e9; }
+.gtile.big .g-thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.gtile.big .g-cap { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 6px; padding: 14px 8px 5px; background: linear-gradient(to top, rgba(8,9,12,.92) 55%, rgba(8,9,12,0)); }
+.gtile.big .g-title { flex: 1; font-size: .88em; padding: 0; }
+.gtile.big .g-ico { font-size: .75em; font-weight: 800; color: var(--muted); }
+.gtile.big .keychip { margin: 0; }
+.gtile.big .spk-air { position: absolute; left: 6px; top: 6px; background: var(--red); color: #fff; padding: 1px 7px; border-radius: 4px; font-size: .7em; }
+.gtile.big .spk-air:empty { display: none; }
+.gtile.big.on { border-color: var(--red); box-shadow: 0 0 0 2px var(--red) inset; background: #18181b; }
+.gtile.big.drop { outline: 3px dashed var(--accent); outline-offset: -3px; }
+.gtile.big.counting::before { z-index: 2; height: 6px; }
+.gtile-adds { display: flex; flex-direction: column; gap: 5px; flex: 0 0 120px; }
+.gtile-adds .gtile { flex: 1; min-height: 0; max-height: none; padding: 2px 8px; font-size: .85em; border-width: 1px; border-style: dashed; }
+
+.tile-row .gtile.big { display: flex; flex-direction: column; aspect-ratio: 16 / 11.4; }
+.gtile.big .g-thumb { position: static; inset: auto; flex: 1; min-height: 0; width: 100%; height: auto; }
+.gtile.big .g-cap { position: static; background: #141417; padding: 4px 8px; flex: 0 0 auto; }
+.gtile-adds { flex: 0 0 104px; }

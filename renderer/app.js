@@ -681,8 +681,8 @@
   setInterval(() => {
     const now = Date.now();
     let spkLeft = 0;
-    document.querySelectorAll('.spk[data-spk], .gtile[data-label]').forEach(t => {
-      const id = t.dataset.spk || t.dataset.label, h = rt.hideAt.get(id);
+    document.querySelectorAll('.spk[data-spk], .gtile[data-gid]').forEach(t => {
+      const id = t.dataset.spk || t.dataset.gid, h = rt.hideAt.get(id);
       const left = h ? Math.max(0, h.at - now) : 0;
       t.style.setProperty('--cd', h ? left / h.total : 0);
       t.classList.toggle('counting', !!h && left > 0);
@@ -1304,8 +1304,16 @@
   }
   function refreshWebs() { for (const w of show.webs) engine.setWeb(engineWeb(w), webWanted(w.id)); for (const p2 of show.pics) applyPic(p2); refreshWebStates(); }
   function toggleWeb(id) {
+    const cfg = show.webs.find(x => x.id === id) || show.pics.find(x => x.id === id);
+    clearTimeout(rt.labelTimers.get(id)); rt.hideAt.delete(id);
     if (engine.webVisible(id)) { rt.webManual.delete(id); rt.webSuppress.add(id); }
-    else { rt.webManual.add(id); rt.webSuppress.delete(id); }
+    else {
+      rt.webManual.add(id); rt.webSuppress.delete(id);
+      if (cfg && cfg.autoHide > 0) {
+        rt.hideAt.set(id, { at: Date.now() + cfg.autoHide * 1000, total: cfg.autoHide * 1000 });
+        rt.labelTimers.set(id, setTimeout(() => { if (engine.webVisible(id)) (show.pics.some(x => x.id === id) ? togglePic : toggleWeb)(id); }, cfg.autoHide * 1000));
+      }
+    }
     refreshWebs();
   }
   function refreshWebStates() {
@@ -1346,6 +1354,7 @@
               el('input', { type: 'color', value: w.key.color, title: 'Colour to remove (e.g. the page’s black or green background)', oninput: e => { w.key.color = e.target.value; live(); } })),
             slider({ label: 'Removal strength', min: 0.02, max: 0.6, step: 0.01, value: w.key.tol, reset: 0.15, fmt: v => `${Math.round(v * 100)}`, onInput: v => { w.key.tol = v; live(); } }),
             el('div', { class: 'field' }, el('span', null, 'Fade in / out'), select([[0, 'Instant'], [200, 'Fast'], [400, 'Normal'], [800, 'Smooth'], [1500, 'Slow']], w.fadeMs, v => { w.fadeMs = +v; live(); })),
+            el('div', { class: 'field' }, el('span', null, 'Auto hide'), select([[0, 'Stay on until hidden'], [5, 'Hide after 5 s'], [10, 'Hide after 10 s'], [15, 'Hide after 15 s'], [30, 'Hide after 30 s'], [60, 'Hide after 1 min'], [120, 'Hide after 2 min'], [300, 'Hide after 5 min']], w.autoHide || 0, v => { w.autoHide = +v; changed(); })),
             el('div', { class: 'field' }, el('span', null, 'Updates per second'), select([[5, '5 (very light)'], [15, '15 (captions)'], [30, '30 (animations)']], w.fps, v => { w.fps = +v; changed(); reopen(); })))),
         el('details', { style: 'margin-top:8px' }, el('summary', { class: 'muted', style: 'cursor:pointer' }, 'Advanced'),
           el('div', { class: 'row wrap', style: 'margin:8px 0' }, check(' Page size follows position', w.autoSize, v => { w.autoSize = v; changed(); reopen(); draw(); }),
@@ -1412,7 +1421,8 @@
             p2.pos !== 'full' ? slider({ label: 'From edge', min: 0, max: 0.12, step: 0.002, value: p2.margin, reset: 0.03, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { p2.margin = v; upd(); } }) : null),
           el('div', null,
             slider({ label: 'Opacity', min: 0.1, max: 1, step: 0.01, value: p2.opacity, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { p2.opacity = v; upd(); } }),
-            el('div', { class: 'field' }, el('span', null, 'Fade in / out'), select([[0, 'Instant'], [300, 'Fast'], [500, 'Normal'], [1000, 'Smooth'], [2000, 'Slow']], p2.fadeMs, v => { p2.fadeMs = +v; upd(); })))),
+            el('div', { class: 'field' }, el('span', null, 'Fade in / out'), select([[0, 'Instant'], [300, 'Fast'], [500, 'Normal'], [1000, 'Smooth'], [2000, 'Slow']], p2.fadeMs, v => { p2.fadeMs = +v; upd(); })),
+            el('div', { class: 'field' }, el('span', null, 'Auto hide'), select([[0, 'Stay on until hidden'], [5, 'Hide after 5 s'], [10, 'Hide after 10 s'], [15, 'Hide after 15 s'], [30, 'Hide after 30 s'], [60, 'Hide after 1 min'], [120, 'Hide after 2 min'], [300, 'Hide after 5 min']], p2.autoHide || 0, v => { p2.autoHide = +v; changed(); })))),
         el('div', { class: 'row', style: 'margin-top:14px' },
           isNew ? null : el('button', { class: 'btn danger', onclick: () => { engine.removeWeb(p2.id); show.pics = show.pics.filter(x => x !== p2); show.shots.forEach(sh => { if (sh.webIds) sh.webIds = sh.webIds.filter(i => i !== p2.id); }); delete settings.hotkeys['pic:' + p2.id]; saveSettings(); changed(); closeModal(); refresh('labels'); refresh('editor'); } }, 'Delete'),
           el('span', { class: 'grow' }),
@@ -1503,40 +1513,63 @@
   }
 
   /* ================= panel: labels ================= */
+  // Titles & Graphics: every item (title, picture, web page) is a tile with a preview; drag tiles to reorder them
+  function gfxItems() {
+    const items = [
+      ...show.labels.map(L => ({ id: L.id, kind: 'label', o: L, name: L.title || '(empty)', toggle: () => toggleLabel(L.id), edit: () => editLabel(L), on: () => engine.labelVisible(L.id), key: 'lbl:' + L.id })),
+      ...show.pics.map(p2 => ({ id: p2.id, kind: 'pic', o: p2, name: p2.name || 'Picture', toggle: () => togglePic(p2.id), edit: () => editPic(p2), on: () => engine.webVisible(p2.id), key: 'pic:' + p2.id })),
+      ...show.webs.map(w => ({ id: w.id, kind: 'web', o: w, name: w.name || 'Web page', toggle: () => toggleWeb(w.id), edit: () => editWeb(w), on: () => engine.webVisible(w.id), key: 'web:' + w.id }))
+    ];
+    const ord = show.gfxOrder || [];
+    const rank = id => { const i = ord.indexOf(id); return i < 0 ? 1e6 : i; };
+    return items.map((it, i) => [rank(it.id), i, it]).sort((x, y) => x[0] - y[0] || x[1] - y[1]).map(x => x[2]);
+  }
+  function drawGfxThumb(c, it) {
+    const g = c.getContext('2d'), W = c.width, H = c.height;
+    const gr = g.createLinearGradient(0, 0, W, H); gr.addColorStop(0, '#39465c'); gr.addColorStop(1, '#1f2632');
+    g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    if (it.kind === 'label') { const t = rt.gfxTmp || (rt.gfxTmp = el('canvas', { width: 640, height: 360 })); drawLabel(t.getContext('2d'), 640, 360, it.o); g.drawImage(t, 0, 0, W, H); }
+    else if (it.kind === 'pic') { const f = rt.files.get(it.o.fileId), r = picRect(it.o); if (f && f.ok && f.el) g.drawImage(f.el, r[0] * W, r[1] * H, r[2] * W, r[3] * H); }
+    else { const wc = rt.webCanvas.get(it.id), r = it.o.rect; if (wc && wc.width) g.drawImage(wc, r[0] * W, r[1] * H, r[2] * W, r[3] * H); }
+  }
+  let gfxDrag = null;
   RENDER.labels = body => {
     body.innerHTML = '';
     const row = el('div', { class: 'tile-row' });
-    show.labels.forEach(L => {
-      const on = engine.labelVisible(L.id);
-      row.append(el('div', { class: 'gtile' + (on ? ' on' : ''), dataset: { label: L.id }, onclick: () => toggleLabel(L.id) },
-        el('div', { class: 'g-title' }, L.title || '(empty)'), el('div', { class: 'g-sub' }, L.subtitle || ''),
-        el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''), keyChip('lbl:' + L.id)),
-        el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editLabel(L); } }, '✎')));
-    });
-    for (const w of show.webs) {
-      const on = engine.webVisible(w.id), st = rt.webStatus.get(w.id) || { ok: true, text: '' };
-      row.append(el('div', { class: 'gtile web' + (on ? ' on' : ''), dataset: { web: w.id }, onclick: () => toggleWeb(w.id) },
-        el('div', { class: 'g-title' }, '🌐 ' + (w.name || 'Web page')), el('div', { class: 'g-sub', dataset: { webStatus: w.id } }, st.ok ? (w.url || '').replace(/^https?:\/\//, '') : st.text),
-        el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''), keyChip('web:' + w.id)),
-        el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editWeb(w); } }, '✎')));
+    const items = gfxItems();
+    row.append(el('div', { class: 'gtile-adds' },
+      el('div', { class: 'gtile add', onclick: () => {
+        const last = show.labels[show.labels.length - 1] || show.speakerStyle;
+        const L = { id: uid('lbl'), title: 'New title', subtitle: '', style: last.style || 'lower', color: last.color || settings.ui.accent, design: clone(last.design || {}), autoHide: 0 };
+        show.labels.push(L); engine.setLabel(L, false); changed(); refresh('labels'); editLabel(L);
+      } }, '+ Title'),
+      el('div', { class: 'gtile add pic-add', onclick: () => editPic(newPic(), true) }, '+ Picture'),
+      el('div', { class: 'gtile add web-add', onclick: () => editWeb(newWeb(), true) }, '+ Web page')));
+    for (const it of items) {
+      const on = it.on();
+      const thumb = el('canvas', { width: 320, height: 180, class: 'g-thumb' });
+      drawGfxThumb(thumb, it);
+      const ds = { gid: it.id }; ds[it.kind === 'label' ? 'label' : it.kind] = it.id;
+      const tile = el('div', { class: `gtile big ${it.kind}` + (on ? ' on' : ''), dataset: ds, draggable: 'true', title: 'Click to show / hide · drag to reorder', onclick: it.toggle },
+        thumb,
+        el('div', { class: 'g-cap' }, el('span', { class: 'g-ico' }, it.kind === 'label' ? 'T' : it.kind === 'pic' ? '🖼' : '🌐'), el('span', { class: 'g-title' }, it.name), keyChip(it.key)),
+        el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''),
+        el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); it.edit(); } }, '✎'));
+      tile._gfx = it;
+      tile.addEventListener('dragstart', e => { gfxDrag = it.id; e.dataTransfer.effectAllowed = 'move'; });
+      tile.addEventListener('dragover', e => { if (gfxDrag && gfxDrag !== it.id) { e.preventDefault(); tile.classList.add('drop'); } });
+      tile.addEventListener('dragleave', () => tile.classList.remove('drop'));
+      tile.addEventListener('drop', e => {
+        e.preventDefault(); tile.classList.remove('drop');
+        const ids = items.map(x => x.id).filter(x => x !== gfxDrag);
+        ids.splice(ids.indexOf(it.id), 0, gfxDrag);
+        show.gfxOrder = ids; gfxDrag = null; changed(); refresh('labels');
+      });
+      row.append(tile);
     }
-    for (const p2 of show.pics) {
-      const on = engine.webVisible(p2.id), f = rt.files.get(p2.fileId);
-      row.append(el('div', { class: 'gtile pic' + (on ? ' on' : ''), dataset: { pic: p2.id }, onclick: () => togglePic(p2.id) },
-        f && f.url ? el('img', { class: 'pic-thumb', src: f.url }) : null,
-        el('div', { class: 'g-title' }, '🖼 ' + (p2.name || 'Picture')), el('div', { class: 'g-sub' }, PIC_POS[p2.pos] || ''),
-        el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''), keyChip('pic:' + p2.id)),
-        el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); editPic(p2); } }, '✎')));
-    }
-    row.append(el('div', { class: 'gtile add pic-add', onclick: () => editPic(newPic(), true) }, '+ Picture'));
-    row.append(el('div', { class: 'gtile add web-add', onclick: () => editWeb(newWeb(), true) }, '+ Web page'));
-    row.append(el('div', { class: 'gtile add', onclick: () => {
-      const last = show.labels[show.labels.length - 1] || show.speakerStyle;
-      const L = { id: uid('lbl'), title: 'New title', subtitle: '', style: last.style || 'lower', color: last.color || settings.ui.accent, design: clone(last.design || {}), autoHide: 0 };
-      show.labels.push(L); engine.setLabel(L, false); changed(); refresh('labels'); editLabel(L);
-    } }, '+ Add'));
     put(body, row);
   };
+  setInterval(() => { document.querySelectorAll('.gtile.big.web').forEach(t => { if (t._gfx) drawGfxThumb(t.querySelector('canvas'), t._gfx); }); }, 2000);
   function editLabel(L) {
     const upd = () => { engine.setLabel(L); changed(); };
     openModal('Edit title / graphic', el('div', null,
@@ -1544,7 +1577,7 @@
       el('div', { class: 'field' }, el('span', null, 'Second line (optional)'), el('input', { type: 'text', value: L.subtitle, oninput: e => { L.subtitle = e.target.value; upd(); } })),
       el('div', { class: 'row wrap', style: 'gap:10px' },
         el('button', { class: 'btn', onclick: () => openDesigner(L, { title: L.title, subtitle: L.subtitle }, upd) }, '🎨 Design look…'),
-        select([[0, 'Stay on until hidden'], [5, 'Hide after 5 s'], [8, 'Hide after 8 s'], [15, 'Hide after 15 s'], [30, 'Hide after 30 s']], L.autoHide, v => { L.autoHide = +v; changed(); })),
+        el('label', { class: 'inline' }, 'Auto hide', select([[0, 'Stay on until hidden'], [5, 'Hide after 5 s'], [10, 'Hide after 10 s'], [15, 'Hide after 15 s'], [30, 'Hide after 30 s'], [60, 'Hide after 1 min'], [120, 'Hide after 2 min'], [300, 'Hide after 5 min']], L.autoHide, v => { L.autoHide = +v; changed(); }))),
       el('div', { class: 'row', style: 'margin-top:16px' },
         el('button', { class: 'btn danger', onclick: () => { engine.removeLabel(L.id); show.labels = show.labels.filter(x => x !== L); delete settings.hotkeys['lbl:' + L.id]; saveSettings(); changed(); closeModal(); refresh('labels'); } }, 'Delete'),
         el('span', { class: 'grow' }),
