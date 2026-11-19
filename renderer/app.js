@@ -113,7 +113,7 @@
   const defaultSettings = () => ({
     youtube: { server: 'rtmps://a.rtmps.youtube.com:443/live2', custom: '', key: '' },
     output: { width: 1920, height: 1080, fps: 30, bitrate: 8000, encoder: 'x264', audioBitrate: 160, recordBitrate: 20000 },
-    recordDir: '', autoRecord: false, ftbAudio: true, zebra: true, moveSpeed: 0.12,
+    recordDir: '', autoRecord: false, ftbAudio: true, zebra: false, moveSpeed: 0.12,
     ui: { scale: 1, accent: '#3b82f6', card: 1, layouts: defaultLayouts(), layoutV: 4 },
     hotkeys: {}
   });
@@ -138,6 +138,8 @@
     if (au && me && au.h === 5 && me.h === 3) { au.h = 4; me.h = 4; }
     settings.ui.audioSlim = true;
   }
+  // 1.8.2: the stripe pattern on bright areas of the Preview (zebra) is now off unless you turn it on in Color & Exposure
+  if (!settings.zebraV) { settings.zebra = false; settings.zebraV = 1; }
   let view = 'live';
   const curLayout = () => settings.ui.layouts[view];
 
@@ -175,6 +177,12 @@
   const previewCanvas = el('canvas', { width: 960, height: Math.round(960 * settings.output.height / settings.output.width) });
   engine.previewCanvas = previewCanvas;
   engine.previewCtx = previewCanvas.getContext('2d');
+  // keep the Preview picture pixel-sharp: match its resolution to the size it is shown at
+  new ResizeObserver(() => {
+    const w = Math.min(engine.W, Math.max(320, Math.round(previewCanvas.clientWidth * devicePixelRatio)));
+    const h = Math.round(w * engine.H / engine.W);
+    if (w && (previewCanvas.width !== w || previewCanvas.height !== h)) { previewCanvas.width = w; previewCanvas.height = h; }
+  }).observe(previewCanvas);
 
   const mixer = new Mixer();
   mixer.setMaster(show.audio.master);
@@ -877,6 +885,13 @@
         row('Frame rate now / target', `${st.fps} / ${engine.fps} fps`, st.fps < engine.fps - 2),
         row('Frames missed by this computer', String(d.engine), d.engine > 0),
         row('Time to draw one frame', `${st.renderMs.toFixed(1)} ms of ${(1000 / engine.fps).toFixed(1)} ms`, st.renderMs > 1000 / engine.fps),
+        el('h3', null, 'This computer'),
+        rt.pc && rt.pc.cpu !== null ? [
+          row(`Processor (CPU) — ${(rt.pc.cpuName || '').trim()}`, `${rt.pc.cpu}%`, rt.pc.cpu >= 90),
+          row('CPU temperature', rt.pc.cpuTemp !== null ? `${rt.pc.cpuTemp} °C` : 'not reported by this PC', rt.pc.cpuTemp >= 85),
+          row(`Graphics (GPU)${rt.pc.gpuName ? ' — ' + rt.pc.gpuName : ''}`, rt.pc.gpu !== null ? `${rt.pc.gpu}%` : 'not available', rt.pc.gpu >= 95),
+          row('GPU temperature', rt.pc.gpuTemp !== null ? `${rt.pc.gpuTemp} °C` : 'only available for NVIDIA cards', rt.pc.gpuTemp >= 85),
+          row('Memory in use', `${rt.pc.mem}%`, rt.pc.mem >= 90)] : el('div', { class: 'muted' }, 'Reading…'),
         el('h3', null, 'Cameras'),
         show.cameras.length ? show.cameras.map(c => { const src = engine.sources.get(c.id), now = performance.now(); let f = '—'; if (src && src.countAt) { f = ((src.count || 0) / ((now - src.countAt) / 1000)).toFixed(2) + ' fps'; } if (src && (!src.countAt || now - src.countAt > 5000)) { src.count = 0; src.countAt = now; } const sk = src ? (src.skipped || 0) - (src.skipBase || 0) : 0; return row(`${c.name} — arriving at`, `${f} · ${sk} skipped`, sk > 0); }) : el('div', { class: 'muted' }, 'No cameras.'),
         el('h3', null, 'YouTube stream encoder'),
@@ -885,7 +900,7 @@
         el('div', { class: 'muted', style: 'font-size:.85em;margin-top:12px' }, d.total ? 'If frames are being missed: close other programs, use a hardware encoder (Settings → Encoder), or lower the frame rate or resolution.' : 'No dropped frames. ✓'),
         el('div', { class: 'row', style: 'margin-top:14px' }, el('button', { class: 'btn', onclick: () => { resetFrameStats(); draw(); } }, 'Reset counters'), el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { clearInterval(timer); closeModal(); } }, 'Done')));
     };
-    openModal('Frame counter', body);
+    openModal('Frame counter & PC monitor', body);
     draw();
     const timer = setInterval(draw, 1000);
   }
@@ -931,6 +946,12 @@
       yp.querySelector('.txt').textContent = txt + (rt.yt && rt.yt.viewers ? ` · 👁 ${rt.yt.viewers}` : '');
     }
     parts.push(`engine ${engine.stats.fps} fps`);
+    const P = rt.pc;
+    if (P && P.cpu !== null) {
+      const hot = v => v !== null && v !== undefined && v >= 85, t = v => v !== null && v !== undefined ? ` ${v}°C` : '';
+      parts.push(`<span class="${P.cpu >= 90 || hot(P.cpuTemp) ? 'bad' : ''}">CPU ${P.cpu}%${t(P.cpuTemp)}</span>`);
+      if (P.gpu !== null) parts.push(`<span class="${P.gpu >= 95 || hot(P.gpuTemp) ? 'bad' : ''}">GPU ${P.gpu}%${t(P.gpuTemp)}</span>`);
+    }
     const drops = frameDrops();
     parts.push(`frame ${engine.stats.frames.toLocaleString()}`);
     parts.push(drops.total ? `<span class="bad">⚠ ${drops.total} dropped</span>` : '<span class="good">0 dropped</span>');
@@ -1302,7 +1323,7 @@
         el('button', { class: 'btn small', onclick: () => { Object.assign(c, NEUTRAL); apply(); refresh('color'); } }, 'Reset'),
         show.cameras.length > 1 && camById(cur.id) ? el('button', { class: 'btn small', onclick: () => { show.cameras.forEach(cam => { cam.color = clone(c); engine.setColor(cam.id, cam.color); }); changed(); toast('Copied to all cameras.', 'ok'); } }, 'Copy to all cameras') : null,
         el('span', { class: 'grow' }),
-        check(' Zebra on preview', settings.zebra, v => { settings.zebra = v; engine.zebra = v; saveSettings(); })),
+        check(' Zebra stripes on Preview (shows over-bright areas)', settings.zebra, v => { settings.zebra = v; engine.zebra = v; saveSettings(); })),
       el('div', { class: 'muted', style: 'font-size:.82em;margin-top:8px' }, 'Zebra stripes on the Preview screen show parts that are too bright. Double-click a slider to reset it.')
     );
   };
@@ -2385,7 +2406,7 @@
       if (k === 'width' || k === 'height' || k === 'fps') {
         engine.setSize(o.width, o.height); engine.setFps(o.fps);
         engine.setSource('bars', makeBars(o.width, o.height), 'image');
-        previewCanvas.height = Math.round(960 * o.height / o.width);
+        previewCanvas.height = Math.round(previewCanvas.width * o.height / o.width);
       }
     };
     const body = el('div', null,
@@ -2656,6 +2677,7 @@
   await bootShow();
   renderHeader();
   checkWake();
+  if (S.pcStats) { const poll = () => S.pcStats().then(p2 => { rt.pc = p2; }).catch(() => {}); poll(); setInterval(poll, 3000); }
   setTimeout(resetFrameStats, 4000); // don't count the start-up hiccups
   ytInit().catch(e => console.warn('youtube', e));
   window.__live = { engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack };

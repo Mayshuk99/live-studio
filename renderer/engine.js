@@ -478,7 +478,7 @@
 
       // preview monitor
       if (this.previewCtx) {
-        const pw = Math.min(960, this.W), ph = Math.round(pw * this.H / this.W);
+        const pw = Math.max(320, Math.min(this.W, this.previewCtx.canvas.width)), ph = Math.round(pw * this.H / this.W); // drawn at the exact size it is shown, so it stays sharp
         this._viewport(pw, ph);
         const ps = shot(this.previewId);
         if (ps) this._drawShot(ps, 1, true, this.zebra);

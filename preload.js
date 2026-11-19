@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('studio', {
   webReload: id => ipcRenderer.invoke('web:reload', id),
   onWebFrame: cb => ipcRenderer.on('web:frame', (e, f) => cb(f)),
   onWebStatus: cb => ipcRenderer.on('web:status', (e, st) => cb(st)),
+  pcStats: () => ipcRenderer.invoke('pc:stats'),
   yt: {
     status: () => ipcRenderer.invoke('yt:status'),
     signIn: () => ipcRenderer.invoke('yt:signIn'),

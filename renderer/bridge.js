@@ -102,6 +102,7 @@
     webReload: async () => true,
     onWebFrame: cb => webListeners.frame.push(cb),
     onWebStatus: cb => webListeners.status.push(cb),
+    pcStats: async () => ({ cpu: 23, cpuTemp: 58, gpu: 41, gpuTemp: 64, gpuName: 'Test GPU', mem: 47, cores: 8, cpuName: 'Test CPU' }),
     yt: {
       status: async () => ({ configured: false, signedIn: false, channel: null, browser: true }),
       signIn: async () => ({ error: 'YouTube sign-in works in the installed app.' }),

@@ -207,6 +207,42 @@ ipcMain.on('out:data', (e, id, data) => outputs.write(id, data));
 ipcMain.handle('out:stop', (e, id) => outputs.stop(id));
 ipcMain.on('app:live', (e, live) => { isLive = !!live; });
 
+/* ---------- PC monitoring: CPU / GPU usage and temperatures ---------- */
+const os = require('os');
+const { execFile } = require('child_process');
+const pc = { cpu: null, cpuTemp: null, gpu: null, gpuTemp: null, gpuName: null, mem: null, started: false };
+function pcStart() {
+  if (pc.started) return; pc.started = true;
+  let prev = os.cpus();
+  setInterval(() => {
+    const cur = os.cpus(); let idle = 0, total = 0;
+    cur.forEach((c, i) => { const p = prev[i] ? prev[i].times : { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 }; for (const k of Object.keys(c.times)) total += c.times[k] - (p[k] || 0); idle += c.times.idle - p.idle; });
+    prev = cur;
+    if (total > 0) pc.cpu = Math.round(100 * (1 - idle / total));
+    pc.mem = Math.round(100 * (1 - os.freemem() / os.totalmem()));
+  }, 2000);
+  // NVIDIA cards: exact usage and temperature from the driver's own tool
+  let nvOk = true;
+  const nv = () => { if (!nvOk) return; execFile('nvidia-smi', ['--query-gpu=utilization.gpu,temperature.gpu,name', '--format=csv,noheader,nounits'], { timeout: 4000, windowsHide: true }, (err, out) => {
+    if (err) { nvOk = false; return; }
+    const p = String(out).trim().split('\n')[0].split(',').map(x => x.trim());
+    if (p.length >= 2) { pc.gpu = +p[0]; pc.gpuTemp = +p[1]; pc.gpuName = p[2] || 'NVIDIA'; pc.nv = true; }
+  }); };
+  nv(); setInterval(nv, 3000);
+  // Windows: GPU usage for any card, and CPU temperature where the PC reports it
+  if (process.platform === 'win32') {
+    const script = "$ErrorActionPreference='SilentlyContinue'; while($true){ $g=''; $t=''; $s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples; if($s){ $m=0; $s | Group-Object { if($_.InstanceName -match 'engtype_(\\w+)'){$matches[1]} } | ForEach-Object { $v=($_.Group | Measure-Object CookedValue -Sum).Sum; if($v -gt $m){$m=$v} }; $g=[math]::Min(100,[math]::Round($m)) }; $z=Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature; if($z){ $t=[math]::Round((($z | Measure-Object CurrentTemperature -Maximum).Maximum/10)-273.15) }; Write-Output ('PC|{0}|{1}' -f $g,$t); Start-Sleep -Seconds 4 }";
+    try {
+      const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      ps.stdout.on('data', d => { for (const line of String(d).split(/\r?\n/)) { const m = line.match(/^PC\|(\d*)\|(-?\d*)/); if (!m) continue; if (!pc.nv && m[1] !== '') pc.gpu = +m[1]; if (m[2] !== '' && +m[2] > 0 && +m[2] < 120) pc.cpuTemp = +m[2]; } });
+      ps.on('error', () => {});
+      app.on('before-quit', () => { try { ps.kill(); } catch (e) { /* */ } });
+      if (win) win.on('closed', () => { try { ps.kill(); } catch (e) { /* */ } });
+    } catch (e) { /* no powershell */ }
+  }
+}
+ipcMain.handle('pc:stats', () => { pcStart(); return { cpu: pc.cpu, cpuTemp: pc.cpuTemp, gpu: pc.gpu, gpuTemp: pc.gpuTemp, gpuName: pc.gpuName, mem: pc.mem, cores: os.cpus().length, cpuName: (os.cpus()[0] || {}).model }; });
+
 /* ---------- web page overlays: pages rendered off-screen (like a browser source) ---------- */
 const webPages = new Map(); // id -> { win, cfg }
 function webSend(ch, payload) { if (win && !win.isDestroyed()) win.webContents.send(ch, payload); }
