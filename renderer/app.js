@@ -2351,8 +2351,8 @@
   function actions() {
     const list = [];
     const A = (id, group, label, def, run) => list.push({ id, group, label, def: def || '', run });
-    A('take', 'Switching', 'Take — fade Preview to air', 'Space', () => take('auto'));
-    A('cut', 'Switching', 'Cut — instant switch', 'Enter', () => take('cut'));
+    A('take', 'Switching', 'Take — fade Preview to air', 'Ctrl+KeyG', () => take('auto'));
+    A('cut', 'Switching', 'Cut — instant switch', 'Ctrl+KeyC', () => take('cut'));
     A('ftb', 'Switching', 'Fade to black / back', 'KeyB', () => setBlack(!engine.isBlack));
     A('nextShot', 'Switching', 'Next shot into Preview', 'ArrowRight', () => stepPreview(1));
     A('prevShot', 'Switching', 'Previous shot into Preview', 'ArrowLeft', () => stepPreview(-1));
