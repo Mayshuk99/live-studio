@@ -146,7 +146,7 @@ ipcMain.handle('media:pick', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Add video or image', properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'Video & images', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'webp', 'gif'] },
+      { name: 'Video & images', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'jfif', 'bmp', 'avif', 'webp', 'gif'] },
       { name: 'All files', extensions: ['*'] }
     ]
   });

@@ -252,7 +252,7 @@
     if (S.readMedia) {
       const bytes = await S.readMedia(f.path);
       const ext = (f.path.split('.').pop() || '').toLowerCase();
-      const types = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+      const types = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', bmp: 'image/bmp', avif: 'image/avif', webp: 'image/webp', gif: 'image/gif' };
       return URL.createObjectURL(new Blob([bytes], { type: types[ext] || '' }));
     }
     return S.mediaURL(f.path);
@@ -302,7 +302,7 @@
     const picked = await S.pickMedia();
     const added = [];
     for (const p of picked || []) {
-      const kind = /\.(png|jpe?g|webp|gif)$/i.test(p.name) ? 'image' : 'video';
+      const kind = /\.(png|jpe?g|jfif|webp|gif|bmp|avif)$/i.test(p.name) ? 'image' : 'video';
       const f = { id: uid('file'), name: p.name.replace(/\.[^.]+$/, ''), path: p.path, kind, loop: false, color: clone(NEUTRAL) };
       show.files.push(f); added.push(f);
       await loadFile(f);
@@ -449,36 +449,57 @@
     if (t - Date.now() < -60 * 60 * 1000) t.setDate(t.getDate() + 1);
     return t;
   }
+  /* The holding slide is made of items (text lines, accent line, clock) that can each be moved and styled. */
+  const HOLD_LAYOUTS = {
+    side: { org: [150, 150, 30, 'left'], bar: [150, 190, 0, 'left'], title: [145, 320, 124, 'left'], title2: [148, 406, 66, 'left'], sub: [150, 486, 46, 'left'], sub2: [150, 544, 46, 'left'], clock: [146, 640, 150, 'left'] },
+    center: { org: [960, 110, 30, 'center'], bar: [960, 150, 0, 'center'], title: [960, 290, 110, 'center'], title2: [960, 372, 62, 'center'], sub: [960, 450, 46, 'center'], sub2: [960, 508, 46, 'center'], clock: [960, 590, 150, 'center'] }
+  };
+  function ensureHold() {
+    const h = SV().hold;
+    if (!Array.isArray(h.elements)) {
+      const T = (id, name, text, weight, color, extra) => Object.assign({ id, type: 'text', name, text: text || '', weight, color, on: true }, extra);
+      h.elements = [
+        T('org', 'Church name', h.org, 600, '#e6e9f0', { upper: true, spacing: 4 }),
+        { id: 'bar', type: 'bar', name: 'Accent line', w: 90, h: 8, on: true },
+        T('title', 'Title', h.title, 700, '#ffffff'), T('title2', 'Title (2nd language)', h.title2, 600, '#f1f3f7'),
+        T('sub', 'Message', h.subtitle, 300, '#eef0f5'), T('sub2', 'Message (2nd language)', h.subtitle2, 300, '#c9ced9'),
+        { id: 'clock', type: 'clock', name: 'Clock', color: h.textColor || '#ffffff', card: true, label: true, on: true }
+      ];
+      h.bgStyle = h.layout === 'center' ? 'full' : 'side';
+      applyHoldLayout(h, h.layout === 'center' ? 'center' : 'side');
+    }
+    if (!h.font) h.font = 'Segoe UI';
+    return h;
+  }
+  function applyHoldLayout(h, name) {
+    const L = HOLD_LAYOUTS[name];
+    for (const e of h.elements) { const p = L[e.id]; if (!p) continue; e.x = p[0]; e.y = p[1]; if (p[2]) e.size = p[2]; e.align = p[3]; }
+  }
   function drawHold() {
-    const h = Object.assign({ layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c' }, SV().hold), W = 1920, H = 1080, g = holdCtx;
+    const h = Object.assign({ dim: 0.35, blur: 0, accent: '#d4a24c' }, ensureHold()), W = 1920, H = 1080, g = holdCtx;
     const f = h.bgFile && rt.files.get(h.bgFile);
     if (holdBgKey !== h.bgFile) { holdBgKey = h.bgFile; holdBg = null; }
     if (f && f.ok && f.el && f.el.tagName === 'IMG') holdBg = f.el;
     g.save();
-    if (holdBg) {
+    if (holdBg && h.bgFile) {
       const iw = holdBg.naturalWidth, ih = holdBg.naturalHeight;
-      if (h.layout === 'side') {
-        // picture fills the right part of the screen and fades into a dark panel behind the text
+      if (h.bgStyle === 'side') {
         const x0 = W * 0.30, rw = W - x0;
         g.fillStyle = '#090b12'; g.fillRect(0, 0, W, H);
         g.filter = h.blur ? `blur(${h.blur}px)` : 'none';
         const sc = Math.max(rw / iw, H / ih) * (h.zoom || 1), dw = iw * sc, dh = ih * sc;
-        const fx = h.focusX ?? 0.5, fy = h.focusY ?? 0.5;
         g.save(); g.beginPath(); g.rect(x0, 0, rw, H); g.clip();
-        g.drawImage(holdBg, x0 + (rw - dw) * fx, (H - dh) * fy, dw, dh);
+        g.drawImage(holdBg, x0 + (rw - dw) * (h.focusX ?? 0.5), (H - dh) * (h.focusY ?? 0.5), dw, dh);
         g.restore(); g.filter = 'none';
-        // fade the picture's left edge into the panel (drawn per row so the panel's own shading matches)
         const fw = rw * (h.fade ?? 0.5);
         const gr = g.createLinearGradient(x0 - 1, 0, x0 + fw, 0);
         gr.addColorStop(0, 'rgba(9,11,18,1)'); gr.addColorStop(0.3, 'rgba(9,11,18,.82)'); gr.addColorStop(0.65, 'rgba(9,11,18,.35)'); gr.addColorStop(1, 'rgba(9,11,18,0)');
         g.fillStyle = gr; g.fillRect(x0 - 1, 0, fw + 1, H);
         g.fillStyle = `rgba(6,8,14,${h.dim * 0.45})`; g.fillRect(x0, 0, rw, H);
-        const gb = g.createLinearGradient(0, H * 0.6, 0, H); gb.addColorStop(0, 'rgba(6,8,14,0)'); gb.addColorStop(1, `rgba(6,8,14,${h.dim * 0.7})`);
-        g.fillStyle = gb; g.fillRect(0, 0, W, H);
       } else {
-        const s = Math.max(W / iw, H / ih) * (h.blur ? 1.04 : 1) * (h.zoom || 1);
+        const sc = Math.max(W / iw, H / ih) * (h.blur ? 1.04 : 1) * (h.zoom || 1);
         if (h.blur) g.filter = `blur(${h.blur}px)`;
-        g.drawImage(holdBg, (W - iw * s) * (h.focusX ?? 0.5), (H - ih * s) * (h.focusY ?? 0.5), iw * s, ih * s);
+        g.drawImage(holdBg, (W - iw * sc) * (h.focusX ?? 0.5), (H - ih * sc) * (h.focusY ?? 0.5), iw * sc, ih * sc);
         g.filter = 'none';
         g.fillStyle = `rgba(6,8,14,${h.dim})`; g.fillRect(0, 0, W, H);
       }
@@ -487,10 +508,10 @@
       g.fillStyle = gr; g.fillRect(0, 0, W, H);
     }
     g.restore();
-    const font = '"Segoe UI", "Segoe UI Variable Display", system-ui, sans-serif';
+    const font = `"${h.font}", "Segoe UI", Inter, system-ui, sans-serif`;
     const now = new Date();
     let big, small;
-    const second = h.lang2 && Math.floor(now / 6000) % 2 === 1; // alternate languages every 6 seconds
+    const second = h.lang2 && Math.floor(now / 6000) % 2 === 1;
     const loc = second ? h.lang2 : 'en-US';
     const TX = { en: ['Service starts in', 'Starting now'], ru: ['Служение начнётся через', 'Начинаем'], uk: ['Служіння почнеться через', 'Починаємо'] };
     const tx = TX[second ? h.lang2 : 'en'] || TX.en;
@@ -501,39 +522,134 @@
       else { big = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); small = tx[1]; }
       if (left <= 0 && h.autoStart && rt.service === 'hold' && !rt.autoStarted) { rt.autoStarted = true; startService(); }
     }
-    g.fillStyle = h.textColor; g.textBaseline = 'alphabetic';
-    g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 24; g.shadowOffsetY = 2;
-    if (h.layout === 'side') {
-      const x = 150; g.textAlign = 'left';
-      const fitFont = (text, weight, size, maxW) => { let z = size; g.font = `${weight} ${z}px ${font}`; while (z > 20 && g.measureText(text).width > maxW) { z -= 2; g.font = `${weight} ${z}px ${font}`; } };
-      const maxW = 820;
-      if (h.org) { g.shadowBlur = 8; g.letterSpacing = '4px'; fitFont(h.org.toUpperCase(), 600, 30, maxW); g.globalAlpha = 0.88; g.fillText(h.org.toUpperCase(), x, 150); g.letterSpacing = '0px'; g.globalAlpha = 1; }
-      g.shadowBlur = 0; g.fillStyle = h.accent; g.fillRect(x, 190, 90, 8); g.shadowBlur = 24; g.fillStyle = h.textColor;
-      fitFont(h.title || '', 700, 124, maxW); g.fillText(h.title || '', x - 5, 320);
-      let y = 320;
-      if (h.title2) { fitFont(h.title2, 600, 66, maxW); g.globalAlpha = 0.92; g.fillText(h.title2, x - 2, y += 86); g.globalAlpha = 1; }
-      fitFont(h.subtitle || '', 300, 46, maxW); g.globalAlpha = 0.92; g.fillText(h.subtitle || '', x, y += 80);
-      if (h.subtitle2) { fitFont(h.subtitle2, 300, 46, maxW); g.globalAlpha = 0.78; g.fillText(h.subtitle2, x, y += 58); }
-      // clock card
-      g.globalAlpha = 1; g.shadowBlur = 0;
-      g.font = `200 150px ${font}`; const tw = g.measureText(big).width;
-      const cw = Math.max(tw, 420) + 90, cy = 640, ch = 250;
-      g.fillStyle = 'rgba(255,255,255,.08)'; roundRectPath(g, x - 4, cy, cw, ch, 22); g.fill();
-      g.strokeStyle = 'rgba(255,255,255,.16)'; g.lineWidth = 2; g.stroke();
-      g.fillStyle = h.accent; g.font = `600 30px ${font}`; g.fillText(small.toUpperCase(), x + 40, cy + 60);
-      g.fillStyle = h.textColor; g.font = `200 150px ${font}`; g.fillText(big, x + 34, cy + 205);
-    } else {
-      g.textAlign = 'center'; g.textBaseline = 'middle';
-      if (h.org) { g.letterSpacing = '4px'; g.font = `600 30px ${font}`; g.globalAlpha = 0.85; g.fillText(h.org.toUpperCase(), W / 2, 90); g.letterSpacing = '0px'; g.globalAlpha = 1; }
-      g.font = `700 104px ${font}`; g.fillText(h.title || '', W / 2, H / 2 - 300);
-      if (h.title2) { g.font = `600 60px ${font}`; g.globalAlpha = 0.9; g.fillText(h.title2, W / 2, H / 2 - 215); }
-      g.font = `300 46px ${font}`; g.globalAlpha = 0.9; g.fillText([h.subtitle, h.subtitle2].filter(Boolean).join('  ·  '), W / 2, H / 2 - 145);
-      g.globalAlpha = 1; g.shadowBlur = 0; g.fillStyle = h.accent; g.fillRect(W / 2 - 60, H / 2 - 95, 120, 6); g.fillStyle = h.textColor; g.shadowBlur = 24;
-      g.font = `500 36px ${font}`; g.globalAlpha = 0.8; g.fillText(small.toUpperCase(), W / 2, H / 2 - 20);
-      g.font = `200 220px ${font}`; g.globalAlpha = 1; g.fillText(big, W / 2, H / 2 + 130);
+    const boxes = [];
+    g.textBaseline = 'alphabetic';
+    for (const e of h.elements) {
+      if (!e.on) continue;
+      const al = e.align || 'left';
+      const left = w => al === 'left' ? e.x : al === 'center' ? e.x - w / 2 : e.x - w;
+      if (e.type === 'bar') {
+        g.fillStyle = e.color || h.accent; g.fillRect(left(e.w), e.y, e.w, e.h);
+        boxes.push({ id: e.id, x: left(e.w), y: e.y - 8, w: e.w, h: e.h + 16 });
+      } else if (e.type === 'clock') {
+        const z = e.size, pad = z * 0.27;
+        g.font = `200 ${z}px ${font}`; const tw = g.measureText(big).width;
+        const lab = e.label !== false ? small.toUpperCase() : '';
+        g.font = `600 ${z * 0.2}px ${font}`; const lw = lab ? g.measureText(lab).width : 0;
+        const cw = Math.max(tw, lw) + pad * 2, top = lab ? z * 0.5 : z * 0.15, chh = top + z * 1.15;
+        const x0 = left(cw);
+        if (e.card !== false) { g.fillStyle = 'rgba(255,255,255,.08)'; roundRectPath(g, x0, e.y, cw, chh, z * 0.15); g.fill(); g.strokeStyle = 'rgba(255,255,255,.16)'; g.lineWidth = 2; g.stroke(); }
+        g.textAlign = al === 'center' ? 'center' : 'left';
+        const tx0 = al === 'center' ? x0 + cw / 2 : x0 + pad;
+        if (lab) { g.fillStyle = h.accent; g.font = `600 ${z * 0.2}px ${font}`; g.fillText(lab, tx0, e.y + z * 0.4); }
+        g.shadowColor = 'rgba(0,0,0,.5)'; g.shadowBlur = e.card !== false ? 0 : 20;
+        g.fillStyle = e.color || '#fff'; g.font = `200 ${z}px ${font}`; g.fillText(big, tx0 - (al === 'center' ? 0 : z * 0.04), e.y + top + z * 0.87);
+        g.shadowBlur = 0;
+        boxes.push({ id: e.id, x: x0, y: e.y, w: cw, h: chh });
+      } else {
+        const txt = e.upper ? (e.text || '').toUpperCase() : (e.text || '');
+        g.font = `${e.weight || 400} ${e.size}px ${font}`; g.letterSpacing = `${e.spacing || 0}px`;
+        g.textAlign = al; g.fillStyle = e.color || '#fff';
+        g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = e.shadow === false ? 0 : Math.max(6, e.size * 0.18); g.shadowOffsetY = 2;
+        g.fillText(txt, e.x, e.y);
+        const w = Math.max(40, g.measureText(txt).width);
+        g.shadowBlur = 0; g.shadowOffsetY = 0; g.letterSpacing = '0px';
+        boxes.push({ id: e.id, x: left(w), y: e.y - e.size * 0.85, w, h: e.size * 1.1 });
+      }
     }
-    g.globalAlpha = 1; g.shadowBlur = 0; g.shadowOffsetY = 0;
+    g.textAlign = 'left';
+    rt.holdBoxes = boxes;
     const src = engine.sources.get('hold'); if (src) src.dirty = true;
+  }
+
+  /* slide designer: drag items on the preview, style each one, set the background and the clock */
+  function openHoldDesigner() {
+    const h = ensureHold();
+    let sel = 'title', tab = 'items', raf = 0, drag = null;
+    const pv = el('canvas', { width: 960, height: 540, class: 'hold-stage' });
+    const side = el('div', { class: 'hd-side' });
+    const done = () => { changed(); drawHold(); };
+    const E = () => h.elements.find(e => e.id === sel);
+    const paint = () => {
+      if (!pv.isConnected) return;
+      const g = pv.getContext('2d');
+      g.drawImage(holdCanvas, 0, 0, 960, 540);
+      const b = (rt.holdBoxes || []).find(x => x.id === sel);
+      if (b && tab === 'items') { g.strokeStyle = '#38bdf8'; g.lineWidth = 2; g.setLineDash([6, 4]); g.strokeRect(b.x / 2 - 4, b.y / 2 - 4, b.w / 2 + 8, b.h / 2 + 8); g.setLineDash([]); }
+      raf = requestAnimationFrame(paint);
+    };
+    const pos = ev => { const r = pv.getBoundingClientRect(); return [(ev.clientX - r.left) / r.width * 1920, (ev.clientY - r.top) / r.height * 1080]; };
+    pv.addEventListener('pointerdown', ev => {
+      const [x, y] = pos(ev);
+      const hit = [...(rt.holdBoxes || [])].reverse().find(b => x >= b.x - 10 && x <= b.x + b.w + 10 && y >= b.y - 10 && y <= b.y + b.h + 10);
+      if (!hit) return;
+      sel = hit.id; tab = 'items'; const e = E();
+      drag = { x, y, ex: e.x, ey: e.y }; pv.setPointerCapture(ev.pointerId); draw();
+    });
+    pv.addEventListener('pointermove', ev => { if (!drag) return; const [x, y] = pos(ev), e = E(); e.x = Math.round(drag.ex + x - drag.x); e.y = Math.round(drag.ey + y - drag.y); drawHold(); });
+    pv.addEventListener('pointerup', () => { if (drag) { drag = null; done(); draw(); } });
+    const colorIn = (label, value, fn) => el('label', { class: 'inline' }, el('input', { type: 'color', value, oninput: e => fn(e.target.value) }), label);
+    const draw = () => {
+      side.innerHTML = '';
+      put(side, el('div', { class: 'tabs' }, [['items', '✏ Text & items'], ['bg', '🖼 Background'], ['clock', '🕘 Clock']].map(([k, t]) => el('button', { class: 'tab' + (tab === k ? ' sel' : ''), onclick: () => { tab = k; draw(); } }, t))));
+      if (tab === 'items') {
+        const e = E() || h.elements[0]; sel = e.id;
+        put(side,
+          el('div', { class: 'hd-list' }, h.elements.map(x => el('div', { class: 'hd-item' + (x.id === sel ? ' sel' : ''), onclick: () => { sel = x.id; draw(); } },
+            el('input', { type: 'checkbox', checked: x.on, title: 'Show / hide', onclick: ev => ev.stopPropagation(), onchange: ev => { x.on = ev.target.checked; done(); } }),
+            el('span', { class: 'grow' }, x.type === 'text' ? (x.text || x.name) : x.name)))),
+          el('button', { class: 'btn small', style: 'margin:6px 0 12px', onclick: () => { const n = { id: uid('txt'), type: 'text', name: 'Text line', text: 'New text', x: 150, y: 900, size: 46, weight: 400, color: '#ffffff', align: 'left', on: true, custom: true }; h.elements.push(n); sel = n.id; done(); draw(); } }, '+ Add text line'),
+          el('h3', null, e.name),
+          e.type === 'text' ? el('div', { class: 'field' }, el('span', null, 'Text'), el('input', { type: 'text', value: e.text, oninput: ev => { e.text = ev.target.value; done(); } })) : null,
+          e.type !== 'bar' ? slider({ label: 'Size', min: 16, max: 320, step: 1, value: e.size, fmt: v => `${v}`, onInput: v => { e.size = v; done(); } }) : null,
+          e.type === 'bar' ? slider({ label: 'Length', min: 20, max: 1200, step: 2, value: e.w, fmt: v => `${v}`, onInput: v => { e.w = v; done(); } }) : null,
+          e.type === 'bar' ? slider({ label: 'Thickness', min: 2, max: 40, step: 1, value: e.h, fmt: v => `${v}`, onInput: v => { e.h = v; done(); } }) : null,
+          slider({ label: 'Left ↔ right', min: 0, max: 1920, step: 1, value: e.x, fmt: v => `${v}`, onInput: v => { e.x = v; done(); } }),
+          slider({ label: 'Up ↕ down', min: 0, max: 1080, step: 1, value: e.y, fmt: v => `${v}`, onInput: v => { e.y = v; done(); } }),
+          el('div', { class: 'row wrap', style: 'gap:10px;margin:8px 0' },
+            select([['left', 'Align left'], ['center', 'Centre'], ['right', 'Align right']], e.align || 'left', v => { e.align = v; done(); }),
+            e.type === 'text' ? select([[300, 'Light'], [400, 'Regular'], [600, 'Semi-bold'], [700, 'Bold'], [800, 'Extra bold']], e.weight, v => { e.weight = +v; done(); }) : null,
+            colorIn('Colour', e.color || h.accent, v => { e.color = v; done(); })),
+          e.type === 'text' ? el('div', { class: 'row wrap', style: 'gap:14px' }, check(' ALL CAPS', e.upper, v => { e.upper = v; done(); }), check(' Shadow', e.shadow !== false, v => { e.shadow = v; done(); }),
+            el('label', { class: 'inline' }, 'Letter spacing', el('input', { type: 'number', value: e.spacing || 0, min: 0, max: 30, style: 'width:64px', oninput: ev => { e.spacing = +ev.target.value || 0; done(); } }))) : null,
+          e.type === 'clock' ? el('div', { class: 'row wrap', style: 'gap:14px' }, check(' Box behind the clock', e.card !== false, v => { e.card = v; done(); }), check(' Date / “starts in” line', e.label !== false, v => { e.label = v; done(); })) : null,
+          e.custom ? el('button', { class: 'btn small danger', style: 'margin-top:10px', onclick: () => { h.elements = h.elements.filter(x => x !== e); sel = 'title'; done(); draw(); } }, 'Delete this line') : null,
+          el('h3', null, 'Whole slide'),
+          el('div', { class: 'row wrap', style: 'gap:8px' },
+            el('button', { class: 'btn small', onclick: () => { applyHoldLayout(h, 'side'); h.bgStyle = 'side'; done(); draw(); } }, 'Arrange: text on left'),
+            el('button', { class: 'btn small', onclick: () => { applyHoldLayout(h, 'center'); h.bgStyle = 'full'; done(); draw(); } }, 'Arrange: centred'),
+            select(['Segoe UI', 'Arial', 'Calibri', 'Verdana', 'Trebuchet MS', 'Bahnschrift', 'Georgia', 'Times New Roman', 'Impact'].map(f => [f, 'Font: ' + f]), h.font, v => { h.font = v; done(); }),
+            colorIn('Accent', h.accent || '#d4a24c', v => { h.accent = v; done(); })));
+      } else if (tab === 'bg') {
+        const imgs = show.files.filter(f => f.kind === 'image'), st = h.bgFile ? rt.files.get(h.bgFile) : null;
+        put(side,
+          el('div', { class: 'field' }, el('span', null, 'Background picture'), el('div', { class: 'row' },
+            select([['', '— none (use colours) —'], ...imgs.map(f => [f.id, f.name])], h.bgFile, v => { h.bgFile = v; done(); draw(); }, { class: 'grow' }),
+            el('button', { class: 'btn small primary', onclick: async () => { const a2 = await addFiles(); const i = a2.find(f => f.kind === 'image'); if (i) { h.bgFile = i.id; done(); } else if (a2.length) toast('That file is not a picture. Use JPG or PNG.', 'error'); draw(); } }, 'Import picture…'))),
+          h.bgFile ? el('div', { class: st && st.ok ? 'status-ok' : 'status-bad', style: 'font-size:.9em;margin:-4px 0 10px' }, st ? (st.ok ? `✓ Picture loaded (${st.text})` : `✗ ${st.text}`) : '✗ Picture file not found — import it again') : null,
+          h.bgFile ? el('div', null,
+            el('div', { class: 'field' }, el('span', null, 'Picture style'), select([['side', 'Picture on the right, dark panel behind text'], ['full', 'Picture fills the whole slide']], h.bgStyle, v => { h.bgStyle = v; done(); })),
+            slider({ label: 'Darken', min: 0, max: 0.9, step: 0.01, value: h.dim ?? 0.35, reset: 0.35, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { h.dim = v; done(); } }),
+            slider({ label: 'Blur', min: 0, max: 20, step: 1, value: h.blur || 0, reset: 0, fmt: v => v ? `${v}` : 'off', onInput: v => { h.blur = v; done(); } }),
+            slider({ label: 'Zoom', min: 1, max: 2.5, step: 0.01, value: h.zoom || 1, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { h.zoom = v; done(); } }),
+            slider({ label: 'Move left / right', min: 0, max: 1, step: 0.01, value: h.focusX ?? 0.5, reset: 0.5, fmt: v => `${Math.round(v * 100)}`, onInput: v => { h.focusX = v; done(); } }),
+            slider({ label: 'Move up / down', min: 0, max: 1, step: 0.01, value: h.focusY ?? 0.5, reset: 0.5, fmt: v => `${Math.round(v * 100)}`, onInput: v => { h.focusY = v; done(); } }),
+            h.bgStyle === 'side' ? slider({ label: 'Edge fade', min: 0.05, max: 1, step: 0.01, value: h.fade ?? 0.5, reset: 0.5, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { h.fade = v; done(); } }) : null) : null,
+          el('h3', null, 'Colours (when there is no picture)'),
+          el('div', { class: 'row wrap', style: 'gap:14px' }, colorIn('Colour 1', h.bgColor, v => { h.bgColor = v; done(); }), colorIn('Colour 2', h.bgColor2 || h.bgColor, v => { h.bgColor2 = v; done(); })));
+      } else {
+        put(side,
+          el('div', { class: 'field' }, el('span', null, 'The clock shows'), select([['clock', 'The time now'], ['countdown', 'Countdown to a start time'], ['youtube', 'Countdown to the YouTube event time']], h.mode, v => { h.mode = v; done(); draw(); })),
+          h.mode === 'countdown' ? el('div', { class: 'field' }, el('span', null, 'Service starts at'), el('input', { type: 'time', value: h.target, oninput: e => { h.target = e.target.value; done(); } })) : null,
+          h.mode !== 'clock' ? check(' Press START SERVICE automatically when the countdown ends', h.autoStart, v => { h.autoStart = v; done(); }) : null,
+          el('div', { class: 'field', style: 'margin-top:10px' }, el('span', null, 'Date and countdown words'), select([['', 'English only'], ['ru', 'English and Russian (switch every 6 s)'], ['uk', 'English and Ukrainian (switch every 6 s)']], h.lang2 || '', v => { h.lang2 = v; done(); })),
+          el('div', { class: 'muted', style: 'font-size:.85em' }, 'To move or resize the clock, click it on the slide (Text & items tab).'));
+      }
+      put(side, el('div', { class: 'row', style: 'margin-top:16px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('media'); refresh('shots'); } }, 'Done')));
+    };
+    draw();
+    openModal('Design the holding slide', el('div', { class: 'hold-designer' }, el('div', { class: 'hd-stage' }, pv, el('div', { class: 'muted', style: 'font-size:.85em;margin-top:6px' }, 'Click an item on the slide to select it, then drag it to move it.')), side));
+    cancelAnimationFrame(raf); raf = requestAnimationFrame(paint);
   }
   function roundRectPath(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
   engine.setSource('hold', holdCanvas, 'image');
@@ -1456,6 +1572,7 @@
         el('button', { class: 'btn svc-end', onclick: endService }, el('div', { class: 'svc-big' }, '■ END SERVICE'), el('div', { class: 'svc-sum' }, sumB), keyChip('endService'))),
       el('div', { class: 'row', style: 'margin-top:8px;gap:8px' },
         el('button', { class: 'btn small', onclick: showHold }, '🕘 Holding screen', keyChip('hold')),
+        el('button', { class: 'btn small', onclick: openHoldDesigner }, '🎨 Design slide'),
         el('span', { class: 'grow' }),
         el('button', { class: 'btn small primary', onclick: openServiceEdit }, '⚙ Edit')));
     refreshServiceState();
@@ -1488,36 +1605,10 @@
       body.innerHTML = '';
       const camShots = show.shots.filter(x => !x.role).map(x => [x.id, x.name]);
       put(body,
-        el('h3', null, '🕘 Holding screen (shown before the service)'),
-        el('div', { class: 'grid2' },
-          el('div', null, holdPrev),
-          el('div', null,
-            el('div', { class: 'field' }, el('span', null, 'Show'), select([['clock', 'The time now (clock)'], ['countdown', 'Countdown to a start time'], ['youtube', 'Countdown to the YouTube event time']], H.mode, v => { H.mode = v; done(); draw(); })),
-            H.mode === 'countdown' ? el('div', { class: 'field' }, el('span', null, 'Service starts at'), el('input', { type: 'time', value: H.target, oninput: e => { H.target = e.target.value; done(); } })) : null,
-            H.mode !== 'clock' ? check(' Press START SERVICE automatically when the countdown ends', H.autoStart, v => { H.autoStart = v; done(); }) : null)),
-        el('div', { class: 'field', style: 'margin-top:10px' }, el('span', null, 'Church name (small line at the top)'), el('input', { type: 'text', value: H.org || '', oninput: e => { H.org = e.target.value; done(); } })),
-        el('div', { class: 'grid2' },
-          el('div', { class: 'field' }, el('span', null, 'Big title — English'), el('input', { type: 'text', value: H.title, oninput: e => { H.title = e.target.value; done(); } })),
-          el('div', { class: 'field' }, el('span', null, 'Big title — second language'), el('input', { type: 'text', value: H.title2 || '', placeholder: 'optional', oninput: e => { H.title2 = e.target.value; done(); } })),
-          el('div', { class: 'field' }, el('span', null, 'Message — English'), el('input', { type: 'text', value: H.subtitle, oninput: e => { H.subtitle = e.target.value; done(); } })),
-          el('div', { class: 'field' }, el('span', null, 'Message — second language'), el('input', { type: 'text', value: H.subtitle2 || '', placeholder: 'optional', oninput: e => { H.subtitle2 = e.target.value; done(); } }))),
-        el('div', { class: 'field' }, el('span', null, 'Date and countdown words'), select([['', 'English only'], ['ru', 'English and Russian (switch every 6 s)'], ['uk', 'English and Ukrainian (switch every 6 s)']], H.lang2 || '', v => { H.lang2 = v; done(); })),
-        el('div', { class: 'row wrap', style: 'gap:14px' },
-          el('label', { class: 'inline' }, el('input', { type: 'color', value: H.bgColor, oninput: e => { H.bgColor = e.target.value; done(); } }), el('input', { type: 'color', value: H.bgColor2, oninput: e => { H.bgColor2 = e.target.value; done(); } }), 'Background'),
-          el('label', { class: 'inline' }, el('input', { type: 'color', value: H.textColor, oninput: e => { H.textColor = e.target.value; done(); } }), 'Text'),
-          el('span', { class: 'muted' }, 'or picture:'),
-          select([['', '— none —'], ...imgs().map(f => [f.id, f.name])], H.bgFile, v => { H.bgFile = v; done(); }),
-          el('button', { class: 'btn small', onclick: async () => { const a = await addFiles(); const i = a.find(f => f.kind === 'image'); if (i) { H.bgFile = i.id; setTimeout(done, 300); draw(); } } }, 'Import picture…')),
-        el('div', { class: 'grid2', style: 'margin-top:10px' },
-          el('div', null,
-            el('div', { class: 'field' }, el('span', null, 'Layout'), select([['side', 'Text on the left, picture on the right'], ['center', 'Everything in the centre']], H.layout || 'side', v => { H.layout = v; done(); })),
-            el('label', { class: 'inline' }, el('input', { type: 'color', value: H.accent || '#d4a24c', oninput: e => { H.accent = e.target.value; done(); } }), 'Accent colour')),
-          el('div', null,
-            slider({ label: 'Darken picture', min: 0, max: 0.85, step: 0.01, value: H.dim ?? 0.35, reset: 0.35, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { H.dim = v; done(); } }),
-            slider({ label: 'Blur picture', min: 0, max: 20, step: 1, value: H.blur || 0, reset: 0, fmt: v => v ? `${v}` : 'off', onInput: v => { H.blur = v; done(); } }),
-            slider({ label: 'Zoom picture', min: 1, max: 2, step: 0.01, value: H.zoom || 1, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { H.zoom = v; done(); } }),
-            slider({ label: 'Move left / right', min: 0, max: 1, step: 0.01, value: H.focusX ?? 0.5, reset: 0.5, fmt: v => `${Math.round(v * 100)}`, onInput: v => { H.focusX = v; done(); } }),
-            slider({ label: 'Move up / down', min: 0, max: 1, step: 0.01, value: H.focusY ?? 0.5, reset: 0.5, fmt: v => `${Math.round(v * 100)}`, onInput: v => { H.focusY = v; done(); } }))),
+        el('h3', null, '🕘 Holding slide (shown before the service)'),
+        el('div', { class: 'grid2' }, el('div', null, holdPrev),
+          el('div', null, el('div', { class: 'muted', style: 'margin-bottom:10px' }, 'Background picture, every line of text, the clock, colours and positions.'),
+            el('button', { class: 'btn primary big', onclick: openHoldDesigner }, '🎨 Design the slide…'))),
 
         el('h3', null, '▶ When I press START SERVICE'),
         el('div', { class: 'row wrap', style: 'gap:18px;margin-bottom:10px' },
@@ -1801,71 +1892,118 @@
       el('div', { class: 'ch-name', title: sub || '' }, name, sub ? el('small', null, sub) : null),
       fader, db, extra || el('span'));
   }
-  const masterCanvas = el('canvas', { class: 'mast-meter', width: 400, height: 60 });
-  const lufsBox = el('div', { class: 'mast-lufs' });
-  const phaseBox = el('div', { class: 'mast-phase' });
+  const masterCanvas = el('canvas', { class: 'master-meters', width: 150, height: 300 });
+  const gonio = el('canvas', { class: 'gonio', width: 160, height: 160 });
+  const corrCanvas = el('canvas', { class: 'corr', width: 300, height: 26 });
+  const lufsBox = el('div', { class: 'lufs mono' });
   RENDER.audio = body => {
     body.innerHTML = '';
-    rt.meters.clear();
     const m = show.audio.master;
     const tog = (label, key, title, fn) => { const b = el('button', { class: 'tbtn' + (m[key] ? ' on' : ''), title, onclick: () => { m[key] = !m[key]; fn(); changed(); b.classList.toggle('on', !!m[key]); } }, label); return b; };
+    const names = show.audio.inputs.map(a => a.name).join(', ');
+    put(body, el('div', { class: 'aud2' },
+      el('div', { class: 'master-top' },
+        masterCanvas,
+        el('div', { class: 'master-side' },
+          el('div', { class: 'mlabel' }, 'Stereo / phase'), corrCanvas,
+          el('div', { class: 'corr-scale' }, el('span', null, '−1 out of phase'), el('span', null, '0'), el('span', null, '+1 mono')),
+          gonio, lufsBox)),
+      el('div', { class: 'aud-tools' },
+        tog('🎧', 'monitor', 'Listen on this computer (headphones / speakers)', () => mixer.setMaster(m)),
+        tog('MONO', 'mono', 'Listen in mono to check phase — only your headphones, not the stream', () => mixer.setMono(!!m.mono)),
+        tog('LIMIT', 'limiter', 'YouTube-safe limiter: keeps peaks at or below −1 dB so the stream never clips', () => mixer.setMaster(m)),
+        tog('AUTO −14', 'auto', 'Auto level: slowly turns the overall volume up or down to sit at YouTube’s −14 LUFS', () => {}),
+        el('span', { class: 'grow' }),
+        el('button', { class: 'tbtn', title: 'Sound card, volumes, mute, sync test', onclick: openMixer }, names ? '🎚 Mixer' : '🔌 Connect sound card'))));
+    mixer.setMono(!!m.mono);
+  };
+  /* volumes and sound-card connections live in this pop-up so the main screen stays clean */
+  function openMixer() {
+    const body = el('div');
+    rt.meters.clear();
+    const m = show.audio.master;
     const [mFader, mDb] = chFader(null, m, -60, () => mixer.setMaster(m));
     const rows = el('div', { class: 'ch-list' });
     for (const a of show.audio.inputs) {
       const dev = rt.devices.audio.find(d => d.id === a.deviceId);
       rows.append(chRow({ id: a.id, name: a.name, cfg: a,
-        sub: `${dev ? dev.label.replace(/\s*\(.*?\)\s*$/, '') : 'device missing'} · ${a.channel === 'stereo' ? 'stereo' : a.channel === 'mix' ? 'mono' : 'in ' + a.channel}${a.delay ? ` · ${a.delay} ms` : ''}`,
-        extra: el('button', { class: 'ch-set', title: 'Input settings', onclick: () => inputSettings(a) }, '⚙') }));
+        sub: `${dev ? dev.label.replace(/\s*\(.*?\)\s*$/, '') : 'device missing — click ⚙'} · ${a.channel === 'stereo' ? 'stereo' : a.channel === 'mix' ? 'mono' : 'in ' + a.channel}${a.delay ? ` · ${a.delay} ms` : ''}`,
+        extra: el('button', { class: 'ch-set', title: 'Choose sound card / input, delay', onclick: () => inputSettings(a) }, '⚙') }));
     }
     rows.append(chRow({ id: 'media', name: 'Videos', sub: 'opening / closing videos', cfg: show.audio.media }));
-    put(body, el('div', { class: 'aud' },
-      el('div', { class: 'mast' },
-        masterCanvas,
-        el('div', { class: 'mast-info' }, lufsBox, phaseBox)),
-      el('div', { class: 'ch master-ch' }, el('span', { class: 'ch-mute ghost' }, ''), el('div', { class: 'ch-name' }, 'MASTER'), mFader, mDb, el('span')),
+    put(body,
+      el('h3', null, 'Sound cards & inputs'),
+      show.audio.inputs.length ? null : el('div', { class: 'status-bad', style: 'margin-bottom:8px' }, 'No sound card connected yet. Click “+ Connect sound card”.'),
       rows,
-      el('div', { class: 'aud-tools' },
-        tog('🎧', 'monitor', 'Listen on this computer (headphones / speakers)', () => mixer.setMaster(m)),
-        tog('MONO', 'mono', 'Listen in mono to check phase — only your headphones, not the stream', () => mixer.setMono(!!m.mono)),
-        tog('LIM', 'limiter', 'Limiter — protects the stream from distortion', () => mixer.setMaster(m)),
-        el('span', { class: 'grow' }),
-        el('button', { class: 'tbtn', title: 'Measure and fix the delay between picture and sound', onclick: openSyncTest }, '⏱ Sync'),
-        el('button', { class: 'tbtn', title: 'Add an audio input', onclick: () => inputSettings(null) }, '+ Input'))));
-    mixer.setMono(!!m.mono);
-  };
+      el('div', { class: 'row wrap', style: 'gap:8px;margin:10px 0 4px' },
+        el('button', { class: 'btn primary', onclick: () => inputSettings(null) }, '+ Connect sound card / input'),
+        el('button', { class: 'btn', onclick: async () => { await refreshDevices(); toast(`Found ${rt.devices.audio.length} audio devices.`); openMixer(); } }, '↻ Rescan devices'),
+        el('button', { class: 'btn', onclick: openSyncTest }, '⏱ Sync test')),
+      el('div', { class: 'muted', style: 'font-size:.85em' }, 'Click ⚙ on an input to pick which sound card and which channels it uses (capture card, SSL, etc.).'),
+      el('h3', null, 'Master volume'),
+      el('div', { class: 'ch master-ch' }, el('span', { class: 'ch-mute ghost' }, ''), el('div', { class: 'ch-name' }, 'MASTER'), mFader, mDb, el('span')),
+      el('div', { class: 'muted', style: 'font-size:.85em;margin-top:8px' }, 'Normally leave these at 0 and mix on your sound desk. LIMIT keeps peaks under −1 dB; AUTO −14 holds the overall loudness at YouTube’s level.'),
+      el('div', { class: 'row', style: 'margin-top:14px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => closeModal() }, 'Done')));
+    openModal('Audio mixer & sound card', body);
+  }
   function drawMaster(A) {
     if (!masterCanvas.isConnected) return;
-    const r = masterCanvas.getBoundingClientRect(), k = devicePixelRatio;
-    const W = Math.max(10, Math.round(r.width * k)), H = Math.max(10, Math.round(r.height * k));
-    if (masterCanvas.width !== W || masterCanvas.height !== H) { masterCanvas.width = W; masterCanvas.height = H; }
-    const g = masterCanvas.getContext('2d');
+    const fit = (c) => { const r = c.getBoundingClientRect(); const w = Math.max(10, Math.round(r.width * devicePixelRatio)), h = Math.max(10, Math.round(r.height * devicePixelRatio)); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } return c.getContext('2d'); };
+    let g = fit(masterCanvas); const W = masterCanvas.width, H = masterCanvas.height, k = devicePixelRatio;
     g.clearRect(0, 0, W, H);
-    const lab = 16 * k, scaleH = 14 * k, bh = (H - scaleH - 4 * k) / 2 - 2 * k, mw = W - lab;
-    const x = db => lab + mw * Math.max(0, Math.min(1, (db + 60) / 60));
-    const grad = g.createLinearGradient(lab, 0, W, 0);
-    grad.addColorStop(0, '#15803d'); grad.addColorStop(0.72, '#22c55e'); grad.addColorStop(0.84, '#eab308'); grad.addColorStop(0.95, '#ef4444');
-    [['L', A.peakL, A.rmsL, A.holdL, A.clipL], ['R', A.peakR, A.rmsR, A.holdR, A.clipR]].forEach(([n, p, rms, hold, clip], i) => {
-      const y = i * (bh + 4 * k);
-      g.fillStyle = '#9a9aa3'; g.font = `600 ${10 * k}px Inter, Segoe UI, sans-serif`; g.textBaseline = 'middle'; g.fillText(n, 2 * k, y + bh / 2);
-      g.fillStyle = '#0a0a0c'; g.fillRect(lab, y, mw, bh);
-      g.fillStyle = grad; g.fillRect(lab, y, x(p) - lab, bh);
-      g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(x(rms), y, Math.max(0, x(p) - x(rms)), bh);
-      g.fillStyle = hold > -6 ? '#ef4444' : '#f4f4f5'; g.fillRect(x(hold) - k, y, 2 * k, bh);
-      if (clip) { g.fillStyle = '#ef4444'; g.fillRect(W - 6 * k, y, 6 * k, bh); }
-    });
-    g.fillStyle = '#6b6b75'; g.font = `${9 * k}px Inter, Segoe UI, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'bottom';
-    for (const d of [-48, -36, -24, -18, -12, -6, 0]) g.fillText(String(d), Math.min(W - 8 * k, x(d)), H);
-    g.textAlign = 'left';
-    const lu = A.lufsS <= -60 ? '—' : A.lufsS.toFixed(1);
-    const cls = A.lufsS <= -60 ? '' : A.lufsS > -10 ? 'hot' : A.lufsS < -20 ? 'low' : 'ok';
-    lufsBox.className = 'mast-lufs ' + cls;
-    lufsBox.innerHTML = `<b>${lu}</b><span>LUFS</span>`;
-    lufsBox.title = 'Loudness (YouTube aims for about −14)';
-    const ph = A.silent ? ['', '—'] : A.corr < -0.2 ? ['bad', 'Phase!'] : A.corr < 0.2 ? ['warn', 'Wide'] : ['ok', 'Mono OK'];
-    phaseBox.className = 'mast-phase ' + ph[0];
-    phaseBox.textContent = ph[1];
-    phaseBox.title = `Phase correlation ${A.silent ? '—' : A.corr.toFixed(2)} (+1 = safe in mono, below 0 = cancels in mono)`;
+    const top = 20 * k, bot = 20 * k, mh = H - top - bot;
+    const y = db => top + mh * (1 - Math.max(0, Math.min(1, (db + 60) / 60)));
+    const scaleW = 24 * k, gap = 5 * k, bw = (W - scaleW - gap * 3) / 2;
+    g.font = `${10 * k}px Inter, Segoe UI, sans-serif`; g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (const d of [0, -6, -12, -18, -24, -36, -48, -60]) { g.fillStyle = '#8d8d96'; g.fillText(String(d), scaleW - 4 * k, y(d)); g.fillStyle = '#2a2a2f'; g.fillRect(scaleW, y(d), W - scaleW, 1); }
+    const bar = (i, peak, rms, hold, clip, label) => {
+      const x = scaleW + gap + i * (bw + gap);
+      g.fillStyle = '#0a0a0c'; g.fillRect(x, top, bw, mh);
+      const grad = g.createLinearGradient(0, top + mh, 0, top);
+      grad.addColorStop(0, '#15803d'); grad.addColorStop(0.7, '#22c55e'); grad.addColorStop(0.8, '#eab308'); grad.addColorStop(0.9, '#f97316'); grad.addColorStop(0.98, '#ef4444');
+      g.fillStyle = grad; g.fillRect(x, y(peak), bw, top + mh - y(peak));
+      g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(x, y(rms), bw, top + mh - y(rms));
+      g.fillStyle = hold > -3 ? '#ef4444' : '#f4f4f5'; g.fillRect(x, y(hold) - 1.5 * k, bw, 3 * k);
+      g.fillStyle = clip ? '#ef4444' : '#2a1416'; g.fillRect(x, 2 * k, bw, 13 * k);
+      g.fillStyle = clip ? '#fff' : '#6b3a3d'; g.textAlign = 'center'; g.font = `700 ${9 * k}px Inter, Segoe UI, sans-serif`; g.fillText('MAX', x + bw / 2, 9 * k);
+      g.fillStyle = '#ececef'; g.font = `600 ${11 * k}px Consolas, monospace`; g.fillText(hold <= -60 ? '-∞' : hold.toFixed(1), x + bw / 2, H - 9 * k);
+    };
+    bar(0, A.peakL, A.rmsL, A.holdL, A.clipL, 'L');
+    bar(1, A.peakR, A.rmsR, A.holdR, A.clipR, 'R');
+    // YouTube's peak ceiling (−1 dB)
+    g.strokeStyle = '#ef4444'; g.lineWidth = 1.5 * k; g.setLineDash([4 * k, 3 * k]); g.beginPath(); g.moveTo(scaleW, y(-1)); g.lineTo(W, y(-1)); g.stroke(); g.setLineDash([]);
+    // phase correlation
+    g = fit(corrCanvas); const cw = corrCanvas.width, ch = corrCanvas.height;
+    g.clearRect(0, 0, cw, ch);
+    g.fillStyle = '#0a0a0c'; g.fillRect(0, 0, cw, ch);
+    const grd = g.createLinearGradient(0, 0, cw, 0); grd.addColorStop(0, '#7f1d1d'); grd.addColorStop(0.45, '#3f2a10'); grd.addColorStop(0.55, '#123018'); grd.addColorStop(1, '#14532d');
+    g.fillStyle = grd; g.fillRect(0, ch * 0.3, cw, ch * 0.4);
+    g.fillStyle = '#52525b'; g.fillRect(cw / 2, 0, 1, ch);
+    g.fillStyle = A.silent ? '#52525b' : A.corr < -0.2 ? '#ef4444' : A.corr < 0.2 ? '#f59e0b' : '#22c55e';
+    g.fillRect((A.corr + 1) / 2 * cw - 4 * k, 0, 8 * k, ch);
+    // stereo picture: a vertical line = mono, wider = more stereo, sideways = out of phase
+    g = fit(gonio); const gw = gonio.width, gh = gonio.height;
+    g.fillStyle = 'rgba(10,10,12,.5)'; g.fillRect(0, 0, gw, gh);
+    g.strokeStyle = '#2a2a2f'; g.lineWidth = 1; g.beginPath(); g.moveTo(gw / 2, 0); g.lineTo(gw / 2, gh); g.moveTo(0, gh / 2); g.lineTo(gw, gh / 2); g.moveTo(gw / 2 - gh / 2, 0); g.lineTo(gw / 2 + gh / 2, gh); g.moveTo(gw / 2 + gh / 2, 0); g.lineTo(gw / 2 - gh / 2, gh); g.stroke();
+    g.fillStyle = A.corr < 0 ? 'rgba(239,68,68,.75)' : 'rgba(74,222,128,.75)';
+    const sc = Math.min(gw, gh) * 0.62;
+    for (let i = 0; i < A.L.length; i += 2) { const l = A.L[i], r = A.R[i]; g.fillRect(gw / 2 + (r - l) * 0.7071 * sc, gh / 2 - (l + r) * 0.7071 * sc, 1.5 * k, 1.5 * k); }
+    // loudness against YouTube's −14 LUFS
+    const lu = v => v <= -60 ? '—' : v.toFixed(1);
+    const d = A.lufsS + 14;
+    const cls = A.lufsS <= -60 ? '' : d > 2 ? 'bad' : d < -4 ? 'low' : 'ok';
+    const hint = A.lufsS <= -60 ? 'no sound' : d > 2 ? `${d.toFixed(0)} dB louder than YouTube’s level — it will be turned down` : d < -4 ? `${(-d).toFixed(0)} dB quieter than YouTube’s level` : 'matches YouTube ✓';
+    lufsBox.innerHTML = `<div><span class="mlabel">Loudness</span><span class="hint">target −14</span></div><div class="big ${cls}">${lu(A.lufsS)} <small>LUFS</small></div><div class="hint" style="margin:0">${hint}${rt.autoDb ? ` · auto ${rt.autoDb > 0 ? '+' : ''}${rt.autoDb.toFixed(1)} dB` : ''}</div>`;
   }
+  // AUTO −14: slow automatic level toward YouTube's loudness (only while there is sound)
+  setInterval(() => {
+    const m = show.audio.master;
+    if (!m.auto || !rt.MA) { if (rt.autoDb) { rt.autoDb = 0; mixer.setAuto(0); } return; }
+    const l = rt.MA.lufsS;
+    if (l < -45) return;
+    rt.autoDb = clamp((rt.autoDb || 0) + clamp((-14 - l) * 0.06, -0.4, 0.4), -12, 12);
+    mixer.setAuto(rt.autoDb);
+  }, 500);
 
   /* ================= audio / video sync test ================= */
   async function openSyncTest() {
@@ -2015,7 +2153,7 @@
   }
   function tickMeters() {
     const lv = mixer.levels();
-    const MA = mixer.masterAnalysis();
+    const MA = mixer.masterAnalysis(); rt.MA = MA;
     drawMaster(MA); drawMonMeter(MA);
     for (const [id, m] of rt.meters) {
       const db = lv[id];

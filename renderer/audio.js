@@ -23,6 +23,15 @@
       this.limiter.release.value = 0.12;
       this.masterOut = ctx.createGain(); // fade-to-black for audio
       this.masterIn.connect(this.masterFader);
+      // YouTube-safe output: auto-level stage, limiter, then a hard ceiling at -1 dBFS so the stream can never clip
+      this.auto = ctx.createGain();
+      this.ceil = ctx.createWaveShaper();
+      { const n = 4097, c = new Float32Array(n), knee = 0.7, top = 0.891; // 0.891 = -1 dBFS
+        for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1, a = Math.abs(x); c[i] = Math.sign(x) * (a <= knee ? a : knee + (top - knee) * Math.tanh((a - knee) / (top - knee))); }
+        this.ceil.curve = c; this.ceil.oversample = 'none'; }
+      this.limiter.threshold.value = -5; this.limiter.knee.value = 3;
+      this.masterFader.connect(this.auto);
+      this.ceil.connect(this.masterOut);
       this.limiterOn = null;
       this.setLimiter(true);
       this.dest = ctx.createMediaStreamDestination();
@@ -69,12 +78,13 @@
 
     setLimiter(on) {
       if (this.limiterOn === on) return;
-      try { this.masterFader.disconnect(); } catch (e) { /* first run */ }
+      try { this.auto.disconnect(); } catch (e) { /* first run */ }
       try { this.limiter.disconnect(); } catch (e) { /* first run */ }
-      if (on) { this.masterFader.connect(this.limiter); this.limiter.connect(this.masterOut); }
-      else this.masterFader.connect(this.masterOut);
+      if (on) { this.auto.connect(this.limiter); this.limiter.connect(this.ceil); }
+      else this.auto.connect(this.masterOut);
       this.limiterOn = on;
     }
+    setAuto(db) { this.auto.gain.setTargetAtTime(Math.pow(10, db / 20), this.ctx.currentTime, 0.3); }
     setMono(on) {
       if (on === this.monoOn) return;
       try { this.masterOut.disconnect(this.monitor); } catch (e) { /* */ }
@@ -242,7 +252,7 @@
       const rmsL = db(Math.sqrt(sl / L.length)), rmsR = db(Math.sqrt(sr / R.length));
       for (const [ch, v] of [['L', peakL], ['R', peakR]]) {
         if (v >= this.hold[ch] || now - this.hold['t' + ch] > 1500) { this.hold[ch] = v; this.hold['t' + ch] = now; }
-        if (v > -0.3) this.clip[ch] = now;
+        if (v > -1.15) this.clip[ch] = now; // at the -1 dB ceiling
       }
       const den = Math.sqrt(sl * sr);
       if (den > 1e-9) this.corr += (slr / den - this.corr) * 0.15; // phase: +1 = mono-safe, 0 = wide, -1 = out of phase

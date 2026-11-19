@@ -445,3 +445,23 @@ textarea { width: 100%; box-sizing: border-box; }
 .gtile.pic { border-top-color: #f59e0b; } .gtile.pic:hover { border-top-color: #f59e0b; }
 .gtile.pic-add { border-color: #f59e0b55; color: #fcd34d; }
 .pic-thumb { position: absolute; right: 8px; bottom: 26px; max-width: 46px; max-height: 34px; object-fit: contain; opacity: .9; pointer-events: none; }
+
+/* ======== 1.6 audio: meters + stereo scope on screen, volumes in the Mixer pop-up ======== */
+.aud2 { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; }
+.aud2 .master-top { flex: 1; min-height: 0; height: auto; display: flex; gap: 10px; }
+.aud2 .master-meters { width: calc(96px * var(--scale)); height: 100%; min-height: 80px; }
+.aud2 .gonio { max-height: none; aspect-ratio: auto; width: 100%; flex: 1; min-height: 40px; }
+.aud2 .aud-tools { margin-top: 0; }
+.modal .ch-list { max-height: 40vh; }
+
+/* holding slide designer */
+.modal-card:has(.hold-designer) { width: min(1400px, 97vw); max-height: 94vh; }
+.hold-designer { display: flex; gap: 16px; align-items: flex-start; }
+.hd-stage { flex: 1.7; min-width: 0; position: sticky; top: 0; }
+.hold-stage { width: 100%; aspect-ratio: 16/9; display: block; border-radius: 8px; background: #000; cursor: move; touch-action: none; }
+.hd-side { flex: 1; min-width: 330px; max-width: 440px; }
+.hd-list { display: flex; flex-direction: column; gap: 3px; max-height: 190px; overflow: auto; }
+.hd-item { display: flex; gap: 8px; align-items: center; padding: 5px 8px; border-radius: 6px; cursor: pointer; background: #18181b; border: 1px solid transparent; white-space: nowrap; overflow: hidden; }
+.hd-item span { overflow: hidden; text-overflow: ellipsis; }
+.hd-item.sel { border-color: var(--accent); }
+.hd-item input { width: 16px; height: 16px; accent-color: var(--accent); }
