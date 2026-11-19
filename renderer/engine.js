@@ -531,7 +531,7 @@
     }
     stop() { this.running = false; clearInterval(this._timer); }
     setFps(fps) {
-      this.fps = fps;
+      this.fps = fps; this.lastFrameAt = 0; this._next = 0; // changing the rate is not a dropped frame
       clearInterval(this._timer);
       if (this.running) this._timer = setInterval(() => this._tick(), Math.max(4, 1000 / fps / 2));
       this._stream = null;
