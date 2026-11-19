@@ -872,7 +872,7 @@
   /* ---------- frame counter & drop statistics ---------- */
   function frameDrops() {
     const enc = (rt.live && rt.liveStats ? (rt.liveStats.drop || 0) : 0) + (rt.rec && rt.recStats ? (rt.recStats.drop || 0) : 0);
-    let cam = 0; for (const c of show.cameras) { const src = engine.sources.get(c.id); if (src) cam += (src.skipped || 0) - (src.skipBase || 0); }
+    const cam = 0;
     return { engine: engine.stats.missed, enc, cam, total: engine.stats.missed + enc }; // camera skips are shown in the window only
   }
   function resetFrameStats() {
@@ -902,7 +902,15 @@
           row('GPU temperature', rt.pc.gpuTemp !== null ? `${rt.pc.gpuTemp} °C` : 'only available for NVIDIA cards', rt.pc.gpuTemp >= 85),
           row('Memory in use', `${rt.pc.mem}%`, rt.pc.mem >= 90)] : el('div', { class: 'muted' }, 'Reading…'),
         el('h3', null, 'Cameras'),
-        show.cameras.length ? show.cameras.map(c => { const src = engine.sources.get(c.id), now = performance.now(); let f = '—'; if (src && src.countAt) { f = ((src.count || 0) / ((now - src.countAt) / 1000)).toFixed(2) + ' fps'; } if (src && (!src.countAt || now - src.countAt > 5000)) { src.count = 0; src.countAt = now; } const sk = src ? (src.skipped || 0) - (src.skipBase || 0) : 0; return row(`${c.name} — arriving at`, `${f} · ${sk} skipped`, sk > 0); }) : el('div', { class: 'muted' }, 'No cameras.'),
+        show.cameras.length ? show.cameras.map(c => {
+          const src = engine.sources.get(c.id), now = performance.now();
+          if (src && !src.countAt) { src.count = 0; src.countAt = now; }
+          const secs = src ? (now - src.countAt) / 1000 : 0;
+          if (src && secs >= 2) { src.fpsNow = (src.count || 0) / secs; if (secs > 6) { src.count = 0; src.countAt = now; } }
+          const want = +c.fps || 0, got = src && src.fpsNow;
+          const low = got && want && got < want - 2;
+          return row(`${c.name} — frames arriving`, got ? `${got.toFixed(1)} fps${want ? ` of ${want}` : ''} ${low ? '⚠ low' : '✓'}` : 'measuring…', low);
+        }) : el('div', { class: 'muted' }, 'No cameras.'),
         el('h3', null, 'YouTube stream encoder'),
         rt.live && rt.liveStats ? [row('Frames sent', (rt.liveStats.frame || 0).toLocaleString()), row('Dropped by the encoder', String(rt.liveStats.drop || 0), rt.liveStats.drop > 0), row('Repeated to fill gaps', String(rt.liveStats.dup || 0), rt.liveStats.dup > engine.fps), row('Encoder speed', `${(rt.liveStats.speed || 0).toFixed(2)}×`, rt.liveStats.speed && rt.liveStats.speed < 0.97)] : el('div', { class: 'muted' }, 'Not live.'),
         rt.rec && rt.recStats ? [el('h3', null, 'Recording'), row('Frames written', (rt.recStats.frame || 0).toLocaleString()), row('Dropped', String(rt.recStats.drop || 0), rt.recStats.drop > 0)] : null,
