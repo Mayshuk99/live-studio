@@ -384,6 +384,8 @@
     show.shots = show.shots.filter(x => !['intro', 'ending'].includes(x.role)); // older versions
     let h = roleShot('hold');
     if (!h) { h = newShot('Holding screen', 'hold', '#0891b2'); h.role = 'hold'; h.id = 'shot_hold'; show.shots.unshift(h); }
+    // if the slide's picture source was swapped for a photo (older versions allowed that), use the photo as the slide's background instead
+    if (h.main.source !== 'hold') { const f = fileById(h.main.source); if (f && f.kind === 'image') SV().hold.bgFile = f.id; h.main.frame = { zoom: 1, x: 0.5, y: 0.5 }; }
     h.main.source = 'hold';
     for (const [role, cfg, name] of [['open', SV().start, 'Opening video'], ['close', SV().end, 'Closing video']]) {
       let s = roleShot(role);
@@ -1117,7 +1119,11 @@
         el('button', { class: 'btn small', title: 'Move left', onclick: () => moveShot(s, -1) }, '◂'),
         el('button', { class: 'btn small', title: 'Move right', onclick: () => moveShot(s, 1) }, '▸')),
       el('div', { class: 'swatches', style: 'margin:8px 0' }, SHOT_COLORS.map(c => el('span', { class: 'swatch' + (c === s.color ? ' sel' : ''), style: `background:${c}`, onclick: () => { s.color = c; changed(); refresh('shots'); refresh('editor'); } }))),
-      el('div', { class: 'field' }, el('span', null, 'Picture source'), select(sourceOptions(false), s.main.source, v => { s.main.source = v; s.main.frame = { zoom: 1, x: 0.5, y: 0.5 }; changed(); refresh('editor'); refresh('shots'); })),
+      s.role === 'hold'
+        ? el('div', { class: 'field' }, el('span', null, 'Background picture of the holding slide'),
+            select([['', '— none (colours) —'], ...show.files.filter(f => f.kind === 'image').map(f => [f.id, '🖼 ' + f.name])], SV().hold.bgFile || '', v => { SV().hold.bgFile = v; changed(); drawHold(); }),
+            el('button', { class: 'btn primary', style: 'margin-top:8px', onclick: openHoldDesigner }, '🎨 Design the slide (text, clock, picture)…'))
+        : el('div', { class: 'field' }, el('span', null, 'Picture source'), select(sourceOptions(false), s.main.source, v => { s.main.source = v; s.main.frame = { zoom: 1, x: 0.5, y: 0.5 }; changed(); refresh('editor'); refresh('shots'); })),
       s.pip.enabled ? el('div', { class: 'tabs' },
         el('button', { class: 'tab' + (rt.padTarget === 'main' ? ' sel' : ''), onclick: () => { rt.padTarget = 'main'; refresh('editor'); } }, 'Frame: main picture'),
         el('button', { class: 'tab' + (rt.padTarget === 'pip' ? ' sel' : ''), onclick: () => { rt.padTarget = 'pip'; refresh('editor'); } }, 'Frame: small picture')) : null,
