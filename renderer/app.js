@@ -69,7 +69,7 @@
   };
   // Two screens: "Run Show" has only what you touch during a service; "Setup" has the things you prepare beforehand.
   const LAYOUTS = {
-    live: [['monitors', 9, 5], ['media', 3, 3], ['audio', 3, 5], ['shots', 9, 3], ['speakers', 6, 2], ['labels', 6, 2]],
+    live: [['monitors', 9, 5], ['media', 3, 4], ['audio', 3, 4], ['shots', 9, 3], ['speakers', 6, 2], ['labels', 6, 2]],
     setup: [['monitors', 9, 5], ['audio', 3, 5], ['inputs', 4, 5], ['editor', 4, 5], ['color', 4, 5]]
   };
   const layoutFrom = name => {
@@ -130,6 +130,12 @@
   for (const v of ['live', 'setup']) {
     if (!Array.isArray(settings.ui.layouts[v]) || !settings.ui.layouts[v].length) settings.ui.layouts[v] = layoutFrom(v);
     for (const id of Object.keys(PANEL_DEFS)) if (!settings.ui.layouts[v].find(x => x.id === id)) settings.ui.layouts[v].push({ id, w: 4, h: 4, hidden: true });
+  }
+  // 1.4.1: slimmer audio panel — give its space to the Service panel (keeps any other changes you made)
+  if (!settings.ui.audioSlim) {
+    const L = settings.ui.layouts.live, au = L.find(p => p.id === 'audio'), me = L.find(p => p.id === 'media');
+    if (au && me && au.h === 5 && me.h === 3) { au.h = 4; me.h = 4; }
+    settings.ui.audioSlim = true;
   }
   let view = 'live';
   const curLayout = () => settings.ui.layouts[view];
@@ -1703,115 +1709,93 @@
         el('button', { class: 'btn primary', onclick: () => { if (isNew) { if (!d.name.trim()) return; show.speakers.push(p); } p.name = d.name; p.title = d.title; if (rt.speakerId === p.id && engine.labelVisible(SPK)) { rt.speakerObj = speakerLabel(p); engine.setLabel(rt.speakerObj); } changed(); closeModal(); refresh('speakers'); refresh('editor'); } }, 'Save'))));
   }
 
-  /* ================= panel: audio — master meters first, inputs as compact rows ================= */
-  function meter(id) { const i = el('i'); const m = el('div', { class: 'meter-h' }, i); rt.meters.set(id, { i, m }); return m; }
+  /* ================= panel: audio — compact: master meters on top, one slim row per input ================= */
   const dbText = v => v <= -60 ? '-∞' : `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
-  function inputRow({ id, name, cfg, onName, sub, extra }) {
-    const db = el('span', { class: 'db mono' }, dbText(cfg.gain));
-    const fader = el('input', { type: 'range', class: 'hfader', min: -60, max: 12, step: 0.5, value: cfg.gain, title: 'Volume (double-click for 0 dB)' });
-    const setGain = v => { cfg.gain = v; db.textContent = dbText(v); mixer.update(id, cfg); changed(); };
-    fader.addEventListener('input', () => setGain(+fader.value));
-    fader.addEventListener('dblclick', () => { fader.value = 0; setGain(0); });
-    const m = meter(id);
-    const muteBtn = el('button', { class: 'btn small mute-btn' + (cfg.mute ? ' on' : ''), onclick: () => { cfg.mute = !cfg.mute; mixer.update(id, cfg); changed(); muteBtn.classList.toggle('on', cfg.mute); m.classList.toggle('muted', cfg.mute); } }, 'MUTE');
-    if (cfg.mute) m.classList.add('muted');
-    return el('div', { class: 'in-row' },
-      el('div', { class: 'in-name' }, onName ? el('input', { type: 'text', class: 'nm', value: name, oninput: e => onName(e.target.value) }) : el('div', { class: 'nm' }, name), sub ? el('div', { class: 'tagline' }, sub) : null),
-      el('div', { class: 'in-ctl' }, m, fader), db, muteBtn, extra);
+  // a fader with the level meter drawn inside its track
+  function chFader(id, cfg, min, onGain) {
+    const fill = el('i', { class: 'ch-level' });
+    const range = el('input', { type: 'range', min, max: 12, step: 0.5, value: cfg.gain, title: 'Volume — double-click for 0 dB' });
+    const db = el('span', { class: 'ch-db mono' }, dbText(cfg.gain));
+    const set = v => { cfg.gain = v; db.textContent = dbText(v); onGain(); changed(); };
+    range.addEventListener('input', () => set(+range.value));
+    range.addEventListener('dblclick', () => { range.value = 0; set(0); });
+    const wrap = el('div', { class: 'ch-fader' + (cfg.mute ? ' muted' : '') }, el('div', { class: 'ch-track' }, fill), range);
+    if (id) rt.meters.set(id, { i: fill, m: wrap });
+    return [wrap, db];
   }
-  const masterCanvas = el('canvas', { class: 'master-meters', width: 150, height: 300 });
-  const gonio = el('canvas', { class: 'gonio', width: 160, height: 160 });
-  const corrCanvas = el('canvas', { class: 'corr', width: 300, height: 26 });
-  const lufsBox = el('div', { class: 'lufs mono' });
+  function chRow({ id, name, sub, cfg, extra }) {
+    const [fader, db] = chFader(id, cfg, -60, () => mixer.update(id, cfg));
+    const mute = el('button', { class: 'ch-mute' + (cfg.mute ? ' on' : ''), title: 'Mute', onclick: () => { cfg.mute = !cfg.mute; mixer.update(id, cfg); changed(); mute.classList.toggle('on', cfg.mute); fader.classList.toggle('muted', cfg.mute); mute.textContent = cfg.mute ? '🔇' : '🔊'; } }, cfg.mute ? '🔇' : '🔊');
+    return el('div', { class: 'ch' }, mute,
+      el('div', { class: 'ch-name', title: sub || '' }, name, sub ? el('small', null, sub) : null),
+      fader, db, extra || el('span'));
+  }
+  const masterCanvas = el('canvas', { class: 'mast-meter', width: 400, height: 60 });
+  const lufsBox = el('div', { class: 'mast-lufs' });
+  const phaseBox = el('div', { class: 'mast-phase' });
   RENDER.audio = body => {
     body.innerHTML = '';
     rt.meters.clear();
     const m = show.audio.master;
-    const tog = (label, key, title, fn) => { const b = el('button', { class: 'btn small' + (m[key] ? ' primary' : ''), title, onclick: () => { m[key] = !m[key]; fn(); changed(); b.classList.toggle('primary', !!m[key]); } }, label); return b; };
-    const mdb = el('span', { class: 'db mono' }, dbText(m.gain));
-    const mf = el('input', { type: 'range', class: 'hfader', min: -30, max: 12, step: 0.5, value: m.gain, title: 'Master volume (double-click for 0 dB)' });
-    const setM = v => { m.gain = v; mdb.textContent = dbText(v); mixer.setMaster(m); changed(); };
-    mf.addEventListener('input', () => setM(+mf.value)); mf.addEventListener('dblclick', () => { mf.value = 0; setM(0); });
-    const master = el('div', { class: 'master-sec' },
-      el('div', { class: 'master-top' },
-        masterCanvas,
-        el('div', { class: 'master-side' },
-          el('div', { class: 'mlabel' }, 'Phase (mono check)'), corrCanvas,
-          el('div', { class: 'corr-scale' }, el('span', null, '−1 out of phase'), el('span', null, '0'), el('span', null, '+1 mono')),
-          gonio,
-          lufsBox)),
-      el('div', { class: 'row', style: 'gap:6px;margin-top:6px' },
-        el('span', { class: 'mlabel' }, 'MASTER'), mf, mdb),
-      el('div', { class: 'row wrap', style: 'gap:6px;margin-top:6px' },
-        tog('🎧 Listen', 'monitor', 'Hear the program on this computer\'s speakers/headphones', () => mixer.setMaster(m)),
-        tog('MONO', 'mono', 'Listen in mono to check phase (only affects your headphones, not the stream)', () => mixer.setMono(!!m.mono)),
-        tog('LIMITER', 'limiter', 'Protects the stream from distortion', () => mixer.setMaster(m))));
-    const rows = el('div', { class: 'in-rows' });
+    const tog = (label, key, title, fn) => { const b = el('button', { class: 'tbtn' + (m[key] ? ' on' : ''), title, onclick: () => { m[key] = !m[key]; fn(); changed(); b.classList.toggle('on', !!m[key]); } }, label); return b; };
+    const [mFader, mDb] = chFader(null, m, -60, () => mixer.setMaster(m));
+    const rows = el('div', { class: 'ch-list' });
     for (const a of show.audio.inputs) {
       const dev = rt.devices.audio.find(d => d.id === a.deviceId);
-      rows.append(inputRow({ id: a.id, name: a.name, cfg: a, onName: v => { a.name = v; changed(); },
-        sub: `${dev ? dev.label.replace(/\s*\(.*?\)\s*$/, '') : 'Device missing'} · ${a.channel === 'stereo' ? 'stereo' : a.channel === 'mix' ? 'mono mix' : 'in ' + a.channel}${a.delay ? ` · delay ${a.delay} ms` : ''}`,
-        extra: el('button', { class: 'btn small', title: 'Input settings', onclick: () => inputSettings(a) }, '⚙') }));
+      rows.append(chRow({ id: a.id, name: a.name, cfg: a,
+        sub: `${dev ? dev.label.replace(/\s*\(.*?\)\s*$/, '') : 'device missing'} · ${a.channel === 'stereo' ? 'stereo' : a.channel === 'mix' ? 'mono' : 'in ' + a.channel}${a.delay ? ` · ${a.delay} ms` : ''}`,
+        extra: el('button', { class: 'ch-set', title: 'Input settings', onclick: () => inputSettings(a) }, '⚙') }));
     }
-    rows.append(inputRow({ id: 'media', name: 'Video files', cfg: show.audio.media, sub: 'opening / closing videos' }));
-    rows.append(el('div', { class: 'row wrap', style: 'gap:6px;margin-top:4px' },
-      el('button', { class: 'btn small', onclick: () => inputSettings(null) }, '+ Add input'),
-      el('button', { class: 'btn small', onclick: openSyncTest, title: 'Measure and fix the delay between picture and sound' }, '⏱ Sync test')));
-    put(body, el('div', { class: 'audio-wrap' }, master, rows));
+    rows.append(chRow({ id: 'media', name: 'Videos', sub: 'opening / closing videos', cfg: show.audio.media }));
+    put(body, el('div', { class: 'aud' },
+      el('div', { class: 'mast' },
+        masterCanvas,
+        el('div', { class: 'mast-info' }, lufsBox, phaseBox)),
+      el('div', { class: 'ch master-ch' }, el('span', { class: 'ch-mute ghost' }, ''), el('div', { class: 'ch-name' }, 'MASTER'), mFader, mDb, el('span')),
+      rows,
+      el('div', { class: 'aud-tools' },
+        tog('🎧', 'monitor', 'Listen on this computer (headphones / speakers)', () => mixer.setMaster(m)),
+        tog('MONO', 'mono', 'Listen in mono to check phase — only your headphones, not the stream', () => mixer.setMono(!!m.mono)),
+        tog('LIM', 'limiter', 'Limiter — protects the stream from distortion', () => mixer.setMaster(m)),
+        el('span', { class: 'grow' }),
+        el('button', { class: 'tbtn', title: 'Measure and fix the delay between picture and sound', onclick: openSyncTest }, '⏱ Sync'),
+        el('button', { class: 'tbtn', title: 'Add an audio input', onclick: () => inputSettings(null) }, '+ Input'))));
     mixer.setMono(!!m.mono);
   };
   function drawMaster(A) {
     if (!masterCanvas.isConnected) return;
-    // size canvases to their boxes
-    const fit = (c) => { const r = c.getBoundingClientRect(); const w = Math.max(10, Math.round(r.width * devicePixelRatio)), h = Math.max(10, Math.round(r.height * devicePixelRatio)); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } return c.getContext('2d'); };
-    let g = fit(masterCanvas); const W = masterCanvas.width, H = masterCanvas.height, k = devicePixelRatio;
+    const r = masterCanvas.getBoundingClientRect(), k = devicePixelRatio;
+    const W = Math.max(10, Math.round(r.width * k)), H = Math.max(10, Math.round(r.height * k));
+    if (masterCanvas.width !== W || masterCanvas.height !== H) { masterCanvas.width = W; masterCanvas.height = H; }
+    const g = masterCanvas.getContext('2d');
     g.clearRect(0, 0, W, H);
-    const top = 22 * k, bot = 22 * k, mh = H - top - bot;
-    const y = db => top + mh * (1 - Math.max(0, Math.min(1, (db + 60) / 60)));
-    const scaleW = 26 * k, gap = 6 * k, bw = (W - scaleW - gap * 3) / 2;
-    g.font = `${10 * k}px Segoe UI, sans-serif`; g.fillStyle = '#8d99b0'; g.textAlign = 'right'; g.textBaseline = 'middle';
-    for (const d of [0, -6, -12, -18, -24, -36, -48, -60]) { g.fillText(String(d), scaleW - 4 * k, y(d)); g.fillStyle = '#1f2737'; g.fillRect(scaleW, y(d), W - scaleW, 1); g.fillStyle = '#8d99b0'; }
-    const bar = (i, peak, rms, hold, clip, label) => {
-      const x = scaleW + gap + i * (bw + gap);
-      g.fillStyle = '#05070b'; g.fillRect(x, top, bw, mh);
-      const grad = g.createLinearGradient(0, top + mh, 0, top);
-      grad.addColorStop(0, '#16a34a'); grad.addColorStop(0.7, '#22c55e'); grad.addColorStop(0.8, '#eab308'); grad.addColorStop(0.9, '#f97316'); grad.addColorStop(0.97, '#ef4444');
-      g.fillStyle = grad; g.fillRect(x, y(peak), bw, top + mh - y(peak));
-      g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(x, y(rms), bw, top + mh - y(rms));
-      g.fillStyle = hold > -6 ? '#ef4444' : '#e8edf6'; g.fillRect(x, y(hold) - 1.5 * k, bw, 3 * k);
-      g.fillStyle = clip ? '#ef4444' : '#2a1416'; g.fillRect(x, 2 * k, bw, 14 * k);
-      g.fillStyle = clip ? '#fff' : '#6b3a3d'; g.textAlign = 'center'; g.font = `700 ${9 * k}px Segoe UI, sans-serif`; g.fillText('CLIP', x + bw / 2, 9 * k);
-      g.fillStyle = '#e8edf6'; g.font = `600 ${11 * k}px Consolas, monospace`; g.fillText(hold <= -60 ? '-∞' : hold.toFixed(1), x + bw / 2, H - 13 * k);
-      g.fillStyle = '#8d99b0'; g.font = `${9 * k}px Segoe UI`; g.fillText(label, x + bw / 2, H - 3 * k);
-    };
-    bar(0, A.peakL, A.rmsL, A.holdL, A.clipL, 'L');
-    bar(1, A.peakR, A.rmsR, A.holdR, A.clipR, 'R');
-    // phase correlation
-    g = fit(corrCanvas); const cw = corrCanvas.width, ch = corrCanvas.height;
-    g.clearRect(0, 0, cw, ch);
-    g.fillStyle = '#05070b'; g.fillRect(0, 0, cw, ch);
-    const grd = g.createLinearGradient(0, 0, cw, 0); grd.addColorStop(0, '#7f1d1d'); grd.addColorStop(0.45, '#3f2a10'); grd.addColorStop(0.55, '#123018'); grd.addColorStop(1, '#14532d');
-    g.fillStyle = grd; g.fillRect(0, ch * 0.3, cw, ch * 0.4);
-    g.fillStyle = '#475569'; g.fillRect(cw / 2, 0, 1, ch);
-    const cx = (A.corr + 1) / 2 * cw;
-    g.fillStyle = A.silent ? '#475569' : A.corr < -0.2 ? '#ef4444' : A.corr < 0.2 ? '#f59e0b' : '#22c55e';
-    g.fillRect(cx - 4 * k, 0, 8 * k, ch);
-    // goniometer (stereo picture: vertical line = mono, horizontal = out of phase)
-    g = fit(gonio); const gw = gonio.width, gh = gonio.height;
-    g.fillStyle = 'rgba(5,7,11,.55)'; g.fillRect(0, 0, gw, gh);
-    g.strokeStyle = '#1f2737'; g.lineWidth = 1; g.beginPath(); g.moveTo(gw / 2, 0); g.lineTo(gw / 2, gh); g.moveTo(0, gh / 2); g.lineTo(gw, gh / 2); g.stroke();
-    g.fillStyle = A.corr < 0 ? 'rgba(239,68,68,.7)' : 'rgba(74,222,128,.7)';
-    const sc = Math.min(gw, gh) * 0.45;
-    for (let i = 0; i < A.L.length; i += 2) {
-      const l = A.L[i], r = A.R[i];
-      const px = gw / 2 + (r - l) * 0.7071 * sc * 1.4, py = gh / 2 - (l + r) * 0.7071 * sc * 1.4;
-      g.fillRect(px, py, 1.4 * k, 1.4 * k);
-    }
-    // loudness
-    const lu = v => v <= -60 ? '—' : v.toFixed(1);
-    const col = v => v <= -60 ? '' : v > -10 ? 'bad' : v < -20 ? 'low' : 'ok';
-    lufsBox.innerHTML = `<div><span class="mlabel">Loudness</span><span class="hint">YouTube aims for −14</span></div><div class="big ${col(A.lufsS)}">${lu(A.lufsS)} <small>LUFS</small></div><div class="hint">now ${lu(A.lufsM)} · phase ${A.silent ? '—' : A.corr.toFixed(2)}</div>`;
+    const lab = 16 * k, scaleH = 14 * k, bh = (H - scaleH - 4 * k) / 2 - 2 * k, mw = W - lab;
+    const x = db => lab + mw * Math.max(0, Math.min(1, (db + 60) / 60));
+    const grad = g.createLinearGradient(lab, 0, W, 0);
+    grad.addColorStop(0, '#15803d'); grad.addColorStop(0.72, '#22c55e'); grad.addColorStop(0.84, '#eab308'); grad.addColorStop(0.95, '#ef4444');
+    [['L', A.peakL, A.rmsL, A.holdL, A.clipL], ['R', A.peakR, A.rmsR, A.holdR, A.clipR]].forEach(([n, p, rms, hold, clip], i) => {
+      const y = i * (bh + 4 * k);
+      g.fillStyle = '#9a9aa3'; g.font = `600 ${10 * k}px Inter, Segoe UI, sans-serif`; g.textBaseline = 'middle'; g.fillText(n, 2 * k, y + bh / 2);
+      g.fillStyle = '#0a0a0c'; g.fillRect(lab, y, mw, bh);
+      g.fillStyle = grad; g.fillRect(lab, y, x(p) - lab, bh);
+      g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(x(rms), y, Math.max(0, x(p) - x(rms)), bh);
+      g.fillStyle = hold > -6 ? '#ef4444' : '#f4f4f5'; g.fillRect(x(hold) - k, y, 2 * k, bh);
+      if (clip) { g.fillStyle = '#ef4444'; g.fillRect(W - 6 * k, y, 6 * k, bh); }
+    });
+    g.fillStyle = '#6b6b75'; g.font = `${9 * k}px Inter, Segoe UI, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'bottom';
+    for (const d of [-48, -36, -24, -18, -12, -6, 0]) g.fillText(String(d), Math.min(W - 8 * k, x(d)), H);
+    g.textAlign = 'left';
+    const lu = A.lufsS <= -60 ? '—' : A.lufsS.toFixed(1);
+    const cls = A.lufsS <= -60 ? '' : A.lufsS > -10 ? 'hot' : A.lufsS < -20 ? 'low' : 'ok';
+    lufsBox.className = 'mast-lufs ' + cls;
+    lufsBox.innerHTML = `<b>${lu}</b><span>LUFS</span>`;
+    lufsBox.title = 'Loudness (YouTube aims for about −14)';
+    const ph = A.silent ? ['', '—'] : A.corr < -0.2 ? ['bad', 'Phase!'] : A.corr < 0.2 ? ['warn', 'Wide'] : ['ok', 'Mono OK'];
+    phaseBox.className = 'mast-phase ' + ph[0];
+    phaseBox.textContent = ph[1];
+    phaseBox.title = `Phase correlation ${A.silent ? '—' : A.corr.toFixed(2)} (+1 = safe in mono, below 0 = cancels in mono)`;
   }
+
   /* ================= audio / video sync test ================= */
   async function openSyncTest() {
     const inputs = show.audio.inputs;
@@ -1965,7 +1949,7 @@
     for (const [id, m] of rt.meters) {
       const db = lv[id];
       if (db === undefined) continue;
-      m.i.style.width = `${clamp((db + 60) / 60, 0, 1) * 100}%`;
+      m.i.style.clipPath = `inset(0 ${100 - clamp((db + 60) / 72, 0, 1) * 100}% 0 0)`; // same scale as the fader (−60 … +12 dB); colours stay fixed to the scale
     }
     // media progress on program monitor
     const s = getShot(engine.programId);
