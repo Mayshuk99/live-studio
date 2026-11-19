@@ -61,7 +61,7 @@
     audio: { title: 'Audio', hint: 'what the stream hears' },
     shots: { title: 'Shots', hint: 'click = next · double-click = on air' },
     media: { title: 'Service', hint: 'start and end the service' },
-    speakers: { title: 'People', hint: 'double-click a name to put it on screen' },
+    speakers: { title: 'People', hint: 'click = preview, then TAKE · double-click = on screen now' },
     labels: { title: 'Titles & Graphics', hint: 'click to show / hide' },
     inputs: { title: 'Cameras & Files' },
     editor: { title: 'Shot Framing', hint: 'zoom and move the picture' },
@@ -365,6 +365,8 @@
     if (to && to.labelId) setLabelVisible(to.labelId, true);
   }
   function take(kind, msOverride) {
+    // a person cued in Preview goes on air with TAKE / CUT (the camera shot stays as it is)
+    if (rt.armedSpk && msOverride === undefined) { const id = rt.armedSpk; armSpeaker(null); showSpeaker(id); return; }
     if (engine.inTransition) return;
     const to = rt.previewId, from = engine.programId;
     if (!to || to === from) return;
@@ -745,6 +747,7 @@
     } else go();
   }
   function hideSpeaker() {
+    if (rt.armedSpk) armSpeaker(null);
     clearTimeout(rt.speakerTimer); clearTimeout(rt.speakerSwap);
     show.speakers.forEach(p => rt.hideAt.delete(p.id));
     if (rt.speakerObj) engine.setLabel(rt.speakerObj, false);
@@ -1168,7 +1171,7 @@
       c.querySelector('.badge').textContent = pg ? 'LIVE' : pv ? 'NEXT' : '';
     });
     const pv = $('#pvName'), pg = $('#pgName');
-    if (pv) pv.textContent = (getShot(rt.previewId) || {}).name || '';
+    if (pv) pv.textContent = rt.armedSpk ? `Caption preview on the live shot — press TAKE to show` : ((getShot(rt.previewId) || {}).name || '');
     if (pg) pg.textContent = (getShot(engine.trans ? engine.trans.to : engine.programId) || {}).name || '';
     const f = $('#ftbBtn'); if (f) f.classList.toggle('on', engine.isBlack);
   }
@@ -2018,7 +2021,7 @@
     const st = show.speakerStyle;
     const row = el('div', { class: 'tile-row' });
     show.speakers.forEach(p => {
-      row.append(el('div', { class: 'spk' + (speakerOnAir(p.id) ? ' on' : ''), dataset: { spk: p.id }, title: 'Double-click to show / hide', onclick: e => { if (e.detail === 1) spkHint(e.currentTarget); }, ondblclick: () => toggleSpeaker(p.id) },
+      row.append(el('div', { class: 'spk' + (speakerOnAir(p.id) ? ' on' : '') + (rt.armedSpk === p.id ? ' armed' : ''), dataset: { spk: p.id }, title: 'Click to preview, then TAKE (Ctrl+G) · double-click to show / hide right away', onclick: () => armSpeaker(rt.armedSpk === p.id ? null : p.id), ondblclick: () => { armSpeaker(null); toggleSpeaker(p.id); } },
         el('div', { class: 'spk-name' }, p.name || '(no name)'),
         el('div', { class: 'spk-title' }, p.title || ''),
         el('div', { class: 'spk-foot' }, el('span', { class: 'spk-air' }, speakerOnAir(p.id) ? 'ON AIR' : ''), keyChip('spk:' + p.id)),
@@ -2032,6 +2035,15 @@
         el('button', { class: 'btn small danger', id: 'spkHide', onclick: hideSpeaker }, el('span', null, 'Hide'), keyChip('hideAll'))),
       row);
   };
+  // click a person = cue their caption on the Preview screen; TAKE (Ctrl+G) then puts it on air
+  function armSpeaker(id) {
+    const p = id && show.speakers.find(x => x.id === id);
+    rt.armedSpk = p ? id : null;
+    engine.setPreviewLabel(p ? speakerLabel(p) : null);
+    document.querySelectorAll('.spk[data-spk]').forEach(t => t.classList.toggle('armed', t.dataset.spk === rt.armedSpk));
+    const tb = document.querySelector('.take-btn'); if (tb) tb.classList.toggle('armed', !!rt.armedSpk);
+    renderTally();
+  }
   function spkHint(t) {
     t.classList.add('hint'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('hint'), 1200);
   }

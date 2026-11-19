@@ -235,6 +235,12 @@
       const L = this.labels.get(id);
       if (L) { this.gl.deleteTexture(L.tex); this.labels.delete(id); }
     }
+    setPreviewLabel(data) {
+      if (!this.previewLabel) { const c = document.createElement('canvas'); c.width = this.W; c.height = this.H; this.previewLabel = { canvas: c, ctx: c.getContext('2d'), tex: this._newTex() }; }
+      const PL = this.previewLabel;
+      if (PL.canvas.width !== this.W || PL.canvas.height !== this.H) { PL.canvas.width = this.W; PL.canvas.height = this.H; }
+      PL.data = data ? Object.assign({}, data) : null; PL.dirty = true;
+    }
     labelVisible(id) { const L = this.labels.get(id); return !!(L && L.target > 0); }
 
     /* ---------- web page overlays (e.g. live translation captions) ---------- */
@@ -480,8 +486,19 @@
       if (this.previewCtx) {
         const pw = Math.max(320, Math.min(this.W, this.previewCtx.canvas.width)), ph = Math.round(pw * this.H / this.W); // drawn at the exact size it is shown, so it stays sharp
         this._viewport(pw, ph);
-        const ps = shot(this.previewId);
+        // with a caption cued, Preview shows the LIVE shot plus the caption: exactly what viewers will get
+        const cued = this.previewLabel && this.previewLabel.data;
+        const ps = shot(cued ? (this.trans ? this.trans.to : this.programId) : this.previewId);
         if (ps) this._drawShot(ps, 1, true, this.zebra);
+        const PL = this.previewLabel;
+        if (PL && PL.data) { // a caption that is cued up (not on air yet) is shown on the Preview only
+          const gl = this.gl;
+          if (PL.dirty) { drawLabel(PL.ctx, this.W, this.H, PL.data); gl.bindTexture(gl.TEXTURE_2D, PL.tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, PL.canvas); PL.dirty = false; }
+          gl.bindTexture(gl.TEXTURE_2D, PL.tex);
+          gl.uniform1i(this.u.u_mode, 1); gl.uniform1i(this.u.u_keyOn, 0); gl.uniform1f(this.u.u_opacity, 1);
+          gl.uniform4fv(this.u.u_dst, [0, 0, 1, 1]); gl.uniform4fv(this.u.u_src, [0, 0, 1, 1]);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
         this._copyTo(this.previewCtx, pw, ph);
       }
 
