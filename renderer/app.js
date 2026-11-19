@@ -213,7 +213,9 @@
     if (c) { c.stream.getTracks().forEach(t => t.stop()); c.v.remove(); rt.cams.delete(id); }
     engine.removeSource(id);
   }
+  rt.camNote = new Map();
   async function openCamera(cam) {
+    rt.camNote.delete(cam.id);
     closeCamera(cam.id);
     if (!cam.deviceId) { rt.camStatus.set(cam.id, { ok: false, text: 'Choose a device' }); refresh('inputs'); return; }
     if (!rt.devices.video.find(d => d.id === cam.deviceId)) {
@@ -224,9 +226,17 @@
     const res = { 2160: [3840, 2160], 1080: [1920, 1080], 720: [1280, 720] }[cam.res || '1080'];
     rt.camStatus.set(cam.id, { ok: false, text: 'Connecting…' });
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: cam.deviceId }, width: { ideal: res[0] }, height: { ideal: res[1] }, frameRate: { ideal: settings.output.fps } }, audio: false
-      });
+      // Blackmagic cards only give a picture when the requested format matches the camera's signal exactly (e.g. 1080p59.94)
+      if (cam.fps === undefined) cam.fps = /blackmagic|decklink|intensity|ultrastudio/i.test(cam.deviceLabel || '') ? '59.94' : '';
+      const fps = +cam.fps || 0;
+      const base = { deviceId: { exact: cam.deviceId }, width: fps ? { exact: res[0] } : { ideal: res[0] }, height: fps ? { exact: res[1] } : { ideal: res[1] } };
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({ video: Object.assign({}, base, { frameRate: fps ? { min: fps - 0.5, max: fps + 0.5, ideal: fps } : { ideal: settings.output.fps } }), audio: false }); }
+      catch (e1) {
+        if (!fps || e1.name !== 'OverconstrainedError') throw e1;
+        stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: cam.deviceId }, width: { ideal: res[0] }, height: { ideal: res[1] }, frameRate: { ideal: fps } }, audio: false });
+        rt.camNote.set(cam.id, ` — the card did not offer ${cam.res || 1080}p at ${cam.fps} fps`);
+      }
       const v = el('video', { playsinline: true });
       v.muted = true; v.srcObject = stream;
       $('#sourceBin').append(v);
@@ -235,7 +245,7 @@
       engine.setSource(cam.id, v, 'video');
       engine.setColor(cam.id, cam.color);
       const tr = stream.getVideoTracks()[0];
-      const update = () => { const st = tr.getSettings(); rt.camStatus.set(cam.id, { ok: true, text: `${v.videoWidth || st.width}×${v.videoHeight || st.height} · ${Math.round(st.frameRate || 0)} fps` }); refreshInputStatus(); };
+      const update = () => { const st = tr.getSettings(); rt.camStatus.set(cam.id, { ok: true, text: `${v.videoWidth || st.width}×${v.videoHeight || st.height} · ${(+(st.frameRate || 0).toFixed(2))} fps${rt.camNote.get(cam.id) || ''}` }); refreshInputStatus(); };
       v.addEventListener('resize', update); v.addEventListener('loadedmetadata', update);
       tr.addEventListener('ended', () => {
         rt.camStatus.set(cam.id, { ok: false, text: 'Disconnected — retrying…' }); refreshInputStatus();
@@ -2267,7 +2277,8 @@
             el('button', { class: 'btn small danger', title: 'Remove camera', onclick: () => { closeCamera(cam.id); show.cameras = show.cameras.filter(c => c !== cam); changed(); refreshAll(); } }, '✕')),
           el('div', { class: 'row', style: 'margin-top:6px' },
             select(devOpts, cam.deviceId, v => { cam.deviceId = v; cam.deviceLabel = (rt.devices.video.find(d => d.id === v) || {}).label || ''; changed(); openCamera(cam); }, { class: 'grow' }),
-            select([['720', '720p'], ['1080', '1080p'], ['2160', '4K']], cam.res || '1080', v => { cam.res = v; changed(); openCamera(cam); })),
+            select([['720', '720p'], ['1080', '1080p'], ['2160', '4K']], cam.res || '1080', v => { cam.res = v; changed(); openCamera(cam); }),
+            select([['', 'Auto fps'], ['23.98', '23.98'], ['24', '24'], ['25', '25'], ['29.97', '29.97'], ['30', '30'], ['50', '50'], ['59.94', '59.94'], ['60', '60']], cam.fps || '', v => { cam.fps = v; changed(); openCamera(cam); }, { title: 'Must match the signal your camera sends' })),
           el('div', { style: 'font-size:.85em;margin-top:5px' }, el('span', { dataset: { camStatus: cam.id } })))));
     }
     put(body, el('div', { class: 'row', style: 'margin-bottom:14px' },
@@ -2345,7 +2356,7 @@
       live ? el('div', { class: 'status-bad', style: 'margin-bottom:8px' }, 'Locked while live or recording.') : null,
       el('div', { class: 'grid2' },
         el('div', { class: 'field' }, el('span', null, 'Resolution'), select([['1920x1080', '1080p (1920×1080)'], ['1280x720', '720p (1280×720)']], `${o.width}x${o.height}`, v => { const [w, h] = v.split('x').map(Number); changeOut('width', w); changeOut('height', h); })),
-        el('div', { class: 'field' }, el('span', null, 'Frame rate'), select([[25, '25 fps'], [30, '30 fps'], [50, '50 fps'], [60, '60 fps']], o.fps, v => changeOut('fps', +v))),
+        el('div', { class: 'field' }, el('span', null, 'Frame rate'), select([[25, '25 fps'], [30, '30 fps (29.97 cameras)'], [50, '50 fps'], [60, '60 fps (59.94 cameras)']], o.fps, v => changeOut('fps', +v))),
         el('div', { class: 'field' }, el('span', null, 'Stream bitrate (kbps)'), el('input', { type: 'number', min: 1500, max: 20000, step: 500, value: o.bitrate, onchange: e => changeOut('bitrate', clamp(+e.target.value, 1500, 20000)) })),
         el('div', { class: 'field' }, el('span', null, 'Encoder'), select([['x264', 'Software (works on every PC)'], ['nvenc', 'NVIDIA graphics card (NVENC)'], ['qsv', 'Intel graphics (Quick Sync)'], ['amf', 'AMD graphics card (AMF)']], o.encoder, v => changeOut('encoder', v)))),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free. Your upload speed should be about 1.5× the bitrate.'),
