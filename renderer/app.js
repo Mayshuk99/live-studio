@@ -149,7 +149,7 @@
 
   const rt = {
     previewId: null, editingId: null, colorSrc: null, padTarget: 'main',
-    cams: new Map(), camStatus: new Map(), files: new Map(),
+    cams: new Map(), camStatus: new Map(), files: new Map(), audRetry: new Map(), audFail: new Map(),
     bodies: {}, thumbs: new Map(), views: new Map(), meters: new Map(),
     devices: { video: [], audio: [] },
     live: null, rec: null, liveStart: 0, recStart: 0, liveStats: null, recStats: null,
@@ -207,6 +207,8 @@
     if (!d) return;
     item.deviceLabel = d.label; item.deviceIdx = list.filter(x => x.label === d.label).indexOf(d);
   }
+  // Windows sometimes renames a card slightly ("Line In (2- Blackmagic…)", "Default - …"); compare without those bits
+  const devKey = l => String(l || '').toLowerCase().replace(/^(default|communications)\s*-\s*/, '').replace(/\(\d+-\s*/g, '(').replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)/g, '').replace(/\s+/g, ' ').trim();
   function resolveDevices() {
     for (const [kind, items] of [['video', show.cameras], ['audio', show.audio.inputs]]) {
       const list = rt.devices[kind], claimed = new Set();
@@ -219,7 +221,9 @@
       for (const it of items) {                       // 2nd pass: next free device with the same name
         if (!it.deviceLabel || it._ok) { delete it._ok; continue; }
         delete it._ok;
-        const d = list.find(x => x.label === it.deviceLabel && !claimed.has(x.id));
+        const d = list.find(x => x.label === it.deviceLabel && !claimed.has(x.id))
+          || list.find(x => devKey(x.label) === devKey(it.deviceLabel) && !claimed.has(x.id) && x.id !== 'default' && x.id !== 'communications')
+          || list.find(x => devKey(x.label) === devKey(it.deviceLabel));
         if (d) { it.deviceId = d.id; claimed.add(d.id); rememberDevice(it, kind); }
       }
     }
@@ -228,7 +232,7 @@
   async function refreshDevices() {
     try {
       let list = await navigator.mediaDevices.enumerateDevices();
-      if (!list.some(d => d.label) && !S.isApp) {
+      if (!list.some(d => d.kind === 'audioinput' && d.label) || !list.some(d => d.kind === 'videoinput' && d.label)) {
         try { const p = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); p.getTracks().forEach(t => t.stop()); } catch (e) { /* no permission */ }
         list = await navigator.mediaDevices.enumerateDevices();
       }
@@ -2159,7 +2163,7 @@
     for (const a of show.audio.inputs) {
       const dev = rt.devices.audio.find(d => d.id === a.deviceId);
       rows.append(chRow({ id: a.id, name: a.name, cfg: a,
-        sub: `${dev ? dev.label.replace(/\s*\(.*?\)\s*$/, '') : 'device missing — click ⚙'} · ${a.channel === 'stereo' ? 'stereo' : a.channel === 'mix' ? 'mono' : 'in ' + a.channel}${a.delay ? ` · ${a.delay} ms` : ''}`,
+        sub: `${dev ? dev.label.replace(/\s*\(.*?\)\s*$/, '') + (rt.audFail.has(a.id) ? ' — reconnecting…' : '') : (a.deviceLabel ? a.deviceLabel.replace(/\s*\(.*?\)\s*$/, '') + ' — not found, waiting for it…' : 'device missing — click ⚙')} · ${a.channel === 'stereo' ? 'stereo' : a.channel === 'mix' ? 'mono' : 'in ' + a.channel}${a.delay ? ` · ${a.delay} ms` : ''}`,
         extra: el('button', { class: 'ch-set', title: 'Choose sound card / input, delay', onclick: () => inputSettings(a) }, '⚙') }));
     }
     rows.append(chRow({ id: 'media', name: 'Videos', sub: 'opening / closing videos', cfg: show.audio.media }));
@@ -2378,11 +2382,30 @@
         } }, isNew ? 'Add input' : 'Save')));
     openModal(isNew ? 'Add audio input' : `Audio input — ${cfg.name}`, body);
   }
-  async function openAudioInput(a, rebuild) {
+  async function openAudioInput(a, rebuild, attempt = 0) {
+    clearTimeout(rt.audRetry.get(a.id));
     try {
       if (rebuild || !mixer.strips.has(a.id)) await mixer.addInput(a);
       else mixer.update(a.id, a);
-    } catch (e) { toast(`${a.name}: could not open audio device (${e.message || e.name}).`, 'error'); }
+      rt.audFail.delete(a.id);
+      if (attempt) { toast(`${a.name}: sound card connected.`); refresh('audio'); }
+    } catch (e) {
+      // the card may not be ready yet right after start-up (or its id changed): look again and keep trying
+      rt.audFail.set(a.id, e.message || e.name);
+      if (attempt === 0) toast(`${a.name}: sound card not ready yet, retrying…`);
+      if (attempt === 5) toast(`${a.name}: could not open the sound card (${e.message || e.name}). Still trying — check it is plugged in.`, 'error');
+      rt.audRetry.set(a.id, setTimeout(async () => {
+        if (!show.audio.inputs.includes(a)) return;
+        await refreshDevices(); resolveDevices();
+        if (attempt >= 2 && !a.deviceLabel && !rt.devices.audio.find(d => d.id === a.deviceId)) {
+          // saved before names were remembered: fall back to the capture card (or the SSL)
+          const g = rt.devices.audio.find(d => /blackmagic|decklink/i.test(d.label) && d.id !== 'default' && d.id !== 'communications') || rt.devices.audio.find(d => /ssl/i.test(d.label));
+          if (g) { a.deviceId = g.id; rememberDevice(a, 'audio'); changed(); }
+        }
+        openAudioInput(a, true, attempt + 1);
+      }, attempt < 5 ? 2000 : 6000));
+      refresh('audio');
+    }
   }
   function tickMeters() {
     const lv = mixer.levels();
@@ -2754,10 +2777,12 @@
     await Promise.all([
       ...show.cameras.map(c => openCamera(c)),
       ...show.files.map(f => loadFile(f)),
-      ...show.audio.inputs.map(a => openAudioInput(a, true)),
       ...show.webs.map(w => openWeb(w)),
       (async () => { for (const p2 of show.pics) if (p2.on) rt.webManual.add(p2.id); })()
     ]);
+    // sound cards after the cameras: a capture card can refuse audio while its video is still starting
+    await refreshDevices(); resolveDevices();
+    await Promise.all(show.audio.inputs.map(a => openAudioInput(a, true)));
     refreshAll();
   }
 
