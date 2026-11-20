@@ -26,7 +26,7 @@ function streamArgs(o) {
   const url = o.url;
   return [
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
-    '-fflags', '+genpts', '-thread_queue_size', '1024',
+    '-fflags', '+genpts',
     '-f', 'matroska', '-i', 'pipe:0',
     '-map', '0:v:0', '-map', '0:a:0?',
     ...enc,
@@ -49,7 +49,7 @@ function recordArgs(o, partFile) {
   else v = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', String(fps), '-fps_mode', 'cfr'];
   return [
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
-    '-fflags', '+genpts', '-thread_queue_size', '1024',
+    '-fflags', '+genpts',
     '-f', 'matroska', '-i', 'pipe:0',
     '-map', '0:v:0', '-map', '0:a:0?',
     ...v,
@@ -57,6 +57,14 @@ function recordArgs(o, partFile) {
     '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
     '-f', 'mp4', '-y', partFile
   ];
+}
+
+// Windows refuses to "create" a folder that is a whole drive (D:\), so only create what is missing
+function ensureDir(dir) {
+  if (!dir) throw new Error('No recording folder chosen (Settings → Recording).');
+  try { if (fs.statSync(dir).isDirectory()) return; } catch (e) { /* not there yet */ }
+  try { fs.mkdirSync(dir, { recursive: true }); }
+  catch (e) { throw new Error(`cannot use the recording folder ${dir} (${e.code || e.message}). Choose another folder in Settings → Recording.`); }
 }
 
 function parseStats(line) {
@@ -93,7 +101,7 @@ class OutputManager extends EventEmitter {
       if (!o.url) throw new Error('No stream address / key set.');
       args = streamArgs(o);
     } else {
-      fs.mkdirSync(o.dir, { recursive: true });
+      ensureDir(o.dir);
       const base = `${(o.name || 'Live Studio').replace(/[\\/:*?"<>|]/g, '_')} ${stamp()}`;
       finalFile = path.join(o.dir, base + '.mp4');
       partFile = path.join(o.dir, base + '.recording.mp4');
@@ -170,4 +178,4 @@ class OutputManager extends EventEmitter {
   get active() { return this.outs.size > 0; }
 }
 
-module.exports = { OutputManager, streamArgs, recordArgs, parseStats };
+module.exports = { OutputManager, streamArgs, recordArgs, parseStats, ensureDir };

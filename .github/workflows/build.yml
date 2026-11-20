@@ -49,6 +49,9 @@ jobs:
           Copy-Item $exe.FullName resources/ffmpeg/ffmpeg.exe
           & resources/ffmpeg/ffmpeg.exe -hide_banner -version | Select-Object -First 1
 
+      - name: Test the encoder with the program's real settings
+        run: node scripts/ffmpeg-selftest.js resources/ffmpeg/ffmpeg.exe
+
       - name: Prepare the release
         shell: pwsh
         env:

@@ -182,7 +182,7 @@ ipcMain.handle('folder:pick', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : r.filePaths[0];
 });
-ipcMain.handle('folder:open', (e, p) => { if (p) { fs.mkdirSync(p, { recursive: true }); shell.openPath(p); } });
+ipcMain.handle('folder:open', (e, p) => { if (p) { try { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); } catch (err) { /* e.g. a whole drive */ } shell.openPath(p); } });
 ipcMain.handle('file:show', (e, p) => { if (p) shell.showItemInFolder(p); });
 
 ipcMain.handle('show:export', async (e, obj) => {
