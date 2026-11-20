@@ -596,6 +596,16 @@
       if (e.type === 'bar') {
         g.fillStyle = e.color || h.accent; g.fillRect(left(e.w), e.y, e.w, e.h);
         boxes.push({ id: e.id, x: left(e.w), y: e.y - 8, w: e.w, h: e.h + 16 });
+      } else if (e.type === 'pic') {
+        const pf = rt.files.get(e.file), im = pf && pf.ok && pf.el && pf.el.tagName === 'IMG' ? pf.el : null;
+        const w = e.size, hh = im && im.naturalWidth ? w * im.naturalHeight / im.naturalWidth : w * 0.6, x0 = left(w);
+        if (im) {
+          g.save(); g.globalAlpha = e.opacity ?? 1;
+          if (e.shadow) { g.shadowColor = 'rgba(0,0,0,.5)'; g.shadowBlur = 24; g.shadowOffsetY = 4; }
+          if (e.round) { roundRectPath(g, x0, e.y, w, hh, Math.min(w, hh) * e.round / 200); g.clip(); }
+          g.drawImage(im, x0, e.y, w, hh); g.restore();
+        } else { g.strokeStyle = 'rgba(255,255,255,.5)'; g.setLineDash([10, 8]); g.lineWidth = 3; g.strokeRect(x0, e.y, w, hh); g.setLineDash([]); g.font = `400 28px ${font}`; g.textAlign = 'left'; g.fillStyle = '#fff'; g.fillText('picture not found', x0 + 14, e.y + 44); }
+        boxes.push({ id: e.id, x: x0, y: e.y, w, h: hh });
       } else if (e.type === 'clock') {
         const z = e.size, pad = z * 0.27;
         g.font = `200 ${z}px ${font}`; const tw = g.measureText(big).width;
@@ -664,21 +674,33 @@
             el('input', { type: 'checkbox', checked: x.on, title: 'Show / hide', onclick: ev => ev.stopPropagation(), onchange: ev => { x.on = ev.target.checked; done(); } }),
             el('span', { class: 'grow' }, x.type === 'text' ? (x.text || x.name) : x.name)))),
           el('button', { class: 'btn small', style: 'margin:6px 0 12px', onclick: () => { const n = { id: uid('txt'), type: 'text', name: 'Text line', text: 'New text', x: 150, y: 900, size: 46, weight: 400, color: '#ffffff', align: 'left', on: true, custom: true }; h.elements.push(n); sel = n.id; done(); draw(); } }, '+ Add text line'),
+          el('button', { class: 'btn small', style: 'margin:6px 0 12px 8px', onclick: async () => {
+            const a2 = await addFiles(); const i = a2.find(f => f.kind === 'image');
+            if (!i) { if (a2.length) toast('That file is not a picture. Use PNG or JPG (PNG keeps a see-through background).', 'error'); return; }
+            const n = { id: uid('pic'), type: 'pic', name: '🖼 ' + i.name, file: i.id, x: 1500, y: 80, size: 300, align: 'left', opacity: 1, round: 0, on: true, custom: true };
+            h.elements.push(n); sel = n.id; done(); draw(); setTimeout(drawHold, 400); setTimeout(drawHold, 1500);
+          } }, '+ Add picture / logo'),
           el('h3', null, e.name),
           e.type === 'text' ? el('div', { class: 'field' }, el('span', null, 'Text'), el('input', { type: 'text', value: e.text, oninput: ev => { e.text = ev.target.value; done(); } })) : null,
-          e.type !== 'bar' ? slider({ label: 'Size', min: 16, max: 320, step: 1, value: e.size, fmt: v => `${v}`, onInput: v => { e.size = v; done(); } }) : null,
+          e.type === 'pic' ? [
+            el('div', { class: 'field' }, el('span', null, 'Picture'), select(show.files.filter(f => f.kind === 'image').map(f => [f.id, f.name]), e.file, v => { e.file = v; e.name = '🖼 ' + (fileById(v) || {}).name; done(); draw(); })),
+            slider({ label: 'Size', min: 40, max: 1920, step: 2, value: e.size, fmt: v => `${v}`, onInput: v => { e.size = v; done(); } }),
+            slider({ label: 'See-through', min: 0.05, max: 1, step: 0.01, value: e.opacity ?? 1, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { e.opacity = v; done(); } }),
+            slider({ label: 'Round corners', min: 0, max: 100, step: 1, value: e.round || 0, reset: 0, fmt: v => v ? `${v}` : 'off', onInput: v => { e.round = v; done(); } }),
+            el('div', { style: 'margin:6px 0' }, check(' Shadow', !!e.shadow, v => { e.shadow = v; done(); }))] : null,
+          e.type !== 'bar' && e.type !== 'pic' ? slider({ label: 'Size', min: 16, max: 320, step: 1, value: e.size, fmt: v => `${v}`, onInput: v => { e.size = v; done(); } }) : null,
           e.type === 'bar' ? slider({ label: 'Length', min: 20, max: 1200, step: 2, value: e.w, fmt: v => `${v}`, onInput: v => { e.w = v; done(); } }) : null,
           e.type === 'bar' ? slider({ label: 'Thickness', min: 2, max: 40, step: 1, value: e.h, fmt: v => `${v}`, onInput: v => { e.h = v; done(); } }) : null,
-          slider({ label: 'Left ↔ right', min: 0, max: 1920, step: 1, value: e.x, fmt: v => `${v}`, onInput: v => { e.x = v; done(); } }),
-          slider({ label: 'Up ↕ down', min: 0, max: 1080, step: 1, value: e.y, fmt: v => `${v}`, onInput: v => { e.y = v; done(); } }),
+          slider({ label: 'Left ↔ right', min: -400, max: 1920, step: 1, value: e.x, fmt: v => `${v}`, onInput: v => { e.x = v; done(); } }),
+          slider({ label: 'Up ↕ down', min: -200, max: 1080, step: 1, value: e.y, fmt: v => `${v}`, onInput: v => { e.y = v; done(); } }),
           el('div', { class: 'row wrap', style: 'gap:10px;margin:8px 0' },
             select([['left', 'Align left'], ['center', 'Centre'], ['right', 'Align right']], e.align || 'left', v => { e.align = v; done(); }),
             e.type === 'text' ? select([[300, 'Light'], [400, 'Regular'], [600, 'Semi-bold'], [700, 'Bold'], [800, 'Extra bold']], e.weight, v => { e.weight = +v; done(); }) : null,
-            colorIn('Colour', e.color || h.accent, v => { e.color = v; done(); })),
+            e.type !== 'pic' ? colorIn('Colour', e.color || h.accent, v => { e.color = v; done(); }) : null),
           e.type === 'text' ? el('div', { class: 'row wrap', style: 'gap:14px' }, check(' ALL CAPS', e.upper, v => { e.upper = v; done(); }), check(' Shadow', e.shadow !== false, v => { e.shadow = v; done(); }),
             el('label', { class: 'inline' }, 'Letter spacing', el('input', { type: 'number', value: e.spacing || 0, min: 0, max: 30, style: 'width:64px', oninput: ev => { e.spacing = +ev.target.value || 0; done(); } }))) : null,
           e.type === 'clock' ? el('div', { class: 'row wrap', style: 'gap:14px' }, check(' Box behind the clock', e.card !== false, v => { e.card = v; done(); }), check(' Date / “starts in” line', e.label !== false, v => { e.label = v; done(); })) : null,
-          e.custom ? el('button', { class: 'btn small danger', style: 'margin-top:10px', onclick: () => { h.elements = h.elements.filter(x => x !== e); sel = 'title'; done(); draw(); } }, 'Delete this line') : null,
+          e.custom ? el('button', { class: 'btn small danger', style: 'margin-top:10px', onclick: () => { h.elements = h.elements.filter(x => x !== e); sel = 'title'; done(); draw(); } }, e.type === 'pic' ? 'Remove this picture' : 'Delete this line') : null,
           el('h3', null, 'Whole slide'),
           el('div', { class: 'row wrap', style: 'gap:8px' },
             el('button', { class: 'btn small', onclick: () => { applyHoldLayout(h, 'side'); h.bgStyle = 'side'; done(); draw(); } }, 'Arrange: text on left'),
