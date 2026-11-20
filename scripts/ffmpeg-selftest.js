@@ -27,8 +27,8 @@ function run(name, args, out) {
 (async () => {
   const flv = path.join(tmp, 'stream.flv'), mp4 = path.join(tmp, 'rec.mp4'), mp4b = path.join(tmp, 'rec-copy.mp4');
   const r = [
-    await run('stream (software encoder)', streamArgs({ encoder: 'x264', fps: 60, bitrate: 6000, audioBitrate: 160, url: flv }), flv),
-    await run('record (re-encode)', recordArgs({ fps: 60 }, mp4), mp4),
+    await run('stream (software encoder)', streamArgs({ encoder: 'x264', fps: 60, bitrate: 6000, audioBitrate: 198, url: flv }), flv),
+    await run('record (re-encode)', recordArgs({ fps: 60, audioBitrate: 320 }, mp4), mp4),
     await run('record (copy picture)', recordArgs({ fps: 60, inputCodec: 'h264' }, mp4b), mp4b)
   ];
   process.exit(r.every(Boolean) ? 0 : 1);

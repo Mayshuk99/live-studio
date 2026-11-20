@@ -112,7 +112,7 @@
   }
   const defaultSettings = () => ({
     youtube: { server: 'rtmps://a.rtmps.youtube.com:443/live2', custom: '', key: '' },
-    output: { width: 1920, height: 1080, fps: 30, bitrate: 8000, encoder: 'x264', audioBitrate: 160, recordBitrate: 20000 },
+    output: { width: 1920, height: 1080, fps: 30, bitrate: 8000, encoder: 'x264', audioBitrate: 160, recordBitrate: 20000, recordAudioBitrate: 256 },
     recordDir: '', autoRecord: false, ftbAudio: true, zebra: false, moveSpeed: 0.12,
     ui: { scale: 1, accent: '#3b82f6', card: 1, layouts: defaultLayouts(), layoutV: 4 },
     hotkeys: {}
@@ -808,14 +808,14 @@
       if (!mime) throw new Error('This computer cannot encode video in the app.');
       const opts = this.kind === 'stream'
         ? { kind: 'stream', url: streamURL(), fps: o.fps, bitrate: o.bitrate, encoder: o.encoder, audioBitrate: o.audioBitrate, inputCodec: codecOf(mime) }
-        : { kind: 'record', dir: settings.recordDir, name: show.showName, fps: o.fps, encoder: o.encoder, bitrate: o.recordBitrate, inputCodec: codecOf(mime) };
+        : { kind: 'record', dir: settings.recordDir, name: show.showName, fps: o.fps, encoder: o.encoder, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, inputCodec: codecOf(mime) };
       const r = await S.outStart(opts);
       if (!r || r.error) throw new Error(r ? r.error : 'Encoder did not start');
       this.id = r.id;
       this.track = engine.videoTrack().clone();
       const ms = new MediaStream([this.track, ...mixer.stream().getAudioTracks()]);
-      const vbps = this.kind === 'stream' ? clamp(o.bitrate * 3000, 10e6, 40e6) : clamp(o.recordBitrate * 1000, 6e6, 60e6);
-      this.rec = new MediaRecorder(ms, { mimeType: mime, videoBitsPerSecond: vbps, audioBitsPerSecond: 256000 });
+      const vbps = this.kind === 'stream' ? clamp(o.bitrate * 3000, 10e6, 40e6) : clamp(o.recordBitrate * 1000, 4e6, 100e6);
+      this.rec = new MediaRecorder(ms, { mimeType: mime, videoBitsPerSecond: vbps, audioBitsPerSecond: 510000 });
       const id = this.id;
       this.rec.ondataavailable = e => {
         if (!e.data || !e.data.size) return;
@@ -2522,6 +2522,35 @@
         previewCanvas.height = Math.round(previewCanvas.width * o.height / o.width);
       }
     };
+    /* picture + sound bitrate with ready-made and your own presets, separately for live and recording */
+    const QUAL = {
+      live: { v: 'bitrate', a: 'audioBitrate', vr: [1000, 51000], ar: [64, 384], builtin: [['YouTube 1080p 60 fps', 12000, 192], ['YouTube 1080p 30 fps', 8000, 160], ['YouTube 720p', 5000, 128], ['Slow internet', 3000, 128]] },
+      rec: { v: 'recordBitrate', a: 'recordAudioBitrate', vr: [4000, 100000], ar: [96, 512], builtin: [['Standard', 20000, 256], ['High (for editing)', 40000, 320], ['Small files', 10000, 192]] }
+    };
+    function qualityBlock(kind) {
+      const Q = QUAL[kind], wrap = el('div');
+      s.presets = s.presets || { live: [], rec: [] };
+      const draw = () => {
+        const mine = s.presets[kind] || (s.presets[kind] = []);
+        const all = [...Q.builtin.map(b => ({ name: b[0], v: b[1], a: b[2] })), ...mine.map(m => ({ ...m, mine: true }))];
+        const cur = all.findIndex(x => x.v === o[Q.v] && x.a === o[Q.a]);
+        const set = (v, a) => { o[Q.v] = clamp(Math.round(v) || Q.vr[0], Q.vr[0], Q.vr[1]); o[Q.a] = clamp(Math.round(a) || Q.ar[0], Q.ar[0], Q.ar[1]); saveSettings(); draw(); };
+        const nameIn = el('input', { type: 'text', placeholder: 'Name for a new preset', style: 'flex:1;min-width:120px' });
+        wrap.innerHTML = '';
+        put(wrap,
+          el('div', { class: 'grid2' },
+            el('div', { class: 'field' }, el('span', null, 'Preset'), select([...all.map((x, i) => [i, `${x.mine ? '★ ' : ''}${x.name} — ${x.v.toLocaleString()} / ${x.a} kbps`]), ...(cur < 0 ? [[-1, 'Custom (not saved)']] : [])], cur, v => { const x = all[+v]; if (x) set(x.v, x.a); })),
+            el('div', { class: 'row', style: 'gap:10px;align-items:flex-end' },
+              el('div', { class: 'field grow' }, el('span', null, 'Picture (kbps)'), el('input', { type: 'number', min: Q.vr[0], max: Q.vr[1], step: 100, value: o[Q.v], disabled: live || null, onchange: e => set(+e.target.value, o[Q.a]) })),
+              el('div', { class: 'field grow' }, el('span', null, 'Sound (kbps)'), el('input', { type: 'number', min: Q.ar[0], max: Q.ar[1], step: 1, value: o[Q.a], disabled: live || null, onchange: e => set(o[Q.v], +e.target.value) })))),
+          el('div', { class: 'row wrap', style: 'gap:8px;margin:-4px 0 10px' }, nameIn,
+            el('button', { class: 'btn small', onclick: () => { const n = nameIn.value.trim(); if (!n) { toast('Type a name for the preset first.', 'error'); return; } const i = mine.findIndex(m => m.name === n); const pr = { name: n, v: o[Q.v], a: o[Q.a] }; if (i >= 0) mine[i] = pr; else mine.push(pr); saveSettings(); draw(); toast(`Preset “${n}” saved.`); } }, '★ Save these numbers as a preset'),
+            cur >= 0 && all[cur].mine ? el('button', { class: 'btn small danger', onclick: () => { s.presets[kind] = mine.filter(m => m.name !== all[cur].name); saveSettings(); draw(); } }, 'Delete this preset') : null));
+        if (live) wrap.querySelectorAll('select').forEach(x => { x.disabled = true; });
+      };
+      draw();
+      return wrap;
+    }
     const body = el('div', null,
       el('h3', { id: 'set-youtube' }, 'YouTube'),
       el('div', { class: 'row', style: 'margin-bottom:10px' }, el('span', { class: 'muted grow' }, rt.yt.signedIn ? `Connected${rt.yt.channel ? ' to ' + rt.yt.channel.title : ''}. Choosing an event fills in the stream key.` : 'Connect your YouTube account to pick upcoming events and check stream health — or just paste a stream key below.'),
@@ -2536,17 +2565,20 @@
       el('div', { class: 'grid2' },
         el('div', { class: 'field' }, el('span', null, 'Resolution'), select([['1920x1080', '1080p (1920×1080)'], ['1280x720', '720p (1280×720)']], `${o.width}x${o.height}`, v => { const [w, h] = v.split('x').map(Number); changeOut('width', w); changeOut('height', h); })),
         el('div', { class: 'field' }, el('span', null, 'Frame rate'), select([[25, '25 fps'], [30, '30 fps (29.97 cameras)'], [50, '50 fps'], [60, '60 fps (59.94 cameras)']], o.fps, v => changeOut('fps', +v))),
-        el('div', { class: 'field' }, el('span', null, 'Stream bitrate (kbps)'), el('input', { type: 'number', min: 1500, max: 20000, step: 500, value: o.bitrate, onchange: e => changeOut('bitrate', clamp(+e.target.value, 1500, 20000)) })),
         el('div', { class: 'field' }, el('span', null, 'Encoder'), select([['x264', 'Software (works on every PC)'], ['nvenc', 'NVIDIA graphics card (NVENC)'], ['qsv', 'Intel graphics (Quick Sync)'], ['amf', 'AMD graphics card (AMF)']], o.encoder, v => changeOut('encoder', v)))),
-      el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free. Your upload speed should be about 1.5× the bitrate.'),
+      el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free.'),
+      el('h3', null, 'Live stream quality'),
+      qualityBlock('live'),
+      el('div', { class: 'muted', style: 'font-size:.85em' }, 'YouTube suggests 4,500–9,000 kbps for 1080p at 30 fps and about 12,000 for 1080p at 60 fps. Your upload speed should be about 1.5× the picture bitrate.'),
 
       el('h3', null, 'Recording'),
       el('div', { class: 'field' }, el('span', null, 'Save recordings to'), el('div', { class: 'row' }, el('input', { type: 'text', class: 'grow', value: s.recordDir, readonly: true, id: 'recDir' }),
         el('button', { class: 'btn small', onclick: async () => { const p = await S.pickFolder(); if (p) { s.recordDir = p; $('#recDir').value = p; saveSettings(); } } }, 'Change…'),
         el('button', { class: 'btn small', onclick: () => S.openFolder(s.recordDir) }, 'Open'))),
       el('div', { class: 'grid2' },
-        el('div', { class: 'field' }, el('span', null, 'Recording quality (kbps)'), el('input', { type: 'number', min: 6000, max: 60000, step: 1000, value: o.recordBitrate, onchange: e => changeOut('recordBitrate', clamp(+e.target.value, 6000, 60000)) })),
-        el('div', { class: 'field' }, el('span', null, ' '), check(' Start recording automatically when I go live', s.autoRecord, v => { s.autoRecord = v; saveSettings(); }))),
+        el('div', { class: 'field' }, check(' Start recording automatically when I go live', s.autoRecord, v => { s.autoRecord = v; saveSettings(); }))),
+      el('h4', { style: 'margin:6px 0' }, 'Recording quality'),
+      qualityBlock('rec'),
 
       el('h3', null, 'Switching'),
       el('div', { class: 'grid2' },

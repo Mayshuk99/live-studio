@@ -53,7 +53,7 @@ function recordArgs(o, partFile) {
     '-f', 'matroska', '-i', 'pipe:0',
     '-map', '0:v:0', '-map', '0:a:0?',
     ...v,
-    '-c:a', 'aac', '-b:a', '256k', '-ar', '48000',
+    '-c:a', 'aac', '-b:a', `${o.audioBitrate || 256}k`, '-ar', '48000',
     '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
     '-f', 'mp4', '-y', partFile
   ];
