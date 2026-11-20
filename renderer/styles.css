@@ -514,3 +514,7 @@ textarea { width: 100%; box-sizing: border-box; }
 
 .test-log { display: flex; flex-direction: column; gap: 8px; font-size: .95em; line-height: 1.4; user-select: text; }
 .test-log .big { font-size: 1.25em; font-weight: 700; margin-top: 6px; }
+
+.pv-listen { padding: 2px 10px; font-size: .9em; white-space: nowrap; }
+.pv-listen.on { background: #16a34a; border-color: #22c55e; color: #fff; }
+.monitor-label .grow { flex: 1; }

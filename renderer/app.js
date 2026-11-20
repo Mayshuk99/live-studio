@@ -370,6 +370,7 @@
       const f = rt.files.get(m);
       if (f && f.el && !onAir.includes(m) && f.el.paused) f.el.currentTime = 0;
     }
+    updatePfl();
     renderTally();
   }
   function startProgram(toId, fromId, ms) {
@@ -402,12 +403,14 @@
     const to = rt.previewId, from = engine.programId;
     if (!to || to === from) return;
     const ms = kind === 'cut' ? 0 : (msOverride !== undefined ? msOverride : show.transition.ms);
+    for (const f of rt.files.values()) f.cued = false; // a video that was being listened to starts from the beginning on air
     startProgram(to, from, ms);
     if (ms) engine.fade(to, ms); else engine.cut(to);
     audioGate(ms, to);
     rt.previewId = from || to; engine.previewId = rt.previewId;
     rt.webSuppress.clear();
     refreshWebs();
+    if (rt.pvListen) setPvListen(false); else updatePfl(); // once it is on air, the headphones go back to normal
     renderTally();
   }
   function takeShot(id, kind, ms) { if (!getShot(id) || id === engine.programId) return; setPreview(id); take(kind, ms); }
@@ -1220,8 +1223,28 @@
     el('button', { class: 'btn small', title: 'Forward 10 seconds', onclick: tlSkip(10) }, '+10 s'),
     el('button', { class: 'btn small', title: 'Forward 1 minute', onclick: tlSkip(60) }, '+1 min'));
   // slim master meter beside the program screen (like a hardware switcher)
-  const monMeter = el('canvas', { class: 'mon-meter', width: 40, height: 300 });
-  function drawMonMeter(A) {
+  const monMeterMain = el('canvas', { class: 'mon-meter', width: 40, height: 300 }), monMeter = monMeterMain;
+  // the same kind of meter for the Preview shot, and a button to listen to it before it goes on air
+  const pvMeter = el('canvas', { class: 'mon-meter', width: 40, height: 300 });
+  const pvListen = el('button', { class: 'btn small pv-listen', title: 'Listen to the Preview shot on this computer before showing it. The stream does not hear this.', onclick: () => setPvListen(!rt.pvListen) }, '🎧 Listen');
+  function previewMedia() { const onAir = mediaOf(getShot(engine.programId)); return mediaOf(getShot(rt.previewId)).filter(m => !onAir.includes(m)); }
+  function updatePfl() {
+    const p = getShot(rt.previewId);
+    const inputsOn = !!p && !(p.role === 'hold' && SV().hold.mute !== false);
+    const media = p ? mediaOf(p) : [];
+    mixer.setPreviewMix(inputsOn, media, show.audio.media.gain, show.audio.media.mute);
+    // a video in Preview only makes sound while it plays: play it while listening, rewind it afterwards
+    const cue = previewMedia();
+    for (const [id, f] of rt.files) {
+      if (!f.el || f.el.tagName !== 'VIDEO' || mediaOf(getShot(engine.programId)).includes(id)) continue;
+      if (rt.pvListen && cue.includes(id)) { if (f.el.paused) f.el.play().catch(() => {}); f.cued = true; }
+      else if (f.cued) { f.cued = false; f.el.pause(); f.el.currentTime = 0; }
+    }
+    pvListen.classList.toggle('on', !!rt.pvListen);
+    pvListen.textContent = rt.pvListen ? '🎧 Listening' : '🎧 Listen';
+  }
+  function setPvListen(on) { rt.pvListen = !!on; mixer.resume(); mixer.setListen(on ? 'preview' : 'program'); updatePfl(); }
+  function drawMonMeter(A, monMeter = monMeterMain) {
     if (!monMeter.isConnected) return;
     const r = monMeter.getBoundingClientRect(), k = devicePixelRatio;
     const w = Math.max(10, Math.round(r.width * k)), h = Math.max(10, Math.round(r.height * k));
@@ -1239,6 +1262,7 @@
       g.fillStyle = '#fff'; g.fillRect(x, y(hd) - k, bw, 2 * k);
       if (clip) { g.fillStyle = '#ef4444'; g.fillRect(x, 0, bw, 4 * k); }
     });
+    if (A.corr === undefined) return;
     g.fillStyle = A.silent ? '#555' : A.corr < -0.2 ? '#ef4444' : A.corr < 0.2 ? '#f59e0b' : '#22c55e';
     g.beginPath(); g.arc(w / 2, h - 8 * k, 4 * k, 0, 7); g.fill();
   }
@@ -1249,7 +1273,8 @@
     const durSel = select([[0, 'Cut'], [300, 'Fade 0.3 s'], [600, 'Smooth 0.6 s'], [1000, 'Fade 1 s'], [2000, 'Fade 2 s']], show.transition.ms, v => { show.transition.ms = +v; changed(); }, { class: 'trans-sel' });
     put(body, el('div', { class: 'mon-wrap' },
       el('div', { class: 'monitors' },
-        el('div', { class: 'monitor preview' }, el('div', { class: 'screen' }, previewCanvas), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot green' }), el('span', { class: 'tagtxt' }, 'Preview'), pvName)),
+        el('div', { class: 'mon-meter-wrap pv', title: 'Sound of the Preview shot (what it will sound like on air)' }, pvMeter),
+        el('div', { class: 'monitor preview' }, el('div', { class: 'screen' }, previewCanvas), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot green' }), el('span', { class: 'tagtxt' }, 'Preview'), pvName, el('span', { class: 'grow' }), pvListen)),
         el('div', { class: 'monitor program' }, el('div', { class: 'screen' }, engine.canvas, progInfo, progBar), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot red' }), el('span', { class: 'tagtxt' }, 'Live'), pgName)),
         el('div', { class: 'mon-meter-wrap', title: 'Master level · dot = phase (green good, red out of phase)' }, monMeter)),
       timeline,
@@ -2527,7 +2552,7 @@
   function tickMeters() {
     const lv = mixer.levels();
     const MA = mixer.masterAnalysis(); rt.MA = MA;
-    drawMaster(MA); drawMonMeter(MA);
+    drawMaster(MA); drawMonMeter(MA); drawMonMeter(mixer.previewAnalysis(), pvMeter);
     for (const [id, m] of rt.meters) {
       const db = lv[id];
       if (db === undefined) continue;
@@ -2963,6 +2988,7 @@
     await refreshDevices(); resolveDevices();
     await Promise.all(show.audio.inputs.map(a => openAudioInput(a, true)));
     refreshAll();
+    updatePfl();
     setTimeout(resetFrameStats, 8000); // starting up (opening cards, loading videos) is not counted as dropped frames
   }
 

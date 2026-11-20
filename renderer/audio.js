@@ -64,6 +64,21 @@
       this.clip = { L: 0, R: 0 };
       this.corr = 1;
 
+      // preview ("listen before showing") bus: what the Preview shot would sound like, with its own meter
+      // and its own path to the headphones. It never reaches the stream or the recording.
+      this.pfl = ctx.createGain();
+      this.pflMedia = ctx.createGain();
+      this.pflMedia.connect(this.pfl);
+      this.pflMon = ctx.createGain(); this.pflMon.gain.value = 0;
+      this.pfl.connect(this.pflMon); this.pflMon.connect(ctx.destination);
+      { const sp = ctx.createChannelSplitter(2); this.pfl.connect(sp);
+        this.pL = ctx.createAnalyser(); this.pR = ctx.createAnalyser(); this.pL.fftSize = this.pR.fftSize = 2048;
+        sp.connect(this.pL, 0); sp.connect(this.pR, 1); }
+      this._pb = new Float32Array(2048);
+      this.pHold = { L: -90, R: -90, tL: 0, tR: 0 };
+      this.pPeak = { L: -90, R: -90 };
+      this.listen = 'program'; this._mon = 0;
+
       this.strips = new Map();
       this.devices = new Map(); // deviceId -> { stream, node, splitter, users }
       this.mediaEls = new Map(); // sourceId -> { node, gain }
@@ -96,7 +111,35 @@
     setMaster({ gain = 0, limiter = true, monitor = false, monitorGain = 0 }) {
       this.masterFader.gain.setTargetAtTime(dbToGain(gain), this.ctx.currentTime, 0.02);
       this.setLimiter(limiter);
-      this.monitor.gain.setTargetAtTime(monitor ? dbToGain(monitorGain) : 0, this.ctx.currentTime, 0.02);
+      this._mon = monitor ? dbToGain(monitorGain) : 0; this._monGain = dbToGain(monitorGain);
+      this._applyListen();
+    }
+    /* which sound goes to this computer's headphones / speakers: the programme (when 🎧 is on) or the Preview shot */
+    setListen(which) { this.listen = which; this._applyListen(); }
+    _applyListen() {
+      const t = this.ctx.currentTime, pv = this.listen === 'preview';
+      this.monitor.gain.setTargetAtTime(pv ? 0 : this._mon, t, 0.02);
+      this.pflMon.gain.setTargetAtTime(pv ? (this._monGain || 0.5) : 0, t, 0.02);
+    }
+    /* what the preview bus contains: the live inputs (or not) plus the video files of the Preview shot */
+    setPreviewMix(inputsOn, mediaIds, mediaGainDb, mediaMute) {
+      const t = this.ctx.currentTime;
+      for (const [id, s] of this.strips) if (s.pflSend) s.pflSend.gain.setTargetAtTime(inputsOn ? 1 : 0, t, 0.02);
+      for (const [id, m] of this.mediaEls) if (m.pfl) m.pfl.gain.setTargetAtTime(mediaIds.includes(id) ? 1 : 0, t, 0.02);
+      this.pflMedia.gain.setTargetAtTime(mediaMute ? 0 : dbToGain(mediaGainDb || 0), t, 0.02);
+    }
+    previewAnalysis() {
+      const now = performance.now(), out = {};
+      for (const [ch, an] of [['L', this.pL], ['R', this.pR]]) {
+        an.getFloatTimeDomainData(this._pb);
+        let p = 0; for (let i = 0; i < this._pb.length; i++) { const v = Math.abs(this._pb[i]); if (v > p) p = v; }
+        const db = p > 1e-6 ? 20 * Math.log10(p) : -90;
+        this.pPeak[ch] = Math.max(db, this.pPeak[ch] - 1.2);
+        if (db >= this.pHold[ch] || now - this.pHold['t' + ch] > 1500) { this.pHold[ch] = db; this.pHold['t' + ch] = now; }
+        out['peak' + ch] = this.pPeak[ch]; out['hold' + ch] = this.pHold[ch]; out['clip' + ch] = db > -1;
+      }
+      out.silent = out.peakL < -80 && out.peakR < -80;
+      return out;
     }
     fadeMaster(on, ms) {
       const g = this.masterOut.gain, t = this.ctx.currentTime;
@@ -119,6 +162,7 @@
       s.raw = ctx.createGain(); input.connect(s.raw); // untouched input, used by the sync test
       input.connect(s.delay); s.delay.connect(s.lowcut); s.lowcut.connect(s.comp); s.comp.connect(s.fader);
       s.fader.connect(s.pan); s.pan.connect(s.mute); s.mute.connect(this.masterIn);
+      if (id !== 'media') { s.pflSend = ctx.createGain(); s.mute.connect(s.pflSend); s.pflSend.connect(this.pfl); }
       s.fader.connect(s.meter);
       this.strips.set(id, s);
       this.update(id, cfg);
@@ -205,7 +249,7 @@
     removeInput(id) {
       const s = this.strips.get(id);
       if (!s || id === 'media') return;
-      try { s.mute.disconnect(); s.input.disconnect(); } catch (e) { /* ignore */ }
+      try { s.mute.disconnect(); s.input.disconnect(); if (s.pflSend) s.pflSend.disconnect(); } catch (e) { /* ignore */ }
       this.strips.delete(id);
       if (s.deviceKey) this._release(s.deviceKey);
     }
@@ -218,13 +262,14 @@
         const gain = this.ctx.createGain();
         gain.gain.value = 0;
         node.connect(gain); gain.connect(this.media.input);
-        this.mediaEls.set(sourceId, { node, gain });
+        const pfl = this.ctx.createGain(); pfl.gain.value = 0; node.connect(pfl); pfl.connect(this.pflMedia);
+        this.mediaEls.set(sourceId, { node, gain, pfl });
       } catch (e) { console.warn('media audio', e); }
     }
     detachMedia(sourceId) {
       const m = this.mediaEls.get(sourceId);
       if (!m) return;
-      try { m.gain.disconnect(); m.node.disconnect(); } catch (e) { /* ignore */ }
+      try { m.gain.disconnect(); if (m.pfl) m.pfl.disconnect(); m.node.disconnect(); } catch (e) { /* ignore */ }
       this.mediaEls.delete(sourceId);
     }
     setMediaActive(sourceId, on, ms = 300) {
