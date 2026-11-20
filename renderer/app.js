@@ -806,9 +806,12 @@
       const o = settings.output;
       const mime = pickMime();
       if (!mime) throw new Error('This computer cannot encode video in the app.');
+      // if the graphics-card encoder refused to start: 1 = plain settings, 2 = software encoder (for this session)
+      const fb = rt.encFallback && rt.encFallback.for === o.encoder ? rt.encFallback.level : 0;
+      const encoder = fb >= 2 ? 'x264' : o.encoder, safe = fb === 1;
       const opts = this.kind === 'stream'
-        ? { kind: 'stream', url: streamURL(), fps: o.fps, bitrate: o.bitrate, encoder: o.encoder, audioBitrate: o.audioBitrate, inputCodec: codecOf(mime) }
-        : { kind: 'record', dir: settings.recordDir, name: show.showName, fps: o.fps, encoder: o.encoder, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, inputCodec: codecOf(mime) };
+        ? { kind: 'stream', url: streamURL(), fps: o.fps, bitrate: o.bitrate, encoder, safe, audioBitrate: o.audioBitrate, inputCodec: codecOf(mime) }
+        : { kind: 'record', dir: settings.recordDir, name: show.showName, fps: o.fps, encoder, safe, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, inputCodec: codecOf(mime) };
       const r = await S.outStart(opts);
       if (!r || r.error) throw new Error(r ? r.error : 'Encoder did not start');
       this.id = r.id;
@@ -857,15 +860,15 @@
     toast(`Stream ended after ${fmt((Date.now() - rt.liveStart) / 1000)}.`, 'ok');
     renderHeader();
   }
-  async function reconnect() {
+  async function reconnect(fast) {
     const o = rt.live; if (!o) return;
     rt.reconnecting = true; renderHeader();
     await o.stopRecorder();
-    const wait = Math.min(15000, 2000 * (1 + (rt.reconnects || 0)));
+    const wait = fast || Math.min(15000, 2000 * (1 + (rt.reconnects || 0)));
     rt.reconnects = (rt.reconnects || 0) + 1;
     setTimeout(async () => {
       if (rt.live !== o) return;
-      try { const n = new Output('stream'); await n.start(); rt.live = n; rt.reconnecting = false; toast('Stream reconnected.', 'ok'); }
+      try { const n = new Output('stream'); await n.start(); rt.live = n; rt.reconnecting = false; rt.reconnPending = true; }
       catch (e) { reconnect(); }
       renderHeader();
     }, wait);
@@ -878,10 +881,28 @@
   async function stopRec() { const o = rt.rec; rt.rec = null; if (o) await o.stop(); S.setLive(!!rt.live); renderHeader(); }
 
   S.onOutEvent(ev => {
-    if (ev.type === 'stats') { if (ev.kind === 'stream') rt.liveStats = ev; else rt.recStats = ev; return; }
+    if (ev.type === 'stats') {
+      if (ev.kind === 'stream') { rt.liveStats = ev; if (rt.reconnPending && ev.frame > 30) { rt.reconnPending = false; rt.reconnects = 0; toast('Stream is running again.', 'ok'); } }
+      else rt.recStats = ev;
+      return;
+    }
     if (ev.type === 'exit') {
       if (ev.file) toast(`Recording saved: ${ev.file}`, 'ok', S.showFile ? { label: 'Show', fn: () => S.showFile(ev.file) } : null);
       if (ev.expected) return;
+      // graphics-card encoder refused to start → step down by itself instead of failing over and over
+      const hwName = { nvenc: 'NVIDIA', qsv: 'Intel', amf: 'AMD' }[settings.output.encoder];
+      const mineOut = (ev.kind === 'stream' && rt.live && rt.live.id === ev.id) || (ev.kind === 'record' && rt.rec && rt.rec.id === ev.id);
+      if (ev.encoderFailed && hwName && mineOut) {
+        const cur = rt.encFallback && rt.encFallback.for === settings.output.encoder ? rt.encFallback.level : 0;
+        if (cur < 2) {
+          rt.encFallback = { for: settings.output.encoder, level: cur + 1, detail: ev.detail };
+          toast(cur === 0 ? `The ${hwName} encoder refused these settings — trying its plain settings…` : `The ${hwName} encoder will not start on this PC — using the software encoder instead. (${ev.detail || ev.error})`, 'error');
+          if (ev.kind === 'stream') { rt.reconnects = 0; reconnect(300); }
+          else { const o2 = rt.rec; rt.rec = null; o2.active = false; o2.stopRecorder().then(startRec); }
+          renderHeader();
+          return;
+        }
+      }
       if (ev.kind === 'stream' && rt.live && rt.live.id === ev.id) {
         toast(`Stream connection problem: ${ev.error || 'disconnected'}. Reconnecting…`, 'error');
         reconnect();
@@ -2567,6 +2588,7 @@
         el('div', { class: 'field' }, el('span', null, 'Frame rate'), select([[25, '25 fps'], [30, '30 fps (29.97 cameras)'], [50, '50 fps'], [60, '60 fps (59.94 cameras)']], o.fps, v => changeOut('fps', +v))),
         el('div', { class: 'field' }, el('span', null, 'Encoder'), select([['x264', 'Software (works on every PC)'], ['nvenc', 'NVIDIA graphics card (NVENC)'], ['qsv', 'Intel graphics (Quick Sync)'], ['amf', 'AMD graphics card (AMF)']], o.encoder, v => changeOut('encoder', v)))),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free.'),
+      rt.encFallback && rt.encFallback.for === o.encoder ? el('div', { class: 'status-bad', style: 'font-size:.9em;margin-top:6px' }, rt.encFallback.level >= 2 ? `This encoder would not start, so the software encoder is being used until the program is restarted. Updating the graphics card driver usually fixes it. Reported: ${rt.encFallback.detail || 'no details'}` : 'This encoder refused the tuned settings; plain settings are being used.') : null,
       el('h3', null, 'Live stream quality'),
       qualityBlock('live'),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'YouTube suggests 4,500–9,000 kbps for 1080p at 30 fps and about 12,000 for 1080p at 60 fps. Your upload speed should be about 1.5× the picture bitrate.'),

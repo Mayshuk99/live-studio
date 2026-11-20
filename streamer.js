@@ -15,6 +15,10 @@ const ENCODERS = {
     '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-bufsize', `${o.bitrate * 2}k`, '-g', g, '-bf', '2'],
   qsv: (o, g) => ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-profile:v', 'high',
     '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-bufsize', `${o.bitrate * 2}k`, '-g', g],
+  // plain versions, used automatically when a graphics card or its driver refuses the tuned settings above
+  nvenc_safe: (o, g) => ['-c:v', 'h264_nvenc', '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-bufsize', `${o.bitrate * 2}k`, '-g', g],
+  qsv_safe: (o, g) => ['-c:v', 'h264_qsv', '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-g', g],
+  amf_safe: (o, g) => ['-c:v', 'h264_amf', '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-g', g],
   amf: (o, g) => ['-c:v', 'h264_amf', '-usage', 'lowlatency', '-rc', 'cbr', '-profile:v', 'high',
     '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-bufsize', `${o.bitrate * 2}k`, '-g', g]
 };
@@ -22,7 +26,7 @@ const ENCODERS = {
 function streamArgs(o) {
   const fps = o.fps || 30;
   const g = String(fps * 2); // keyframe every 2 seconds (YouTube requirement)
-  const enc = (ENCODERS[o.encoder] || ENCODERS.x264)(o, g);
+  const enc = ((o.safe && ENCODERS[o.encoder + '_safe']) || ENCODERS[o.encoder] || ENCODERS.x264)(o, g);
   const url = o.url;
   return [
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
@@ -44,7 +48,7 @@ function recordArgs(o, partFile) {
   const hw = ['nvenc', 'qsv', 'amf'].includes(o.encoder);
   const kbps = o.bitrate || 20000;
   let v;
-  if (hw) v = [...ENCODERS[o.encoder]({ bitrate: kbps }, String(fps)), '-pix_fmt', 'yuv420p', '-r', String(fps), '-fps_mode', 'cfr'];
+  if (hw) v = [...(o.safe ? ENCODERS[o.encoder + '_safe'] : ENCODERS[o.encoder])({ bitrate: kbps }, String(fps)), '-pix_fmt', 'yuv420p', '-r', String(fps), '-fps_mode', 'cfr'];
   else if (o.inputCodec === 'h264' || o.inputCodec === 'vp9') v = ['-c:v', 'copy'];
   else v = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', String(fps), '-fps_mode', 'cfr'];
   return [
@@ -108,7 +112,7 @@ class OutputManager extends EventEmitter {
       args = recordArgs(o, partFile);
     }
     const proc = spawn(this.ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
-    const out = { id, kind: o.kind, proc, finalFile, partFile, stopping: false, err: [], bytes: 0 };
+    const out = { id, kind: o.kind, proc, finalFile, partFile, stopping: false, err: [], first: [], frames: 0, bytes: 0 };
     this.outs.set(id, out);
     proc.stdin.on('error', () => { /* handled by exit */ });
     let buf = '';
@@ -119,9 +123,11 @@ class OutputManager extends EventEmitter {
       for (const line of parts) {
         if (!line.trim() || /ended prematurely/.test(line)) continue;
         const s = parseStats(line);
+        if (s) out.frames = Math.max(out.frames, s.frame || 0);
         if (s) this.emit('event', { id, kind: o.kind, type: 'stats', ...s, backlog: proc.stdin.writableLength });
         else {
           out.err.push(line); if (out.err.length > 30) out.err.shift();
+          if (out.first.length < 6) out.first.push(line);
           this.emit('event', { id, kind: o.kind, type: 'log', line });
         }
       }
@@ -138,7 +144,10 @@ class OutputManager extends EventEmitter {
       }
       this.emit('event', {
         id, kind: o.kind, type: 'exit', code, expected: out.stopping, file,
-        error: (code !== 0 && !out.stopping) ? (out.err.slice(-3).join(' | ') || `Encoder stopped (code ${code})`) : null
+        error: (code !== 0 && !out.stopping) ? (out.err.slice(-3).join(' | ') || `Encoder stopped (code ${code})`) : null,
+        // the picture encoder itself refused to start (graphics card / driver), as opposed to an internet problem
+        encoderFailed: code !== 0 && !out.stopping && out.frames === 0 && /nvenc|qsv|amf|vost#|opening encoder|No capable devices|driver/i.test(out.err.join(' ')),
+        detail: out.first.slice(0, 3).join(' | ').replace(/\[[^\]]*@ (0x)?[0-9a-f]+\]\s*/gi, '')
       });
     });
     this.emit('event', { id, kind: o.kind, type: 'started', file: finalFile });
