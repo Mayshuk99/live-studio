@@ -2632,7 +2632,7 @@
     const keyInput = el('input', { type: 'password', value: y.key, placeholder: 'Paste your stream key', class: 'grow', autocomplete: 'off', oninput: e => { y.key = e.target.value.trim(); saveSettings(); } });
     const customRow = el('div', { class: 'field' + (y.server === 'custom' ? '' : ' hidden') }, el('span', null, 'Server address (RTMP/RTMPS)'), el('input', { type: 'text', value: y.custom, placeholder: 'rtmps://…', oninput: e => { y.custom = e.target.value; saveSettings(); } }));
     const version = await S.version();
-    const updStatus = el('span', { class: 'muted' });
+    const updStatus = el('span', { class: 'muted', id: 'updStatus' });
     const changeOut = (k, v) => {
       if (live) { toast('Stop streaming/recording before changing video output settings.', 'error'); return; }
       o[k] = v; saveSettings();
@@ -2726,9 +2726,16 @@
 
       el('h3', null, 'About'),
       el('div', { class: 'row' }, el('span', null, `Live Studio ${version}`), el('span', { class: 'grow' }), updStatus,
-        el('button', { class: 'btn small', onclick: async () => { const r = await S.checkUpdates(); updStatus.textContent = r.status === 'dev' ? 'Updates work in the installed app.' : r.status === 'error' ? `Update check failed: ${r.message}` : 'Checking…'; } }, 'Check for updates'))
+        el('button', { class: 'btn small', onclick: async () => {
+          rt.upd = { status: 'checking' }; updRender();
+          const r = await S.checkUpdates();
+          if (r.status === 'dev') rt.upd = { status: 'note', message: 'Updates work in the installed app.' };
+          else if (r.status === 'error') rt.upd = { status: 'error', message: r.message };
+          updRender();
+        } }, 'Check for updates'))
     );
     openModal('Settings', body);
+    updRender();
     if (focus) { const t = $(`#set-${focus}`); if (t) t.scrollIntoView(); setTimeout(() => keyInput.focus(), 50); }
   }
 
@@ -2748,15 +2755,31 @@
   }
 
   /* ================= updates ================= */
+  const installNow = () => { if (rt.live || rt.rec) return toast('Finish streaming/recording first, then restart to update.', 'error'); S.installUpdate(); };
+  // the same status is shown in the top bar and beside "Check for updates" in Settings
+  function updRender() {
+    const n = $('#updStatus'), u = rt.upd;
+    if (!n) return;
+    n.innerHTML = ''; n.className = 'muted';
+    if (!u) return;
+    if (u.status === 'checking') n.textContent = 'Checking for updates…';
+    else if (u.status === 'current') { n.textContent = '✓ You have the newest version.'; n.className = 'status-ok'; }
+    else if (u.status === 'downloading') n.textContent = `Update ${u.version || ''} found — downloading${u.percent !== undefined ? ` ${u.percent}%` : '…'}`;
+    else if (u.status === 'ready') { n.className = 'status-ok'; n.append(`✓ Update ${u.version || ''} is downloaded. `, el('button', { class: 'btn small primary', onclick: installNow }, 'Restart & update now')); }
+    else if (u.status === 'error') { n.textContent = `Update check failed: ${u.message}`; n.className = 'status-bad'; }
+    else if (u.message) n.textContent = u.message;
+  }
   S.onUpdate(u => {
     const bar = $('#updateBar');
+    rt.upd = Object.assign({}, u.status === 'downloading' && rt.upd && rt.upd.status === 'downloading' ? rt.upd : null, u);
     if (u.status === 'ready') {
       bar.innerHTML = '';
-      bar.append(el('span', null, `Update ${u.version} is ready.`), el('button', { class: 'btn small primary', onclick: () => { if (rt.live || rt.rec) return toast('Finish streaming/recording first, then restart to update.', 'error'); S.installUpdate(); } }, 'Restart & update'), el('span', { class: 'muted' }, 'It will also install automatically next time you close the app.'));
+      bar.append(el('span', null, `Update ${u.version} is ready.`), el('button', { class: 'btn small primary', onclick: installNow }, 'Restart & update'), el('span', { class: 'muted' }, 'It will also install automatically next time you close the app.'));
       bar.classList.remove('hidden');
-    } else if (u.status === 'downloading' && u.percent !== undefined) {
-      bar.innerHTML = ''; bar.append(el('span', null, `Downloading update… ${u.percent}%`)); bar.classList.remove('hidden');
-    }
+    } else if (u.status === 'downloading') {
+      bar.innerHTML = ''; bar.append(el('span', null, `Downloading update ${rt.upd.version || ''}… ${rt.upd.percent !== undefined ? rt.upd.percent + '%' : ''}`)); bar.classList.remove('hidden');
+    } else if (u.status === 'error' && !bar.querySelector('button')) bar.classList.add('hidden');
+    updRender();
   });
 
   /* ================= keyboard shortcuts — every action can have a key you choose ================= */

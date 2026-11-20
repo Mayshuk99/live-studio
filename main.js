@@ -386,7 +386,8 @@ ipcMain.handle('yt:signIn', () => new Promise(resolve => {
 }));
 
 /* ---------- automatic updates (GitHub Releases) ---------- */
-function sendUpdate(status, extra) { if (win && !win.isDestroyed()) win.webContents.send('update:status', { status, ...extra }); }
+let lastUpdate = null;
+function sendUpdate(status, extra) { lastUpdate = { status, ...extra }; if (win && !win.isDestroyed()) win.webContents.send('update:status', lastUpdate); }
 function setupUpdater() {
   if (!autoUpdater || !app.isPackaged) return;
   autoUpdater.autoDownload = true;
@@ -403,7 +404,7 @@ function setupUpdater() {
 }
 ipcMain.handle('update:check', async () => {
   if (!autoUpdater || !app.isPackaged) return { status: 'dev' };
-  try { await autoUpdater.checkForUpdates(); return { status: 'checking' }; } catch (e) { return { status: 'error', message: e.message }; }
+  try { if (lastUpdate && lastUpdate.status === 'ready') { sendUpdate('ready', { version: lastUpdate.version }); return { status: 'ready' }; } await autoUpdater.checkForUpdates(); return { status: 'checking' }; } catch (e) { return { status: 'error', message: e.message }; }
 });
 ipcMain.on('update:install', () => {
   if (outputs.active) return;

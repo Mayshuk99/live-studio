@@ -73,7 +73,7 @@
     onOutEvent: cb => outListeners.push(cb),
     openFolder: async () => {},
     setLive: () => {},
-    onUpdate: () => {},
+    onUpdate: fn => { window.__upd = fn; },
     checkUpdates: async () => ({ status: 'dev' }),
     installUpdate: () => {},
     confirmQuit: () => {},
