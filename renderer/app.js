@@ -903,6 +903,7 @@
   async function stopRec() { const o = rt.rec; rt.rec = null; if (o) await o.stop(); S.setLive(!!rt.live); renderHeader(); }
 
   S.onOutEvent(ev => {
+    if (rt.test && rt.test.out.id === ev.id) { rt.test.on(ev); return; }
     if (ev.type === 'stats') {
       if (ev.kind === 'stream') { rt.liveStats = ev; if (rt.reconnPending && ev.frame > 30) { rt.reconnPending = false; rt.reconnects = 0; toast('Stream is running again.', 'ok'); } }
       else rt.recStats = ev;
@@ -934,6 +935,59 @@
       }
     }
   });
+
+  /* ---------- test the stream key: sends ~12 s to YouTube and reports exactly what happened ---------- */
+  function openStreamTest() {
+    if (rt.live) { toast('You are already live — the header shows how the stream is doing.'); return; }
+    if (!settings.youtube.key && settings.youtube.server !== 'custom') { toast('Paste your stream key first.', 'error'); return; }
+    const body = el('div'), log = el('div', { class: 'test-log' });
+    const line = (txt, cls) => { log.append(el('div', { class: cls || '' }, txt)); };
+    const explain = err => {
+      const e = String(err || '');
+      if (/nvenc|qsv|amf|opening encoder|No capable devices/i.test(e)) return 'The graphics-card encoder will not start on this PC. In Settings → Encoder choose “Software”, or update the graphics driver. This is not a YouTube or key problem.';
+      if (/resolve|getaddrinfo|No such host|Network is unreachable/i.test(e)) return 'This PC cannot find YouTube — check the internet connection.';
+      if (/timed out|Connection refused|10060|10061|TLS|SSL|handshake/i.test(e)) return 'Could not reach YouTube’s server. A firewall or the network may be blocking it — try the “primary (RTMP)” server in Settings, or another network.';
+      if (/Broken pipe|reset|10053|10054|Input\/output|End of file|I\/O error/i.test(e)) return 'YouTube opened the connection and then closed it. That almost always means the stream key is wrong or was replaced — copy it again from YouTube Studio → Go live → Stream.';
+      return 'The stream stopped before it got going.';
+    };
+    let finished = false;
+    const finish = () => { finished = true; const t = rt.test; rt.test = null; if (t) { clearTimeout(t.timer); t.out.active = false; t.out.stop().catch(() => {}); } stopBtn.textContent = 'Close'; };
+    const stopBtn = el('button', { class: 'btn primary', onclick: () => { if (!finished) finish(); closeModal(); } }, 'Stop test');
+    put(body,
+      el('div', { class: 'muted', style: 'margin-bottom:10px' }, 'This sends about 12 seconds of your live picture and sound to YouTube with your real settings. If your YouTube stream is public and set to start by itself, viewers could see those seconds.'),
+      log, el('div', { class: 'row', style: 'margin-top:14px' }, el('span', { class: 'grow' }), stopBtn));
+    openModal('Test the stream key', body);
+    (async () => {
+      const o = settings.output, y = settings.youtube;
+      line(`Server: ${y.server === 'custom' ? y.custom : y.server}`);
+      line(`Key: ${y.key ? y.key.slice(0, 4) + '…' + y.key.slice(-4) + ` (${y.key.trim().length} characters)` : '(in the custom address)'}${/\s/.test(y.key || '') ? '  ⚠ contains a space' : ''}`);
+      line(`Sending: ${o.width}×${o.height} at ${o.fps} fps, ${o.bitrate} kbps picture, ${o.audioBitrate} kbps sound, encoder: ${o.encoder}`);
+      mixer.resume();
+      let out, best = 0, gotData = false, t0 = Date.now(), lastShown = 0;
+      const status = el('div', { class: 'big' }, 'Connecting to YouTube…'); log.append(status);
+      try { out = new Output('stream'); await out.start(); }
+      catch (e) { status.textContent = '✗ Could not start'; status.className = 'big status-bad'; line(e.message, 'status-bad'); finished = true; stopBtn.textContent = 'Close'; return; }
+      rt.test = { out, timer: setTimeout(async () => {
+        if (finished) return;
+        finish();
+        if (best > 60 && gotData) {
+          status.textContent = '✓ YouTube accepted the stream'; status.className = 'big status-ok';
+          line(`${best} frames were sent and the connection stayed open. The key and the internet connection work.`, 'status-ok');
+          line('If YouTube Studio still does not show it: (1) open Studio → Go live → Stream and check the key there matches the one above; (2) a scheduled event has its own key unless you picked “default stream key”; (3) the preview in Studio can take 20–30 seconds to appear; (4) a scheduled event shows the preview but only goes public when you press GO LIVE in Studio — or connect your YouTube account here and Live Studio does that for you.');
+          if (rt.yt.signedIn && rt.yt.event) { await ytPoll().catch(() => {}); const hh = rt.yt.health; line(`YouTube reports for “${rt.yt.event.title}”: ${hh ? (hh.stream === 'active' ? 'receiving the stream ✓' : 'not receiving yet (' + hh.stream + ')') + (hh.issues.length ? ' — ' + hh.issues.join(' · ') : '') : 'no status yet'}.`); }
+        } else { status.textContent = '✗ Nothing reached YouTube'; status.className = 'big status-bad'; line('The encoder ran but no frames went out in 12 seconds. Check the internet connection and the key.', 'status-bad'); }
+      }, 12000), on: ev => {
+        if (ev.type === 'stats') { best = Math.max(best, ev.frame || 0); if (ev.bitrate > 0) gotData = true; if (Date.now() - lastShown > 900) { lastShown = Date.now(); status.textContent = `Sending… ${ev.frame || 0} frames, ${ev.bitrate ? (ev.bitrate / 1000).toFixed(1) + ' Mb/s' : 'starting'}`; } }
+        else if (ev.type === 'exit' && !finished) {
+          const secs = ((Date.now() - t0) / 1000).toFixed(0);
+          finish();
+          status.textContent = `✗ The stream stopped after ${secs} s`; status.className = 'big status-bad';
+          line(explain(`${ev.detail} ${ev.error}`), 'status-bad');
+          line(`Reported: ${ev.detail || ev.error || 'no details'}`, 'muted');
+        }
+      } };
+    })();
+  }
 
   /* ================= header ================= */
   let liveConfirm = 0;
@@ -1149,6 +1203,22 @@
   /* ================= panel: monitors ================= */
   const progInfo = el('div', { class: 'media-time hidden' });
   const progBar = el('div', { class: 'media-bar hidden' }, el('i'));
+  /* video timeline: shown under the monitors while the live shot is playing a video */
+  const liveVideo = () => { const s2 = getShot(engine.programId), mid = s2 ? mediaOf(s2)[0] : null, f = mid && rt.files.get(mid); return f && f.el && f.el.tagName === 'VIDEO' && isFinite(f.el.duration) && f.el.duration > 0 ? f.el : null; };
+  const tlRange = el('input', { type: 'range', min: 0, max: 1000, step: 1, value: 0, class: 'tl-range', title: 'Drag to jump to another part of the video' });
+  const tlNow = el('span', { class: 'mono tl-t' }, '0:00'), tlLeft = el('span', { class: 'mono tl-t' }, '−0:00');
+  const tlPlay = el('button', { class: 'btn small', title: 'Pause / play the video', onclick: () => { const v = liveVideo(); if (v) { if (v.paused) v.play().catch(() => {}); else v.pause(); } } }, '⏸');
+  const tlSkip = d => () => { const v = liveVideo(); if (v) v.currentTime = clamp(v.currentTime + d, 0, Math.max(0, v.duration - 0.5)); };
+  let tlDrag = false;
+  tlRange.addEventListener('pointerdown', () => { tlDrag = true; });
+  tlRange.addEventListener('input', () => { const v = liveVideo(); if (v) { const t = tlRange.value / 1000 * v.duration; tlNow.textContent = fmtShort(t); tlLeft.textContent = '−' + fmtShort(v.duration - t); } });
+  tlRange.addEventListener('change', () => { const v = liveVideo(); if (v) v.currentTime = Math.min(tlRange.value / 1000 * v.duration, Math.max(0, v.duration - 0.5)); tlDrag = false; tlRange.blur(); });
+  const timeline = el('div', { class: 'tl-bar hidden' },
+    el('span', { class: 'tl-tag' }, '🎞 VIDEO'), tlPlay,
+    el('button', { class: 'btn small', title: 'Back 10 seconds', onclick: tlSkip(-10) }, '−10 s'),
+    tlNow, tlRange, tlLeft,
+    el('button', { class: 'btn small', title: 'Forward 10 seconds', onclick: tlSkip(10) }, '+10 s'),
+    el('button', { class: 'btn small', title: 'Forward 1 minute', onclick: tlSkip(60) }, '+1 min'));
   // slim master meter beside the program screen (like a hardware switcher)
   const monMeter = el('canvas', { class: 'mon-meter', width: 40, height: 300 });
   function drawMonMeter(A) {
@@ -1182,6 +1252,7 @@
         el('div', { class: 'monitor preview' }, el('div', { class: 'screen' }, previewCanvas), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot green' }), el('span', { class: 'tagtxt' }, 'Preview'), pvName)),
         el('div', { class: 'monitor program' }, el('div', { class: 'screen' }, engine.canvas, progInfo, progBar), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot red' }), el('span', { class: 'tagtxt' }, 'Live'), pgName)),
         el('div', { class: 'mon-meter-wrap', title: 'Master level · dot = phase (green good, red out of phase)' }, monMeter)),
+      timeline,
       el('div', { class: 'trans-bar' },
         el('button', { class: 'btn cut-btn', onclick: () => take('cut') }, 'CUT', keyChip('cut')),
         durSel,
@@ -2471,6 +2542,12 @@
       progInfo.textContent = `−${fmtShort(f.el.duration - f.el.currentTime)}`;
       progBar.firstChild.style.width = `${(f.el.currentTime / f.el.duration) * 100}%`;
     } else { progInfo.classList.add('hidden'); progBar.classList.add('hidden'); }
+    const tv = liveVideo();
+    timeline.classList.toggle('hidden', !tv);
+    if (tv) {
+      if (!tlDrag) { tlRange.value = Math.round(tv.currentTime / tv.duration * 1000); tlNow.textContent = fmtShort(tv.currentTime); tlLeft.textContent = '−' + fmtShort(tv.duration - tv.currentTime); }
+      const ic = tv.paused ? '▶' : '⏸'; if (tlPlay.textContent !== ic) tlPlay.textContent = ic;
+    }
     requestAnimationFrame(tickMeters);
   }
 
@@ -2600,7 +2677,7 @@
         el('button', { class: 'btn primary', onclick: () => { closeModal(); openYouTube(); } }, rt.yt.signedIn ? 'YouTube events…' : 'Connect YouTube…')),
       el('div', { class: 'field' }, el('span', null, 'Server'), select([['rtmps://a.rtmps.youtube.com:443/live2', 'YouTube — primary (secure RTMPS, recommended)'], ['rtmp://a.rtmp.youtube.com/live2', 'YouTube — primary (RTMP)'], ['custom', 'Custom server (Facebook, Vimeo, other)…']], y.server, v => { y.server = v; customRow.classList.toggle('hidden', v !== 'custom'); saveSettings(); })),
       customRow,
-      el('div', { class: 'field' }, el('span', null, 'Stream key'), el('div', { class: 'row' }, keyInput, el('button', { class: 'btn small', onclick: e => { keyInput.type = keyInput.type === 'password' ? 'text' : 'password'; e.target.textContent = keyInput.type === 'password' ? 'Show' : 'Hide'; } }, 'Show'))),
+      el('div', { class: 'field' }, el('span', null, 'Stream key'), el('div', { class: 'row' }, keyInput, el('button', { class: 'btn small', onclick: e => { keyInput.type = keyInput.type === 'password' ? 'text' : 'password'; e.target.textContent = keyInput.type === 'password' ? 'Show' : 'Hide'; } }, 'Show'), el('button', { class: 'btn small primary', onclick: () => { saveSettings(); closeModal(); openStreamTest(); } }, '▶ Test this key'))),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Find it in YouTube Studio → Create → Go live → Stream → “Stream key”. Keep it private — it is stored encrypted on this computer.'),
 
       el('h3', null, 'Video output'),

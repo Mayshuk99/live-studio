@@ -58,7 +58,7 @@
       const o = { opts, bytes: 0, t0: performance.now() };
       o.timer = setInterval(() => {
         const secs = (performance.now() - o.t0) / 1000;
-        emit({ id, type: 'stats', kind: opts.kind, bitrate: Math.round(o.bytes * 8 / secs / 1000), fps: opts.fps, speed: 1, time: secs });
+        emit({ id, type: 'stats', kind: opts.kind, frame: Math.round(secs * opts.fps), bitrate: Math.round(o.bytes * 8 / secs / 1000), fps: opts.fps, speed: 1, time: secs });
       }, 1000);
       outs.set(id, o);
       emit({ id, type: 'log', kind: opts.kind, line: 'Browser mode: output simulated (no encoder).' });
