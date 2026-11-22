@@ -375,6 +375,19 @@
   const mediaOf = shot => shot ? [shot.main && shot.main.source, shot.pip && shot.pip.enabled ? shot.pip.source : null]
     .filter(id => id && (fileById(id) || {}).kind === 'video') : [];
 
+  /* sound follows the shot: what the stream hears while a shot is live.
+     auto = a video plays with only its own sound, everything else uses the cameras / sound desk */
+  const SOUND_MODES = [['auto', 'Automatic — videos: their own sound · everything else: sound desk'], ['video', 'Only the video’s own sound'], ['live', 'Only the sound desk / cameras'], ['both', 'Both together']];
+  function soundMode(sh) {
+    const m = (sh && sh.sound) || 'auto';
+    if (m !== 'auto') return m;
+    const main = sh && sh.main && sh.main.source;
+    if (main && (fileById(main) || {}).kind === 'video') return 'video';
+    return mediaOf(sh).length ? 'both' : 'live'; // a video picture-in-picture over a camera keeps both
+  }
+  const liveInputsOn = sh => !!sh && soundMode(sh) !== 'video';
+  const videoSoundOn = sh => !!sh && soundMode(sh) !== 'live';
+
   /* ================= switching ================= */
   function setPreview(id) {
     rt.previewId = id; engine.previewId = id;
@@ -395,7 +408,7 @@
       if (f && f.el) {
         // the before-service video can loop until you start the service
         f.el.loop = !!(fileById(id) || {}).loop && !to.role;
-        f.el.currentTime = 0; f.el.play().catch(() => {}); mixer.setMediaActive(id, true, Math.max(60, ms));
+        f.el.currentTime = 0; f.el.play().catch(() => {}); mixer.setMediaActive(id, videoSoundOn(to), Math.max(60, ms));
       }
     }
     for (const id of fromM) {
@@ -436,6 +449,7 @@
     rt.holdSilent = !!sh && sh.role === 'hold' && SV().hold.mute !== false;
     rt.gated = silent;
     mixer.fadeMaster(!silent, Math.max(50, ms || 300));
+    mixer.setLiveInputs(liveInputsOn(sh), Math.max(60, ms || 0));
   }
   function setBlack(on) {
     engine.setBlack(on, show.transition.ms || 500);
@@ -1268,8 +1282,8 @@
   function previewMedia() { const onAir = mediaOf(getShot(engine.programId)); return mediaOf(getShot(rt.previewId)).filter(m => !onAir.includes(m)); }
   function updatePfl() {
     const p = getShot(rt.previewId);
-    const inputsOn = !!p && !(p.role === 'hold' && SV().hold.mute !== false);
-    const media = p ? mediaOf(p) : [];
+    const inputsOn = !!p && !(p.role === 'hold' && SV().hold.mute !== false) && liveInputsOn(p);
+    const media = p && videoSoundOn(p) ? mediaOf(p) : [];
     mixer.setPreviewMix(inputsOn, media, show.audio.media.gain, show.audio.media.mute);
     // a video in Preview only makes sound while it plays: play it while listening, rewind it afterwards
     const cue = previewMedia();
@@ -1555,6 +1569,10 @@
         select([['none', 'Hold the last frame'], ['black', 'Fade to black'], ['stop', 'Fade to black and end the stream'], ...show.shots.filter(x => x.id !== s.id).map(x => [`goto:${x.id}`, `Go to “${x.name}”`])],
           s.onEnd.action === 'goto' ? `goto:${s.onEnd.target}` : s.onEnd.action,
           v => { s.onEnd = v.startsWith('goto:') ? { action: 'goto', target: v.slice(5) } : { action: v, target: '' }; changed(); })) : null,
+
+      el('div', { class: 'section' }, el('h4', null, 'Sound while this shot is live'),
+        select(SOUND_MODES, s.sound || 'auto', v => { s.sound = v; changed(); if (engine.programId === s.id) { mixer.setLiveInputs(liveInputsOn(s), 300); for (const m of mediaOf(s)) mixer.setMediaActive(m, videoSoundOn(s), 300); } updatePfl(); }),
+        el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, `Now: ${{ video: 'only the video’s own sound', live: 'only the sound desk / cameras', both: 'video sound and sound desk together' }[soundMode(s)]}.`)),
 
       el('div', { class: 'section row wrap' },
         el('button', { class: 'btn small', onclick: () => { const c = clone(s); c.id = uid('shot'); c.name = s.name + ' copy'; c.role = ''; show.shots.splice(idx + 1, 0, c); changed(); refresh('shots'); editShot(c.id); } }, 'Duplicate'),

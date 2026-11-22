@@ -79,6 +79,9 @@
       this.pPeak = { L: -90, R: -90 };
       this.listen = 'program'; this._mon = 0;
 
+      // live inputs (capture card, sound desk) go through their own bus so a video shot can play with only its own sound
+      this.liveBus = ctx.createGain();
+      this.liveBus.connect(this.masterIn);
       this.strips = new Map();
       this.devices = new Map(); // deviceId -> { stream, node, splitter, users }
       this.mediaEls = new Map(); // sourceId -> { node, gain }
@@ -161,7 +164,7 @@
       s.meter = ctx.createAnalyser(); s.meter.fftSize = 1024;
       s.raw = ctx.createGain(); input.connect(s.raw); // untouched input, used by the sync test
       input.connect(s.delay); s.delay.connect(s.lowcut); s.lowcut.connect(s.comp); s.comp.connect(s.fader);
-      s.fader.connect(s.pan); s.pan.connect(s.mute); s.mute.connect(this.masterIn);
+      s.fader.connect(s.pan); s.pan.connect(s.mute); s.mute.connect(id === 'media' ? this.masterIn : this.liveBus);
       if (id !== 'media') { s.pflSend = ctx.createGain(); s.mute.connect(s.pflSend); s.pflSend.connect(this.pfl); }
       s.fader.connect(s.meter);
       this.strips.set(id, s);
@@ -271,6 +274,12 @@
       if (!m) return;
       try { m.gain.disconnect(); if (m.pfl) m.pfl.disconnect(); m.node.disconnect(); } catch (e) { /* ignore */ }
       this.mediaEls.delete(sourceId);
+    }
+    // live inputs on / off for the shot on air, with a short fade so there is no click
+    setLiveInputs(on, ms = 300) {
+      const g = this.liveBus.gain, t = this.ctx.currentTime;
+      g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(on ? 1 : 0, t + Math.max(0.03, ms / 1000));
     }
     setMediaActive(sourceId, on, ms = 300) {
       const m = this.mediaEls.get(sourceId);
