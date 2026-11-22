@@ -27,7 +27,7 @@
     saveSettings: async obj => ls.set('ls.settings', obj),
     pickMedia: () => new Promise(resolve => {
       const inp = document.createElement('input');
-      inp.type = 'file'; inp.multiple = true; inp.accept = 'video/*,image/*';
+      inp.type = 'file'; inp.multiple = true; inp.accept = 'video/*,image/*,audio/*';
       inp.onchange = () => resolve([...inp.files].map(f => {
         const u = URL.createObjectURL(f);
         urls.set(u, u);

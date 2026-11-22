@@ -157,9 +157,9 @@ ipcMain.handle('settings:save', (e, obj) => {
 
 ipcMain.handle('media:pick', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: 'Add video or image', properties: ['openFile', 'multiSelections'],
+    title: 'Add video, picture or music', properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'Video & images', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'jfif', 'bmp', 'avif', 'webp', 'gif'] },
+      { name: 'Video, pictures & music', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'jfif', 'bmp', 'avif', 'webp', 'gif', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'flac'] },
       { name: 'All files', extensions: ['*'] }
     ]
   });

@@ -99,7 +99,7 @@
       service: {
         hold: { mode: 'clock', target: '10:00', org: 'Pilgrim Baptist Church · Spokane, WA', title: 'Welcome', subtitle: 'Service will begin shortly', title2: 'Добро пожаловать', subtitle2: 'Служение скоро начнётся', lang2: 'ru', layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c', zoom: 1.06, focusX: 0.4, focusY: 0, bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
         start: { record: true, goLive: true, videoId: '', fadeMs: 2000, cameraShot: '', ytLive: true },
-        end: { videoId: '', fadeMs: 1500, then: 'hold', stopRec: true, endStream: true, endAfter: 30, ytComplete: true }
+        end: { mode: 'video', videoId: '', slideImg: '', musicId: '', musicLoop: false, slideSecs: 60, fadeMs: 1500, then: 'hold', stopRec: true, endStream: true, endAfter: 30, ytComplete: true }
       },
       webs: [],
       pics: [],
@@ -140,6 +140,8 @@
   }
   // 1.8.2: the stripe pattern on bright areas of the Preview (zebra) is now off unless you turn it on in Color & Exposure
   if (!settings.zebraV) { settings.zebra = false; settings.zebraV = 1; }
+  // 1.21: GO LIVE only connects to YouTube; recording starts with START SERVICE
+  if (!settings.autoRecV) { settings.autoRecord = false; settings.autoRecV = 1; }
   let view = 'live';
   const curLayout = () => settings.ui.layouts[view];
 
@@ -206,7 +208,7 @@
     const o = [];
     if (includeNone) o.push(['', '— none —']);
     show.cameras.forEach(c => o.push([c.id, `🎥 ${c.name}`]));
-    show.files.forEach(f => o.push([f.id, `${f.kind === 'image' ? '🖼' : '🎞'} ${f.name}`]));
+    show.files.filter(f => f.kind !== 'audio').forEach(f => o.push([f.id, `${f.kind === 'image' ? '🖼' : '🎞'} ${f.name}`]));
     BUILTIN.forEach(b => o.push(b));
     return o;
   }
@@ -314,7 +316,7 @@
     if (S.readMedia) {
       const bytes = await S.readMedia(f.path);
       const ext = (f.path.split('.').pop() || '').toLowerCase();
-      const types = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', bmp: 'image/bmp', avif: 'image/avif', webp: 'image/webp', gif: 'image/gif' };
+      const types = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', bmp: 'image/bmp', avif: 'image/avif', webp: 'image/webp', gif: 'image/gif' };
       return URL.createObjectURL(new Blob([bytes], { type: types[ext] || '' }));
     }
     return S.mediaURL(f.path);
@@ -336,6 +338,19 @@
         const img = new Image(); img.src = url; await img.decode();
         engine.setSource(f.id, img, 'image');
         rt.files.set(f.id, { ok: true, el: img, url, text: `${img.naturalWidth}×${img.naturalHeight}` });
+      } else if (f.kind === 'audio') {
+        // music: sound only, played under a shot (no picture)
+        v = el('audio', { preload: 'auto' });
+        v.src = url; v.loop = !!f.loop;
+        $('#sourceBin').append(v);
+        await new Promise((res, rej) => {
+          v.addEventListener('loadedmetadata', res, { once: true });
+          v.addEventListener('error', () => rej(new Error('This music file can\'t be played. Use MP3, WAV or M4A.')), { once: true });
+        });
+        v.pause(); v.currentTime = 0;
+        mixer.attachMedia(f.id, v);
+        v.addEventListener('ended', () => onMediaEnded(f.id));
+        rt.files.set(f.id, { ok: true, el: v, url, text: `♪ music · ${fmtShort(v.duration)}`, duration: v.duration });
       } else {
         v = el('video', { playsinline: true, preload: 'auto' });
         v.src = url; v.loop = !!f.loop;
@@ -364,7 +379,7 @@
     const picked = await S.pickMedia();
     const added = [];
     for (const p of picked || []) {
-      const kind = /\.(png|jpe?g|jfif|webp|gif|bmp|avif)$/i.test(p.name) ? 'image' : 'video';
+      const kind = /\.(png|jpe?g|jfif|webp|gif|bmp|avif)$/i.test(p.name) ? 'image' : /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|wma)$/i.test(p.name) ? 'audio' : 'video';
       const f = { id: uid('file'), name: p.name.replace(/\.[^.]+$/, ''), path: p.path, kind, loop: false, color: clone(NEUTRAL) };
       show.files.push(f); added.push(f);
       await loadFile(f);
@@ -372,17 +387,19 @@
     if (added.length) { changed(); refreshAll(); }
     return added;
   }
-  const mediaOf = shot => shot ? [shot.main && shot.main.source, shot.pip && shot.pip.enabled ? shot.pip.source : null]
-    .filter(id => id && (fileById(id) || {}).kind === 'video') : [];
+  // the files a shot plays: its video(s) and the music under it
+  const mediaOf = shot => shot ? [shot.main && shot.main.source, shot.pip && shot.pip.enabled ? shot.pip.source : null, shot.music || null]
+    .filter(id => id && ['video', 'audio'].includes((fileById(id) || {}).kind)) : [];
 
   /* sound follows the shot: what the stream hears while a shot is live.
      auto = a video plays with only its own sound, everything else uses the cameras / sound desk */
-  const SOUND_MODES = [['auto', 'Automatic — videos: their own sound · everything else: sound desk'], ['video', 'Only the video’s own sound'], ['live', 'Only the sound desk / cameras'], ['both', 'Both together']];
+  const SOUND_MODES = [['auto', 'Automatic — videos & music: their own sound · everything else: sound desk'], ['video', 'Only the video / music'], ['live', 'Only the sound desk / cameras'], ['both', 'Both together']];
   function soundMode(sh) {
     const m = (sh && sh.sound) || 'auto';
     if (m !== 'auto') return m;
     const main = sh && sh.main && sh.main.source;
     if (main && (fileById(main) || {}).kind === 'video') return 'video';
+    if (sh.music && (fileById(sh.music) || {}).kind === 'audio') return 'video'; // a slide with music: just the music
     return mediaOf(sh).length ? 'both' : 'live'; // a video picture-in-picture over a camera keeps both
   }
   const liveInputsOn = sh => !!sh && soundMode(sh) !== 'video';
@@ -407,7 +424,7 @@
       const f = rt.files.get(id);
       if (f && f.el) {
         // the before-service video can loop until you start the service
-        f.el.loop = !!(fileById(id) || {}).loop && !to.role;
+        f.el.loop = to.role === 'close' ? !!(SV().end.mode === 'slide' && SV().end.musicLoop && id === to.music) : !!(fileById(id) || {}).loop && !to.role;
         f.el.currentTime = 0; f.el.play().catch(() => {}); mixer.setMediaActive(id, videoSoundOn(to), Math.max(60, ms));
       }
     }
@@ -458,7 +475,9 @@
   }
   function onMediaEnded(fileId) {
     const shot = getShot(engine.programId);
-    if (!shot || shot.main.source !== fileId) return;
+    if (!shot) return;
+    const main = shot.main && shot.main.source, trigger = (fileById(main) || {}).kind === 'video' ? main : shot.music;
+    if (fileId !== trigger) return;
     const a = shot.onEnd || {};
     if (a.action === 'goto' && getShot(a.target)) takeShot(a.target, 'auto', a.fadeMs);
     else if (a.action === 'black') setBlack(true);
@@ -480,11 +499,14 @@
     if (h.main.source !== 'hold') { const f = fileById(h.main.source); if (f && f.kind === 'image') SV().hold.bgFile = f.id; h.main.frame = { zoom: 1, x: 0.5, y: 0.5 }; }
     h.main.source = 'hold';
     h.main.frame = { zoom: 1, x: 0.5, y: 0.5 }; h.pip.enabled = false;
-    for (const [role, cfg, name] of [['open', SV().start, 'Opening video'], ['close', SV().end, 'Closing video']]) {
+    for (const [role, cfg, vname] of [['open', SV().start, 'Opening video'], ['close', SV().end, 'Closing video']]) {
+      const slide = role === 'close' && cfg.mode === 'slide';
+      const src = slide ? cfg.slideImg : cfg.videoId, name = slide ? 'Closing slide' : vname;
       let s = roleShot(role);
-      if (!cfg.videoId || !fileById(cfg.videoId)) { if (s && s.id !== engine.programId) show.shots = show.shots.filter(x => x !== s); continue; }
-      if (!s) { s = newShot(name, cfg.videoId, '#d97706'); s.role = role; show.shots.push(s); }
-      s.main.source = cfg.videoId;
+      if (!src || !fileById(src)) { if (s && s.id !== engine.programId) show.shots = show.shots.filter(x => x !== s); continue; }
+      if (!s) { s = newShot(name, src, '#d97706'); s.role = role; show.shots.push(s); }
+      s.main.source = src; s.name = name;
+      s.music = slide && cfg.musicId && fileById(cfg.musicId) ? cfg.musicId : '';
     }
     if (!getShot(SV().start.cameraShot)) { const c = firstCameraShot(); SV().start.cameraShot = c ? c.id : ''; }
     const o = roleShot('open');
@@ -508,16 +530,32 @@
     if (st.ytLive) ytGoLiveWhenReady();
   }
   function endService() {
+    if (rt.service === 'closing') { serviceEnded(); return; } // pressing END SERVICE again finishes straight away
     syncRoleShots();
     clearEndTimer();
-    const c = roleShot('close');
-    if (c && rt.files.get(c.main.source) && rt.files.get(c.main.source).ok) { takeShot(c.id, 'auto', SV().end.fadeMs); setServiceState('closing'); }
-    else serviceEnded();
+    const c = roleShot('close'), en = SV().end, ok = id => !!(id && rt.files.get(id) && rt.files.get(id).ok);
+    if (c && ok(c.main.source)) {
+      takeShot(c.id, 'auto', en.fadeMs); setServiceState('closing');
+      // a closing slide with no music (or with looping music) has no natural end: it stays up for the time you chose
+      clearTimeout(rt.closeTimer); rt.closeEndAt = 0;
+      if (en.mode === 'slide' && (!ok(c.music) || en.musicLoop) && (en.slideSecs || 60) < 36000) {
+        rt.closeEndAt = Date.now() + (en.slideSecs || 60) * 1000;
+        rt.closeTimer = setTimeout(() => { if (rt.service === 'closing') serviceEnded(); }, (en.slideSecs || 60) * 1000);
+      }
+    } else serviceEnded();
   }
   function serviceEnded() {
     const e = SV().end;
-    if (e.then === 'hold') takeShot('shot_hold', 'auto', e.fadeMs);
-    else setBlack(true);
+    clearTimeout(rt.closeTimer); rt.closeEndAt = 0;
+    if (e.then === 'hold') { const go = () => engine.inTransition ? setTimeout(go, 50) : takeShot('shot_hold', 'auto', e.fadeMs); go(); } // wait for a fade still running
+    else {
+      setBlack(true);
+      // fading to black: the closing music / video sound fades out with the picture
+      for (const m of mediaOf(getShot(engine.programId))) {
+        mixer.setMediaActive(m, false, e.fadeMs);
+        setTimeout(() => { const f = rt.files.get(m); if (f && f.el && engine.isBlack) f.el.pause(); }, e.fadeMs + 150);
+      }
+    }
     if (e.stopRec && rt.rec) setTimeout(stopRec, e.fadeMs + 500);
     setServiceState('ended');
     if (e.endStream && rt.live) {
@@ -1240,7 +1278,7 @@
   const progInfo = el('div', { class: 'media-time hidden' });
   const progBar = el('div', { class: 'media-bar hidden' }, el('i'));
   /* video playbars under the monitors: one for a video waiting in Preview, one for the video on air */
-  const videoOf = id => { const s2 = getShot(id), mid = s2 ? mediaOf(s2)[0] : null, f = mid && rt.files.get(mid); return f && f.el && f.el.tagName === 'VIDEO' && isFinite(f.el.duration) && f.el.duration > 0 ? f : null; };
+  const videoOf = id => { const s2 = getShot(id), mid = s2 ? mediaOf(s2)[0] : null, f = mid && rt.files.get(mid); return f && f.el && (f.el.tagName === 'VIDEO' || f.el.tagName === 'AUDIO') && isFinite(f.el.duration) && f.el.duration > 0 ? f : null; };
   const liveVideo = () => { const f = videoOf(engine.programId); return f ? f.el : null; };
   // a video in Preview that is not also on air (the same file on air is controlled by the live bar)
   const previewVideoFile = () => { const f = videoOf(rt.previewId); return f && !mediaOf(getShot(engine.programId)).includes(f.id) ? f : null; };
@@ -1266,6 +1304,7 @@
       if (!v) return;
       if (!drag) { range.value = Math.round(v.currentTime / v.duration * 1000); now.textContent = fmtShort(v.currentTime); left.textContent = '−' + fmtShort(v.duration - v.currentTime); }
       const ic = v.paused ? '▶' : '⏸'; if (playBtn.textContent !== ic) playBtn.textContent = ic;
+      const tg = `${v.tagName === 'AUDIO' ? '♪ MUSIC' : '🎞'} ${kind === 'pv' ? 'PREVIEW' : 'ON AIR'}`; if (tag.textContent !== tg) tag.textContent = tg;
     };
     return { bar, update };
   }
@@ -1288,7 +1327,7 @@
     // a video in Preview only makes sound while it plays: play it while listening, rewind it afterwards
     const cue = previewMedia();
     for (const [id, f] of rt.files) {
-      if (!f.el || f.el.tagName !== 'VIDEO' || mediaOf(getShot(engine.programId)).includes(id)) continue;
+      if (!f.el || (f.el.tagName !== 'VIDEO' && f.el.tagName !== 'AUDIO') || mediaOf(getShot(engine.programId)).includes(id)) continue;
       if (rt.pvListen && cue.includes(id)) { if (f.el.paused) f.el.play().catch(() => {}); f.cued = true; }
       else if (f.pvManual && !cue.includes(id)) { f.pvManual = false; f.cued = false; f.el.pause(); f.el.currentTime = 0; }
       else if (f.cued && !f.pvManual) { f.cued = false; f.el.pause(); f.el.currentTime = 0; }
@@ -1570,9 +1609,15 @@
           s.onEnd.action === 'goto' ? `goto:${s.onEnd.target}` : s.onEnd.action,
           v => { s.onEnd = v.startsWith('goto:') ? { action: 'goto', target: v.slice(5) } : { action: v, target: '' }; changed(); })) : null,
 
+      !s.role ? el('div', { class: 'section' }, el('h4', null, 'Music under this shot'),
+        el('div', { class: 'row' },
+          select([['', '— no music —'], ...show.files.filter(f => f.kind === 'audio').map(f => [f.id, '♪ ' + f.name])], s.music || '', v => { s.music = v; changed(); refresh('editor'); }, { class: 'grow' }),
+          el('button', { class: 'btn small', onclick: async () => { const a = await addFiles(); const m = a.find(f => f.kind === 'audio'); if (m) { s.music = m.id; changed(); refresh('editor'); } } }, 'Import…')),
+        el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, 'Plays from the start each time this shot goes live — e.g. a slide with background music. Tick “Loop” on the music file in Inputs to repeat it.')) : null,
+
       el('div', { class: 'section' }, el('h4', null, 'Sound while this shot is live'),
         select(SOUND_MODES, s.sound || 'auto', v => { s.sound = v; changed(); if (engine.programId === s.id) { mixer.setLiveInputs(liveInputsOn(s), 300); for (const m of mediaOf(s)) mixer.setMediaActive(m, videoSoundOn(s), 300); } updatePfl(); }),
-        el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, `Now: ${{ video: 'only the video’s own sound', live: 'only the sound desk / cameras', both: 'video sound and sound desk together' }[soundMode(s)]}.`)),
+        el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, `Now: ${{ video: 'only the video / music', live: 'only the sound desk / cameras', both: 'video sound and sound desk together' }[soundMode(s)]}.`)),
 
       el('div', { class: 'section row wrap' },
         el('button', { class: 'btn small', onclick: () => { const c = clone(s); c.id = uid('shot'); c.name = s.name + ' copy'; c.role = ''; show.shots.splice(idx + 1, 0, c); changed(); refresh('shots'); editShot(c.id); } }, 'Duplicate'),
@@ -2068,7 +2113,7 @@
     const vid = id => (fileById(id) || {}).name;
     const cam = (getShot(st.cameraShot) || {}).name || 'camera';
     const a = [st.goLive ? 'go live' : null, st.record ? 'start recording' : null, st.videoId ? `play “${vid(st.videoId)}”` : null, `fade to ${cam}`].filter(Boolean);
-    const b = [en.videoId ? `play “${vid(en.videoId)}”` : null, en.then === 'hold' ? 'back to holding screen' : 'fade to black', en.stopRec ? 'stop recording' : null, en.endStream ? `end stream after ${en.endAfter} s` : null].filter(Boolean);
+    const b = [en.mode === 'slide' ? (en.slideImg ? `show “${vid(en.slideImg)}”${en.musicId ? ` with “${vid(en.musicId)}”` : ''}` : null) : en.videoId ? `play “${vid(en.videoId)}”` : null, en.then === 'hold' ? 'back to holding screen' : 'fade to black', en.stopRec ? 'stop recording' : null, en.endStream ? `end stream after ${en.endAfter} s` : null].filter(Boolean);
     return [a.join(' → '), b.join(' → ')];
   }
   RENDER.media = body => {
@@ -2097,6 +2142,13 @@
     if (rt.endAt) n.append(el('button', { class: 'btn small', onclick: clearEndTimer }, 'Keep streaming'));
     const o = roleShot('open'), f = o && rt.files.get(o.main.source);
     if (rt.service === 'opening' && f && f.el) n.append(el('span', { class: 'mono muted' }, ` −${fmtShort(f.el.duration - f.el.currentTime)}`));
+    if (rt.service === 'closing') {
+      const c = roleShot('close'), m = c && mediaOf(c)[0] && rt.files.get(mediaOf(c)[0]);
+      n.firstChild.textContent = SV().end.mode === 'slide' ? 'CLOSING SLIDE' : 'CLOSING VIDEO';
+      const left = rt.closeEndAt ? (rt.closeEndAt - Date.now()) / 1000 : m && m.el && !m.el.loop ? m.el.duration - m.el.currentTime : null;
+      if (left !== null) n.append(el('span', { class: 'mono muted' }, ` −${fmtShort(Math.max(0, left))}`));
+      n.append(el('span', { class: 'muted', style: 'font-size:.85em' }, ' · press END SERVICE again to finish now'));
+    }
   }
   setInterval(() => { if (rt.service === 'opening' || rt.service === 'closing') refreshServiceState(); }, 500);
 
@@ -2108,6 +2160,10 @@
     const holdPrev = el('canvas', { width: 480, height: 270, class: 'hold-prev' });
     const paintPrev = () => { drawHold(); holdPrev.getContext('2d').drawImage(holdCanvas, 0, 0, 480, 270); };
     const done = () => { syncRoleShots(); changed(); refresh('media'); refresh('shots'); paintPrev(); };
+    const auds = () => show.files.filter(f => f.kind === 'audio');
+    const filePick = (cfg, key, kind, none) => el('div', { class: 'row' },
+      select([['', none], ...(kind === 'image' ? imgs() : auds()).map(f => [f.id, (kind === 'image' ? '🖼 ' : '♪ ') + f.name])], cfg[key], v => { cfg[key] = v; done(); draw(); }, { class: 'grow' }),
+      el('button', { class: 'btn small', onclick: async () => { const a = await addFiles(); const v = a.find(f => f.kind === kind); if (v) { cfg[key] = v.id; done(); draw(); } else if (a.length) toast(kind === 'image' ? 'That is not a picture.' : 'That is not a music file (MP3, WAV, M4A).', 'error'); } }, 'Import…'));
     const videoPick = (cfg, key) => el('div', { class: 'row' },
       select([['', '— no video —'], ...vids().map(f => [f.id, f.name])], cfg[key], v => { cfg[key] = v; done(); }, { class: 'grow' }),
       el('button', { class: 'btn small', onclick: async () => { const a = await addFiles(); const v = a.find(f => f.kind === 'video'); if (v) { cfg[key] = v.id; done(); draw(); } } }, 'Import…'));
@@ -2131,7 +2187,19 @@
         check(' Start the YouTube event automatically once YouTube is receiving the stream', st.ytLive, v => { st.ytLive = v; done(); }),
 
         el('h3', null, '■ When I press END SERVICE'),
-        el('div', { class: 'field' }, el('span', null, 'Play this video first'), videoPick(en, 'videoId'), en.videoId ? fileStatus(en.videoId) : null),
+        el('div', { class: 'field' }, el('span', null, 'First show'), select([['video', 'A closing video'], ['slide', 'A slide with music']], en.mode || 'video', v => { en.mode = v; done(); draw(); })),
+        (en.mode || 'video') === 'video'
+          ? el('div', { class: 'field' }, el('span', null, 'Play this video'), videoPick(en, 'videoId'), en.videoId ? fileStatus(en.videoId) : null)
+          : el('div', null,
+            el('div', { class: 'grid2' },
+              el('div', { class: 'field' }, el('span', null, 'Slide (a picture)'), filePick(en, 'slideImg', 'image', '— choose a picture —'), en.slideImg ? fileStatus(en.slideImg) : null),
+              el('div', { class: 'field' }, el('span', null, 'Music'), filePick(en, 'musicId', 'audio', '— no music —'), en.musicId ? fileStatus(en.musicId) : null)),
+            en.musicId
+              ? el('div', { class: 'row wrap', style: 'gap:18px;margin-bottom:8px' }, check(' Keep the music going (repeat) until I press END SERVICE again', en.musicLoop, v => { en.musicLoop = v; done(); }))
+              : null,
+            !en.musicId || en.musicLoop
+              ? el('div', { class: 'field' }, el('span', null, en.musicLoop ? 'Or finish by itself after' : 'Show the slide for'), select([[30, '30 seconds'], [60, '1 minute'], [120, '2 minutes'], [300, '5 minutes'], [600, '10 minutes'], [1800, '30 minutes'], [36000, 'Until I press END SERVICE again']], en.slideSecs || 60, v => { en.slideSecs = +v; done(); }))
+              : el('div', { class: 'muted', style: 'font-size:.85em;margin-bottom:8px' }, 'The slide stays up while the music plays, then the service finishes. Press END SERVICE again to finish sooner.')),
         el('div', { class: 'grid2' },
           el('div', { class: 'field' }, el('span', null, 'Then show'), select([['hold', 'The holding screen'], ['black', 'Black']], en.then, v => { en.then = v; done(); })),
           el('div', { class: 'field' }, el('span', null, 'Fade length'), select([[500, '0.5 second'], [1500, '1.5 seconds'], [3000, '3 seconds']], en.fadeMs, v => { en.fadeMs = +v; done(); }))),
@@ -2745,19 +2813,19 @@
       el('button', { class: 'btn', onclick: addCamera }, '+ Add camera'),
       el('button', { class: 'btn ghost small', onclick: async () => { await refreshDevices(); refresh('inputs'); toast(`Found ${rt.devices.video.length} video and ${rt.devices.audio.length} audio devices.`); } }, '↻ Rescan devices')));
 
-    put(body, el('div', { class: 'section' }, el('h4', null, 'Video & image files')));
+    put(body, el('div', { class: 'section' }, el('h4', null, 'Video, picture & music files')));
     if (!show.files.length) put(body, el('div', { class: 'empty' }, 'Add intro/ending videos, background loops or logos.'));
     for (const f of show.files) {
       const st = rt.files.get(f.id) || { ok: false, text: '' };
-      put(body, el('div', { class: 'input-card' }, viewFor(f.id),
+      put(body, el('div', { class: 'input-card' }, f.kind === 'audio' ? el('div', { class: 'music-tile' }, '♪') : viewFor(f.id),
         el('div', null,
           el('div', { class: 'row' }, el('input', { type: 'text', class: 'grow', value: f.name, oninput: e => { f.name = e.target.value; changed(); } }),
             el('button', { class: 'btn small danger', title: 'Remove file', onclick: () => removeFile(f) }, '✕')),
           fileStatus(f.id),
-          f.kind === 'video' ? el('div', { style: 'margin-top:5px' }, check(' Loop', f.loop, v => { f.loop = v; const m = rt.files.get(f.id); if (m && m.el) m.el.loop = v; changed(); })) : null,
+          f.kind !== 'image' ? el('div', { style: 'margin-top:5px' }, check(' Loop', f.loop, v => { f.loop = v; const m = rt.files.get(f.id); if (m && m.el) m.el.loop = v; changed(); })) : null,
           !st.ok ? el('button', { class: 'btn small', style: 'margin-top:5px', onclick: () => loadFile(f) }, 'Try again') : null)));
     }
-    put(body, el('button', { class: 'btn', onclick: addFiles }, '+ Add video / image'));
+    put(body, el('button', { class: 'btn', onclick: addFiles }, '+ Add video / picture / music'));
     refreshInputStatus();
   };
   function addCamera() {
@@ -2858,7 +2926,7 @@
         el('button', { class: 'btn small', onclick: async () => { const p = await S.pickFolder(); if (p) { s.recordDir = p; $('#recDir').value = p; saveSettings(); } } }, 'Change…'),
         el('button', { class: 'btn small', onclick: () => S.openFolder(s.recordDir) }, 'Open'))),
       el('div', { class: 'grid2' },
-        el('div', { class: 'field' }, check(' Start recording automatically when I go live', s.autoRecord, v => { s.autoRecord = v; saveSettings(); }))),
+        el('div', { class: 'field' }, check(' Also start recording when I press GO LIVE (normally recording starts with START SERVICE)', s.autoRecord, v => { s.autoRecord = v; saveSettings(); }))),
       el('h4', { style: 'margin:6px 0' }, 'Recording quality'),
       qualityBlock('rec'),
 
