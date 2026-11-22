@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('studio', {
   isApp: true,
   platform: process.platform,
   version: () => ipcRenderer.invoke('app:version'),
+  ffmpegVersion: () => ipcRenderer.invoke('app:ffmpeg'),
   loadShow: () => ipcRenderer.invoke('show:load'),
   saveShow: obj => ipcRenderer.invoke('show:save', obj),
   loadSettings: () => ipcRenderer.invoke('settings:load'),

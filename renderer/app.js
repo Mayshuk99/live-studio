@@ -2861,6 +2861,8 @@
     const keyInput = el('input', { type: 'password', value: y.key, placeholder: 'Paste your stream key', class: 'grow', autocomplete: 'off', oninput: e => { y.key = e.target.value.trim(); saveSettings(); } });
     const customRow = el('div', { class: 'field' + (y.server === 'custom' ? '' : ' hidden') }, el('span', null, 'Server address (RTMP/RTMPS)'), el('input', { type: 'text', value: y.custom, placeholder: 'rtmps://…', oninput: e => { y.custom = e.target.value; saveSettings(); } }));
     const version = await S.version();
+    const ffv = el('span', { class: 'muted', style: 'font-size:.85em;margin-left:10px' });
+    if (S.ffmpegVersion) S.ffmpegVersion().then(v => { ffv.textContent = `· encoder engine FFmpeg ${v}`; }).catch(() => {});
     const updStatus = el('span', { class: 'muted', id: 'updStatus' });
     const changeOut = (k, v) => {
       if (live) { toast('Stop streaming/recording before changing video output settings.', 'error'); return; }
@@ -2954,7 +2956,7 @@
         el('button', { class: 'btn', onclick: openShortcuts }, '⌨ Edit keyboard shortcuts…')),
 
       el('h3', null, 'About'),
-      el('div', { class: 'row' }, el('span', null, `Live Studio ${version}`), el('span', { class: 'grow' }), updStatus,
+      el('div', { class: 'row' }, el('span', null, `Live Studio ${version}`), ffv, el('span', { class: 'grow' }), updStatus,
         el('button', { class: 'btn small', onclick: async () => {
           rt.upd = { status: 'checking' }; updRender();
           const r = await S.checkUpdates();

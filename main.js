@@ -125,6 +125,12 @@ app.on('window-all-closed', () => app.quit());
 
 /* ---------- IPC ---------- */
 ipcMain.handle('app:version', () => app.getVersion());
+// which FFmpeg (the encoder engine) is installed, shown in Settings → About
+ipcMain.handle('app:ffmpeg', () => new Promise(resolve => {
+  require('child_process').execFile(ffmpegPath(), ['-hide_banner', '-version'], { timeout: 5000, windowsHide: true }, (err, out) => {
+    resolve(err ? 'not found' : String(out).split(/\r?\n/)[0].replace(/^ffmpeg version /, '').replace(/ Copyright.*$/, ''));
+  });
+}));
 ipcMain.handle('show:load', () => readJSON(showFile(), null));
 ipcMain.handle('show:save', (e, obj) => { writeJSON(showFile(), obj); return true; });
 

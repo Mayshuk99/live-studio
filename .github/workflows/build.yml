@@ -42,12 +42,25 @@ jobs:
       - name: Download FFmpeg (encoder engine)
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-tmp
+          # A release build of FFmpeg, not "master": master builds need NVIDIA driver 610+ (NVENC SDK 13.1),
+          # which older cards such as the GTX 10xx series can never get (their last driver is the 580 series).
+          # FFmpeg 8.0/8.1 builds use SDK 13.0 (driver 570+), 7.1 uses SDK 11.1 (driver 471+).
           New-Item -ItemType Directory -Force -Path resources/ffmpeg | Out-Null
-          $exe = Get-ChildItem ffmpeg-tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          Copy-Item $exe.FullName resources/ffmpeg/ffmpeg.exe
-          & resources/ffmpeg/ffmpeg.exe -hide_banner -version | Select-Object -First 1
+          $ok = $false
+          foreach ($v in @('8.1', '8.0', '7.1')) {
+            try {
+              if (Test-Path ffmpeg-tmp) { Remove-Item -Recurse -Force ffmpeg-tmp }
+              Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n$v-latest-win64-gpl-$v.zip" -OutFile ffmpeg.zip
+              Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-tmp
+              $exe = Get-ChildItem ffmpeg-tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+              Copy-Item $exe.FullName resources/ffmpeg/ffmpeg.exe -Force
+              $ver = & resources/ffmpeg/ffmpeg.exe -hide_banner -version | Select-Object -First 1
+              Write-Host $ver
+              if ($ver -match "^ffmpeg version n$([regex]::Escape($v))") { $ok = $true; break }
+              Write-Host "Unexpected version for $v"
+            } catch { Write-Host "FFmpeg $v not available: $_" }
+          }
+          if (-not $ok) { throw 'No FFmpeg release build that works with older NVIDIA drivers was found' }
 
       - name: Test the encoder with the program's real settings
         run: node scripts/ffmpeg-selftest.js resources/ffmpeg/ffmpeg.exe
