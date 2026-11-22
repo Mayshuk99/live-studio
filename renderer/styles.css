@@ -562,3 +562,8 @@ textarea { width: 100%; box-sizing: border-box; }
 .seg { display: flex; gap: 4px; flex-wrap: wrap; }
 .seg .btn.sel { background: #7c3aed; border-color: #8b5cf6; color: #fff; }
 .modal-card:has(.dyn-wrap) { width: min(1100px, 96vw); }
+
+.mini-audio { display: flex; align-items: center; gap: 4px; margin-left: 14px; padding-left: 14px; border-left: 1px solid var(--line); }
+.mini-audio .tbtn { padding: 5px 9px; font-size: .85em; }
+.mini-lufs { font-weight: 700; margin-left: 6px; color: var(--muted); white-space: nowrap; }
+.mini-lufs.ok { color: #4ade80; } .mini-lufs.low { color: #60a5fa; } .mini-lufs.bad { color: #f87171; }

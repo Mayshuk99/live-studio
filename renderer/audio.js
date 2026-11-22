@@ -38,6 +38,8 @@
       this.makeup = ctx.createGain();
       this.comp.connect(this.makeup);
       this.limGain = ctx.createGain();
+      this.limDrive = ctx.createGain();          // limiter threshold: how far the level is pushed up into the ceiling (like an L2)
+      this.limDrive.connect(this.limiter);
       this.limiter.connect(this.limGain);
       this.limGain.connect(this.ceil);
       // level going into the dynamics (for the In meter)
@@ -60,6 +62,12 @@
       this.monoOn = false;
       this.masterOut.connect(this.monitor);
       this.monitor.connect(ctx.destination);
+      // program playback: the finished program sound sent to a second device all the time (like Wirecast's
+      // “Audio Playback”, e.g. the SSL 2 feeding a loudness meter), separate from the headphones above
+      this.playGain = ctx.createGain(); this.playGain.gain.value = 0;
+      this.playDest = ctx.createMediaStreamDestination(); this.playDest.channelCount = 2;
+      this.masterOut.connect(this.playGain); this.playGain.connect(this.playDest);
+      this.playEl = null; this.playDev = null;
       // master meters (L / R), plus K-weighted copies for loudness (LUFS)
       const split = ctx.createChannelSplitter(2);
       this.masterOut.connect(split);
@@ -122,7 +130,7 @@
       this.auto.connect(this.dynSplit);
       let last = this.auto;
       if (this.compOn) { last.connect(this.comp); last = this.makeup; }
-      last.connect(this.limiterOn ? this.limiter : this.masterOut);
+      last.connect(this.limiterOn ? this.limDrive : this.masterOut);
       this._wired = true;
     }
     /* master dynamics. Times in ms, levels in dB, knee in dB.
@@ -131,17 +139,20 @@
     setDynamics(d) {
       const c = Object.assign({ on: false, threshold: -24, ratio: 3, attack: 10, release: 150, knee: 2, makeup: 0 }, d && d.comp);
       const l = Object.assign({ ceiling: -1, release: 120 }, d && d.lim);
+      if (l.threshold === undefined) l.threshold = l.ceiling; // threshold = ceiling → no extra level
       const t = this.ctx.currentTime, set = (prm, v) => prm.setTargetAtTime(v, t, 0.01);
       set(this.comp.threshold, c.threshold); set(this.comp.ratio, c.ratio); set(this.comp.knee, c.knee);
       set(this.comp.attack, c.attack / 1000); set(this.comp.release, Math.max(10, c.release) / 1000);
       set(this.makeup.gain, dbToGain(c.makeup + 0.6 * compCurve(0, c.threshold, c.ratio, c.knee)));
-      const lt = l.ceiling - 1.5;
+      // limiter: level pushed up by (ceiling − threshold), then held under the ceiling
+      const lt = l.ceiling - 1;
+      set(this.limDrive.gain, dbToGain(Math.max(0, l.ceiling - l.threshold)));
       set(this.limiter.threshold, lt); set(this.limiter.ratio, 20); set(this.limiter.knee, 0);
-      set(this.limiter.attack, 0.001); set(this.limiter.release, Math.max(10, l.release) / 1000);
+      set(this.limiter.attack, 0.001); set(this.limiter.release, Math.max(1, l.release) / 1000);
       set(this.limGain.gain, dbToGain(0.6 * compCurve(0, lt, 20, 0)));
       if (this._ceilDb !== l.ceiling) {
         this._ceilDb = l.ceiling;
-        const n = 4097, cv = new Float32Array(n), top = Math.pow(10, l.ceiling / 20), knee = top * 0.785;
+        const n = 8193, cv = new Float32Array(n), top = Math.pow(10, l.ceiling / 20), knee = top * 0.93; // only real overs are rounded off
         for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1, a = Math.abs(x); cv[i] = Math.sign(x) * (a <= knee ? a : knee + (top - knee) * Math.tanh((a - knee) / (top - knee))); }
         this.ceil.curve = cv;
       }
@@ -176,6 +187,27 @@
       if (!this.ctx.setSinkId) throw new Error('Choosing the output is not supported here.');
       await this.ctx.setSinkId(deviceId || '');
     }
+    // program playback device: deviceId null = off, '' = the Windows default
+    async setPlayback(deviceId, gainDb = 0) {
+      const t = this.ctx.currentTime;
+      if (deviceId === null || deviceId === undefined) {
+        this.playGain.gain.setTargetAtTime(0, t, 0.02);
+        if (this.playEl) { this.playEl.pause(); this.playEl.srcObject = null; this.playEl = null; }
+        this.playDev = null;
+        return;
+      }
+      if (!this.playEl) {
+        const a = new Audio(); a.autoplay = true; a.srcObject = this.playDest.stream; this.playEl = a;
+      }
+      if (this.playDev !== deviceId) {
+        if (!this.playEl.setSinkId) throw new Error('Choosing the output is not supported here.');
+        await this.playEl.setSinkId(deviceId);
+        this.playDev = deviceId;
+      }
+      this.playGain.gain.setTargetAtTime(dbToGain(gainDb), t, 0.02);
+      try { await this.playEl.play(); } catch (e) { /* starts on the next user action */ }
+    }
+    setPlaybackLevel(db) { if (this.playDev !== null) this.playGain.gain.setTargetAtTime(dbToGain(db), this.ctx.currentTime, 0.02); }
     setListen(which) { this.listen = which; this._applyListen(); }
     _applyListen() {
       const t = this.ctx.currentTime, pv = this.listen === 'preview';

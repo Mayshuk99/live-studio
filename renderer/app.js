@@ -69,7 +69,9 @@
   };
   // Two screens: "Run Show" has only what you touch during a service; "Setup" has the things you prepare beforehand.
   const LAYOUTS = {
-    live: [['monitors', 9, 5], ['media', 3, 4], ['audio', 3, 4], ['shots', 9, 3], ['speakers', 6, 2], ['labels', 6, 2]],
+    // like Wirecast: big Preview and Program across the whole width, everything else in rows underneath
+    live: [['monitors', 12, 6], ['shots', 5, 4], ['labels', 4, 2], ['media', 3, 4], ['speakers', 4, 2]], // audio controls sit under the monitors
+    classic: [['monitors', 9, 5], ['media', 3, 4], ['audio', 3, 4], ['shots', 9, 3], ['speakers', 6, 2], ['labels', 6, 2]],
     setup: [['monitors', 9, 5], ['audio', 3, 5], ['inputs', 4, 5], ['editor', 4, 5], ['color', 4, 5]]
   };
   const layoutFrom = name => {
@@ -114,7 +116,7 @@
     youtube: { server: 'rtmps://a.rtmps.youtube.com:443/live2', custom: '', key: '' },
     output: { width: 1920, height: 1080, fps: 30, bitrate: 8000, encoder: 'x264', audioBitrate: 160, recordBitrate: 20000, recordAudioBitrate: 256 },
     recordDir: '', autoRecord: false, ftbAudio: true, zebra: false, moveSpeed: 0.12,
-    ui: { scale: 1, accent: '#3b82f6', card: 1, layouts: defaultLayouts(), layoutV: 4 },
+    ui: { scale: 1, accent: '#3b82f6', card: 1, layouts: defaultLayouts(), layoutV: 5 },
     hotkeys: {}
   });
   function merge(base, over) {
@@ -127,7 +129,8 @@
   /* ================= state ================= */
   let show = merge(defaultShow(), (await S.loadShow()) || {});
   let settings = merge(defaultSettings(), (await S.loadSettings()) || {});
-  if (settings.ui.layoutV !== 4 || !settings.ui.layouts) { settings.ui.layouts = defaultLayouts(); settings.ui.layoutV = 4; delete settings.ui.layout; }
+  if (settings.ui.layoutV < 4 || !settings.ui.layouts) { settings.ui.layouts = defaultLayouts(); settings.ui.layoutV = 5; delete settings.ui.layout; }
+  if (settings.ui.layoutV === 4) { settings.ui.layouts.live = layoutFrom('live'); settings.ui.layoutV = 5; } // 1.25: big monitors (the Setup page is kept)
   for (const v of ['live', 'setup']) {
     if (!Array.isArray(settings.ui.layouts[v]) || !settings.ui.layouts[v].length) settings.ui.layouts[v] = layoutFrom(v);
     for (const id of Object.keys(PANEL_DEFS)) if (!settings.ui.layouts[v].find(x => x.id === id)) settings.ui.layouts[v].push({ id, w: 4, h: 4, hidden: true });
@@ -258,6 +261,10 @@
   }
   /* headphone / monitor output (e.g. the SSL 2, feeding a loudness meter): remembered by name, because Windows
      gives devices new ids each time the program starts */
+  function outChoices() {
+    const list = rt.devices.out || [];
+    return list.filter(d => d.id !== 'default').map(d => [d.label + '|' + list.filter(x => x.label === d.label).indexOf(d), d.label]);
+  }
   async function applyOutput(quiet) {
     const o = settings.monitorOut;
     const list = rt.devices.out || [];
@@ -268,10 +275,22 @@
       rt.outNote = o && o.label && !dev ? `“${o.label}” not found — using the Windows default for now` : '';
     } catch (e) { rt.outNote = e.message; if (!quiet) toast('Could not switch the sound output: ' + e.message, 'error'); }
   }
+  /* program playback (separate from the headphones): the program sound goes to this device all the time */
+  async function applyPlayback(quiet) {
+    const o = settings.playbackOut;
+    const list = rt.devices.out || [];
+    let dev = null;
+    if (o && o.label) { const same = list.filter(d => d.label === o.label); dev = same[o.idx || 0] || same[0] || null; }
+    try {
+      await mixer.setPlayback(dev ? dev.id : null, settings.playbackGain ?? 0);
+      rt.playNote = o && o.label && !dev ? `“${o.label}” not found — program playback is off until it is plugged in` : '';
+    } catch (e) { rt.playNote = e.message; if (!quiet) toast('Could not switch the program playback: ' + e.message, 'error'); }
+  }
   navigator.mediaDevices && navigator.mediaDevices.addEventListener('devicechange', async () => {
     await refreshDevices();
     resolveDevices();
     applyOutput(true);
+    applyPlayback(true);
     for (const c of show.cameras) if (!rt.cams.has(c.id) && rt.devices.video.find(d => d.id === c.deviceId)) openCamera(c);
     for (const a of show.audio.inputs) if (!mixer.strips.has(a.id) && rt.devices.audio.find(d => d.id === a.deviceId)) openAudioInput(a, true);
     refresh('inputs');
@@ -967,7 +986,7 @@
       this.id = r.id;
       this.track = engine.videoTrack().clone();
       const ms = new MediaStream([this.track, ...mixer.stream().getAudioTracks()]);
-      const vbps = this.kind === 'stream' ? clamp(o.bitrate * 3000, 10e6, 40e6) : clamp(o.recordBitrate * 1000, 4e6, 100e6);
+      const vbps = this.kind === 'stream' ? clamp(o.bitrate * 3000, 10e6, 40e6) : clamp(o.recordBitrate * 1000, 1e6, 100e6);
       this.rec = new MediaRecorder(ms, { mimeType: mime, videoBitsPerSecond: vbps, audioBitsPerSecond: 510000 });
       const id = this.id;
       this.rec.ondataavailable = e => {
@@ -1283,6 +1302,8 @@
   $('#uiScale').addEventListener('input', e => { settings.ui.scale = +e.target.value; applyUI(); saveSettings(); });
   $('#uiAccent').addEventListener('input', e => { settings.ui.accent = e.target.value; applyUI(); saveSettings(); });
   $('#layoutReset').addEventListener('click', () => { settings.ui.layouts = defaultLayouts(); saveSettings(); renderGrid(); });
+  // ready-made arrangements for the Run Show page
+  $('#layoutPreset').addEventListener('change', e => { const v = e.target.value; if (!v) return; settings.ui.layouts.live = layoutFrom(v); saveSettings(); setView('live'); renderGrid(); e.target.value = ''; });
   function setView(v) {
     view = v;
     $('#viewLive').classList.toggle('sel', v === 'live');
@@ -1376,6 +1397,7 @@
   const timelineLive = makeVideoBar('live', liveVideo, ['fwd60']);
   const timelinePv = makeVideoBar('pv', () => { const f = previewVideoFile(); return f ? f.el : null; }, ['start']);
   const timeline = el('div', { class: 'tl-row' }, el('div', { class: 'tl-slot' }, timelinePv.bar), el('div', { class: 'tl-slot' }, timelineLive.bar));
+  const miniLufs = el('span', { class: 'mini-lufs mono', title: 'Loudness of the stream (YouTube aims for −14 LUFS)' }, '— LUFS');
   // slim master meter beside the program screen (like a hardware switcher)
   const monMeterMain = el('canvas', { class: 'mon-meter', width: 40, height: 300 }), monMeter = monMeterMain;
   // the same kind of meter for the Preview shot, and a button to listen to it before it goes on air
@@ -1480,7 +1502,9 @@
         el('button', { class: 'btn take-btn', onclick: () => take('auto') }, 'TAKE ➜', keyChip('take')),
         el('span', { class: 'trans-gap' }),
         el('button', { class: 'btn ftb-btn', id: 'ftbBtn', onclick: () => setBlack(!engine.isBlack) }, 'FADE TO BLACK', keyChip('ftb')),
-        el('button', { class: 'btn small ghost', onclick: openShortcuts, title: 'Keyboard shortcuts' }, '⌨'))));
+        el('button', { class: 'btn small ghost', onclick: openShortcuts, title: 'Keyboard shortcuts' }, '⌨'),
+        // with the Audio panel hidden (big-monitor layout), its buttons and the loudness sit here
+        curLayout().some(x => x.id === 'audio' && !x.hidden) ? null : el('div', { class: 'mini-audio' }, ...audioButtons(), miniLufs))));
     renderTally();
   };
 
@@ -2632,11 +2656,27 @@
   const gonio = el('canvas', { class: 'gonio', width: 160, height: 160 });
   const corrCanvas = el('canvas', { class: 'corr', width: 300, height: 26 });
   const lufsBox = el('div', { class: 'lufs mono' });
+  /* the audio buttons: in the Audio panel, and (when that panel is hidden) under the monitors */
+  function audioButtons() {
+    const m = show.audio.master;
+    const tog = (label, key, title, fn) => { const b = el('button', { class: 'tbtn' + (m[key] ? ' on' : ''), dataset: { akey: key }, title, onclick: () => { m[key] = !m[key]; fn(); changed(); syncAudioButtons(); } }, label); return b; };
+    const names = show.audio.inputs.map(a => a.name).join(', ');
+    return [
+      tog('🎧', 'monitor', 'Listen on this computer (headphones / speakers)', () => mixer.setMaster(m)),
+      tog('MONO', 'mono', 'Listen in mono to check phase — only your headphones, not the stream', () => mixer.setMono(!!m.mono)),
+      tog('LIMIT', 'limiter', 'YouTube-safe limiter: keeps peaks at or below the Out ceiling (set in DYN) so the stream never clips', () => mixer.setMaster(m)),
+      el('button', { class: 'tbtn' + (dynCfg().comp.on ? ' on' : ''), dataset: { akey: 'dyn' }, title: 'Compressor & limiter: threshold, ratio, attack, release, knee, out gain, ceiling', onclick: openDynamics }, 'DYN'),
+      tog('AUTO −14', 'auto', 'Auto level: slowly turns the overall volume up or down to sit at YouTube’s −14 LUFS', () => {}),
+      el('button', { class: 'tbtn', title: 'Sound card, volumes, mute, sync test, output', onclick: openMixer }, names ? '🎚 Mixer' : '🔌 Connect sound card')];
+  }
+  function syncAudioButtons() {
+    const m = show.audio.master;
+    document.querySelectorAll('.tbtn[data-akey]').forEach(b => b.classList.toggle('on', b.dataset.akey === 'dyn' ? !!dynCfg().comp.on : !!m[b.dataset.akey]));
+  }
   RENDER.audio = body => {
     body.innerHTML = '';
     const m = show.audio.master;
-    const tog = (label, key, title, fn) => { const b = el('button', { class: 'tbtn' + (m[key] ? ' on' : ''), title, onclick: () => { m[key] = !m[key]; fn(); changed(); b.classList.toggle('on', !!m[key]); } }, label); return b; };
-    const names = show.audio.inputs.map(a => a.name).join(', ');
+    const [bMon, bMono, bLim, bDyn, bAuto, bMix] = audioButtons();
     put(body, el('div', { class: 'aud2' },
       el('div', { class: 'master-top' },
         masterCanvas,
@@ -2644,14 +2684,7 @@
           el('div', { class: 'mlabel' }, 'Stereo / phase'), corrCanvas,
           el('div', { class: 'corr-scale' }, el('span', null, '−1 out of phase'), el('span', null, '0'), el('span', null, '+1 mono')),
           gonio, lufsBox)),
-      el('div', { class: 'aud-tools' },
-        tog('🎧', 'monitor', 'Listen on this computer (headphones / speakers)', () => mixer.setMaster(m)),
-        tog('MONO', 'mono', 'Listen in mono to check phase — only your headphones, not the stream', () => mixer.setMono(!!m.mono)),
-        tog('LIMIT', 'limiter', 'YouTube-safe limiter: keeps peaks at or below −1 dB so the stream never clips', () => mixer.setMaster(m)),
-        el('button', { class: 'tbtn' + (dynCfg().comp.on ? ' on' : ''), title: 'Compressor & limiter: threshold, ratio, attack, release, knee, out gain, ceiling', onclick: openDynamics }, 'DYN'),
-        tog('AUTO −14', 'auto', 'Auto level: slowly turns the overall volume up or down to sit at YouTube’s −14 LUFS', () => {}),
-        el('span', { class: 'grow' }),
-        el('button', { class: 'tbtn', title: 'Sound card, volumes, mute, sync test', onclick: openMixer }, names ? '🎚 Mixer' : '🔌 Connect sound card'))));
+      el('div', { class: 'aud-tools' }, bMon, bMono, bLim, bDyn, bAuto, el('span', { class: 'grow' }), bMix)));
     mixer.setMono(!!m.mono);
   };
   /* volumes and sound-card connections live in this pop-up so the main screen stays clean */
@@ -2677,19 +2710,29 @@
         el('button', { class: 'btn', onclick: async () => { await refreshDevices(); toast(`Found ${rt.devices.audio.length} audio devices.`); openMixer(); } }, '↻ Rescan devices'),
         el('button', { class: 'btn', onclick: openSyncTest }, '⏱ Sync test')),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Click ⚙ on an input to pick which sound card and which channels it uses (capture card, SSL, etc.).'),
+      el('h3', null, 'Program playback (e.g. SSL 2 → TC Electronic meter)'),
+      el('div', { class: 'field' }, el('span', null, 'Play the program on'),
+        select([['', 'Off'], ...outChoices()],
+          settings.playbackOut && settings.playbackOut.label ? settings.playbackOut.label + '|' + (settings.playbackOut.idx || 0) : '',
+          async v => { if (!v) settings.playbackOut = null; else { const i = v.lastIndexOf('|'); settings.playbackOut = { label: v.slice(0, i), idx: +v.slice(i + 1) }; } saveSettings(); await applyPlayback(); openMixer(); })),
+      rt.playNote ? el('div', { class: 'status-bad', style: 'font-size:.85em;margin-bottom:6px' }, rt.playNote) : null,
+      slider({ label: 'Playback level', min: -40, max: 6, step: 0.5, value: settings.playbackGain ?? 0, reset: 0, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { settings.playbackGain = v; mixer.setPlaybackLevel(v); saveSettings(); } }),
+      el('div', { class: 'muted', style: 'font-size:.85em' }, 'Like Wirecast’s “Audio Playback”: the finished program sound (after the limiter) plays here all the time, whatever you do with 🎧 or Listen. Keep it at 0 dB so the meter reads the same as YouTube. The stream and the recording are not affected.'),
       el('h3', null, 'Headphones / monitor output'),
       el('div', { class: 'field' }, el('span', null, 'Send the sound to'),
-        select([['', 'Windows default output'], ...(rt.devices.out || []).filter(d => d.id !== 'default').map(d => [d.label + '|' + (rt.devices.out.filter(x => x.label === d.label).indexOf(d)), d.label])],
+        select([['', 'Windows default output'], ...outChoices()],
           settings.monitorOut && settings.monitorOut.label ? settings.monitorOut.label + '|' + (settings.monitorOut.idx || 0) : '',
           async v => { if (!v) settings.monitorOut = null; else { const i = v.lastIndexOf('|'); settings.monitorOut = { label: v.slice(0, i), idx: +v.slice(i + 1) }; } saveSettings(); await applyOutput(); openMixer(); })),
       rt.outNote ? el('div', { class: 'status-bad', style: 'font-size:.85em;margin-bottom:6px' }, rt.outNote) : null,
       el('div', { class: 'row wrap', style: 'gap:16px;margin:4px 0' },
         check(' Send the program sound there all the time (same as 🎧)', !!show.audio.master.monitor, v => { show.audio.master.monitor = v; mixer.setMaster(show.audio.master); changed(); refresh('audio'); })),
       slider({ label: 'Output level', min: -40, max: 0, step: 0.5, value: show.audio.master.monitorGain ?? -6, reset: -6, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { show.audio.master.monitorGain = v; mixer.setMaster(show.audio.master); changed(); } }),
-      el('div', { class: 'muted', style: 'font-size:.85em' }, 'For example choose the SSL 2 so its outputs feed your TC Electronic meter. The stream and the recording are not affected. 🎧 Listen (Preview) also goes here.'),
+      el('div', { class: 'muted', style: 'font-size:.85em' }, 'Your headphones. 🎧 (program) and Listen (Preview) go here. Pick a different device than Program playback, so listening to the Preview never reaches the meter.'),
+      settings.playbackOut && settings.monitorOut && settings.playbackOut.label === settings.monitorOut.label && (settings.playbackOut.idx || 0) === (settings.monitorOut.idx || 0)
+        ? el('div', { class: 'status-bad', style: 'font-size:.85em;margin-top:4px' }, 'Headphones and Program playback are the same device — choose your headphones here.') : null,
       el('h3', null, 'Master volume'),
       el('div', { class: 'ch master-ch' }, el('span', { class: 'ch-mute ghost' }, ''), el('div', { class: 'ch-name' }, 'MASTER'), mFader, mDb, el('span')),
-      el('div', { class: 'muted', style: 'font-size:.85em;margin-top:8px' }, 'Normally leave these at 0 and mix on your sound desk. LIMIT keeps peaks under −1 dB; AUTO −14 holds the overall loudness at YouTube’s level.'),
+      el('div', { class: 'muted', style: 'font-size:.85em;margin-top:8px' }, 'Normally leave these at 0 and mix on your sound desk. LIMIT keeps peaks under the Out ceiling (DYN); AUTO −14 holds the overall loudness at YouTube’s level.'),
       el('div', { class: 'row', style: 'margin-top:14px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => closeModal() }, 'Done')));
     openModal('Audio mixer & sound card', body);
   }
@@ -2702,9 +2745,12 @@
   const RATIOS = [1, 1.1, 1.3, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 6, 8, 10, 20];
   function dynCfg() {
     const m = show.audio.master;
+    // fill in missing values on the SAME objects (an open DYN window keeps editing them)
+    const fill = (o, def) => { for (const k in def) if (o[k] === undefined) o[k] = def[k]; return o; };
     m.dyn = m.dyn || {};
-    m.dyn.comp = Object.assign({ on: false, threshold: -24, ratio: 3, attack: 10, release: 150, knee: 2, makeup: 0 }, m.dyn.comp);
-    m.dyn.lim = Object.assign({ ceiling: -1, release: 120 }, m.dyn.lim);
+    m.dyn.comp = fill(m.dyn.comp || {}, { on: false, threshold: -24, ratio: 3, attack: 10, release: 150, knee: 2, makeup: 0 });
+    m.dyn.lim = fill(m.dyn.lim || {}, { ceiling: -1, release: 120 });
+    if (m.dyn.lim.threshold === undefined) m.dyn.lim.threshold = m.dyn.lim.ceiling;
     return m.dyn;
   }
   function openDynamics() {
@@ -2713,8 +2759,19 @@
     const graph = el('canvas', { width: 600, height: 600, class: 'dyn-graph' });
     const meters = el('canvas', { width: 240, height: 600, class: 'dyn-meters' });
     const body = el('div');
+    let picked = null; // the saved preset last loaded (so it can be updated or deleted)
+    const mine = () => settings.dynPresets || (settings.dynPresets = []);
     const draw = () => {
       body.innerHTML = '';
+      const nameIn = el('input', { type: 'text', placeholder: 'Name for a new preset (e.g. Sunday sermon)', value: picked !== null && mine()[picked] ? mine()[picked].name : '', style: 'flex:1;min-width:120px' });
+      const presetRow = el('div', { class: 'row wrap', style: 'gap:6px;margin:-2px 0 10px' }, nameIn,
+        el('button', { class: 'btn small', onclick: () => {
+          const n = nameIn.value.trim(); if (!n) { toast('Type a name for the preset first.', 'error'); return; }
+          const L = mine(), i = L.findIndex(x => x.name === n), pr = { name: n, comp: clone(c), lim: clone(l), limiter: !!m.limiter };
+          if (i >= 0) L[i] = pr; else L.push(pr);
+          picked = i >= 0 ? i : L.length - 1; saveSettings(); toast(`Preset “${n}” saved.`, 'ok'); draw();
+        } }, '★ Save as preset'),
+        picked !== null && mine()[picked] ? el('button', { class: 'btn small danger', onclick: () => { const n = mine()[picked].name; settings.dynPresets.splice(picked, 1); picked = null; saveSettings(); toast(`Preset “${n}” deleted.`); draw(); } }, 'Delete “' + mine()[picked].name + '”') : null);
       const btnOn = (on, label, fn) => el('button', { class: 'btn dyn-on' + (on ? ' on' : ''), onclick: fn }, on ? `${label} ON` : `${label} OFF`);
       const ri = Math.max(0, RATIOS.findIndex(r => r >= c.ratio - 1e-6));
       put(body,
@@ -2723,7 +2780,13 @@
             el('div', { class: 'row', style: 'gap:8px;margin-bottom:8px' },
               btnOn(c.on, 'COMPRESSOR', () => { c.on = !c.on; apply(); draw(); }),
               el('span', { class: 'grow' }),
-              select([['', 'Presets…'], ...COMP_PRESETS.map((p2, i) => [String(i), p2[0]])], '', v => { if (v === '') return; Object.assign(c, COMP_PRESETS[+v][1], { on: true }); apply(); draw(); })),
+              select([['', 'Presets…'], ...mine().map((p2, i) => ['u' + i, '★ ' + p2.name]), ...COMP_PRESETS.map((p2, i) => ['b' + i, p2[0]])], '', v => {
+                if (!v) return;
+                if (v[0] === 'u') { const pr = mine()[+v.slice(1)]; Object.assign(c, clone(pr.comp)); Object.assign(l, clone(pr.lim)); m.limiter = pr.limiter !== false; picked = +v.slice(1); }
+                else { Object.assign(c, COMP_PRESETS[+v.slice(1)][1], { on: true }); picked = null; }
+                apply(); draw(); syncAudioButtons();
+              })),
+            presetRow,
             slider({ label: 'Threshold', min: -60, max: 0, step: 0.5, value: c.threshold, reset: -24, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { c.threshold = v; apply(); } }),
             slider({ label: 'Ratio', min: 0, max: RATIOS.length - 1, step: 1, value: ri, reset: RATIOS.indexOf(3), fmt: v => `${RATIOS[v]}:1`, onInput: v => { c.ratio = RATIOS[v]; apply(); } }),
             slider({ label: 'Attack', min: 0, max: 120, step: 1, value: c.attack, reset: 10, fmt: v => `${v} ms`, onInput: v => { c.attack = v; apply(); } }),
@@ -2733,9 +2796,11 @@
               el('div', { class: 'seg' }, [['HARD', 0], ['1', 2], ['2', 4], ['3', 6], ['4', 8], ['5', 10]].map(([t, k]) => el('button', { class: 'btn small' + (c.knee === k ? ' sel' : ''), onclick: () => { c.knee = k; apply(); draw(); } }, t)))),
             el('h3', { style: 'margin-top:14px' }, 'Limiter'),
             el('div', { class: 'row', style: 'gap:8px;margin-bottom:8px' }, btnOn(!!m.limiter, 'LIMITER', () => { m.limiter = !m.limiter; apply(); draw(); refresh('audio'); })),
-            slider({ label: 'Ceiling', min: -6, max: 0, step: 0.1, value: l.ceiling, reset: -1, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { l.ceiling = v; apply(); } }),
-            slider({ label: 'Release', min: 10, max: 500, step: 1, value: l.release, reset: 120, fmt: v => `${v} ms`, onInput: v => { l.release = v; apply(); } }),
-            el('div', { class: 'muted', style: 'font-size:.82em;margin-top:6px' }, 'The compressor evens out the level; the limiter stops peaks going over the ceiling (YouTube: keep it at −1 dB). Both work on what the stream and recording hear, after the mixer. Double-click a slider to reset it.')),
+            slider({ label: 'Threshold', min: -30, max: 0, step: 0.1, value: l.threshold, reset: l.ceiling, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { l.threshold = v; apply(); } }),
+            slider({ label: 'Out ceiling', min: -6, max: 0, step: 0.1, value: l.ceiling, reset: -1, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { l.ceiling = v; apply(); } }),
+            slider({ label: 'Release', min: 1, max: 1000, step: 1, value: l.release, reset: 100, fmt: v => `${v} ms`, onInput: v => { l.release = v; apply(); } }),
+            el('div', { class: 'muted', style: 'font-size:.82em;margin:2px 0 6px' }, 'Like an L2: lowering the Threshold pushes the level up by (ceiling − threshold); peaks are held at the Out ceiling. Threshold = ceiling adds nothing.'),
+            el('div', { class: 'muted', style: 'font-size:.82em;margin-top:6px' }, 'The compressor evens out the level; the limiter stops peaks going over the ceiling (−1 dB is the safe YouTube setting; −0.2 like your L2 also works). Both work on what the stream and recording hear, after the mixer. Double-click a slider to reset it.')),
           el('div', { class: 'dyn-col dyn-vis' }, graph, meters)),
         el('div', { class: 'row', style: 'margin-top:12px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('audio'); } }, 'Done')));
     };
@@ -2755,7 +2820,7 @@
         g.fillStyle = '#26262b'; g.fillRect(X(db), 14, 1, S); g.fillRect(pad, Y(db), S, 1);
         if (db % 12 === 0) { g.fillStyle = '#8d8d96'; g.fillText(String(db), pad - 6, Y(db)); g.textAlign = 'center'; g.fillText(String(db), X(db), 14 + S + 18); g.textAlign = 'right'; }
       }
-      const out = x => { let y = c.on ? compCurve(x, c.threshold, c.ratio, c.knee) + c.makeup : x; if (m.limiter) y = Math.min(y, l.ceiling); return y; };
+      const out = x => { let y = c.on ? compCurve(x, c.threshold, c.ratio, c.knee) + c.makeup : x; if (m.limiter) y = Math.min(y + Math.max(0, l.ceiling - l.threshold), l.ceiling); return y; };
       g.strokeStyle = '#3f3f46'; g.setLineDash([6, 6]); g.beginPath(); g.moveTo(X(-60), Y(-60)); g.lineTo(X(0), Y(0)); g.stroke(); g.setLineDash([]);
       if (c.on) { g.strokeStyle = 'rgba(234,179,8,.5)'; g.beginPath(); g.moveTo(X(c.threshold), 14); g.lineTo(X(c.threshold), 14 + S); g.stroke(); }
       if (m.limiter) { g.strokeStyle = 'rgba(239,68,68,.6)'; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(pad, Y(l.ceiling)); g.lineTo(pad + S, Y(l.ceiling)); g.stroke(); g.setLineDash([]); }
@@ -2769,7 +2834,7 @@
       const col = (i, label, v, gr) => {
         const x = 8 + i * (bw + 16);
         mg.fillStyle = '#0a0a0c'; mg.fillRect(x, top, bw, bh);
-        if (gr) { const f = Math.min(1, -v / 20); mg.fillStyle = '#f59e0b'; mg.fillRect(x, top, bw, bh * f); }
+        if (gr) { const f = Math.min(1, -v / (label === 'LIM' ? 30 : 20)); mg.fillStyle = '#f59e0b'; mg.fillRect(x, top, bw, bh * f); }
         else { const f = Math.max(0, (v + 60) / 60); mg.fillStyle = v > -6 ? '#ef4444' : v > -18 ? '#eab308' : '#22c55e'; mg.fillRect(x, top + bh * (1 - f), bw, bh * f); }
         mg.fillStyle = '#d4d4d8'; mg.font = '700 28px Inter, Segoe UI, sans-serif'; mg.textAlign = 'center'; mg.fillText(label, x + bw / 2, top + bh + 36);
         mg.font = '600 24px Consolas, monospace'; mg.fillStyle = '#a1a1aa'; mg.fillText(gr ? (v < -0.05 ? v.toFixed(1) : '0') : (v <= -60 ? '−∞' : v.toFixed(0)), x + bw / 2, top + bh + 76);
@@ -3014,7 +3079,8 @@
     rt.uiAt = tNow;
     const lv = mixer.levels();
     const MA = mixer.masterAnalysis(); rt.MA = MA;
-    drawMaster(MA); drawMonMeter(MA, monMeterMain, 'left'); drawMonMeter(mixer.previewAnalysis(), pvMeter, 'right');
+    drawMaster(MA); drawMonMeter(MA, monMeterMain, 'left');
+    if (miniLufs.isConnected) { const v = MA.lufsS, d = v + 14; setText(miniLufs, v <= -60 ? '— LUFS' : `${v.toFixed(1)} LUFS`); const cls = 'mini-lufs mono' + (v <= -60 ? '' : d > 2 ? ' bad' : d < -4 ? ' low' : ' ok'); if (miniLufs.className !== cls) miniLufs.className = cls; } drawMonMeter(mixer.previewAnalysis(), pvMeter, 'right');
     for (const [id, m] of rt.meters) {
       const db = lv[id];
       if (db === undefined) continue;
@@ -3132,7 +3198,7 @@
     /* picture + sound bitrate with ready-made and your own presets, separately for live and recording */
     const QUAL = {
       live: { v: 'bitrate', a: 'audioBitrate', vr: [1000, 51000], ar: [64, 384], builtin: [['YouTube 1080p 60 fps', 12000, 192], ['YouTube 1080p 30 fps', 8000, 160], ['YouTube 720p', 5000, 128], ['Slow internet', 3000, 128]] },
-      rec: { v: 'recordBitrate', a: 'recordAudioBitrate', vr: [4000, 100000], ar: [96, 512], builtin: [['Standard', 20000, 256], ['High (for editing)', 40000, 320], ['Small files', 10000, 192]] }
+      rec: { v: 'recordBitrate', a: 'recordAudioBitrate', vr: [1000, 100000], ar: [96, 512], builtin: [['Standard', 20000, 256], ['High (for editing)', 40000, 320], ['Small files', 10000, 192], ['Very small (like Wirecast)', 3600, 160]] }
     };
     function qualityBlock(kind) {
       const Q = QUAL[kind], wrap = el('div');
@@ -3449,6 +3515,7 @@
     // sound cards after the cameras: a capture card can refuse audio while its video is still starting
     await refreshDevices(); resolveDevices();
     applyOutput(true);
+    applyPlayback(true);
     await Promise.all(show.audio.inputs.map(a => openAudioInput(a, true)));
     refreshAll();
     if (engine.programId === 'shot_hold') refreshOnAir(getShot('shot_hold')); // music before the service starts with the holding slide
