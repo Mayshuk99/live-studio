@@ -125,10 +125,10 @@
       this.pflMon.gain.setTargetAtTime(pv ? (this._monGain || 0.5) : 0, t, 0.02);
     }
     /* what the preview bus contains: the live inputs (or not) plus the video files of the Preview shot */
-    setPreviewMix(inputsOn, mediaIds, mediaGainDb, mediaMute) {
-      const t = this.ctx.currentTime;
-      for (const [id, s] of this.strips) if (s.pflSend) s.pflSend.gain.setTargetAtTime(inputsOn ? 1 : 0, t, 0.02);
-      for (const [id, m] of this.mediaEls) if (m.pfl) m.pfl.gain.setTargetAtTime(mediaIds.includes(id) ? 1 : 0, t, 0.02);
+    setPreviewMix(inputs, media, mediaGainDb, mediaMute) {
+      const t = this.ctx.currentTime, lv = typeof inputs === 'number' ? inputs : inputs ? 1 : 0;
+      for (const [id, s] of this.strips) if (s.pflSend) s.pflSend.gain.setTargetAtTime(lv, t, 0.02);
+      for (const [id, m] of this.mediaEls) if (m.pfl) m.pfl.gain.setTargetAtTime(Array.isArray(media) ? (media.includes(id) ? 1 : 0) : (media[id] || 0), t, 0.02);
       this.pflMedia.gain.setTargetAtTime(mediaMute ? 0 : dbToGain(mediaGainDb || 0), t, 0.02);
     }
     previewAnalysis() {
@@ -276,10 +276,19 @@
       this.mediaEls.delete(sourceId);
     }
     // live inputs on / off for the shot on air, with a short fade so there is no click
-    setLiveInputs(on, ms = 300) {
+    setLiveInputs(on, ms = 300, level = 1) {
       const g = this.liveBus.gain, t = this.ctx.currentTime;
       g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
-      g.linearRampToValueAtTime(on ? 1 : 0, t + Math.max(0.03, ms / 1000));
+      g.linearRampToValueAtTime(on ? level : 0, t + Math.max(0.03, ms / 1000));
+    }
+    // a video / music file's volume while it is on air (0 = silent, 1 = as recorded)
+    setMediaLevel(sourceId, level, ms = 300) {
+      const m = this.mediaEls.get(sourceId);
+      if (!m) return;
+      const g = m.gain.gain, t = this.ctx.currentTime;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(Math.max(0, level), t + Math.max(0.01, ms / 1000));
     }
     setMediaActive(sourceId, on, ms = 300) {
       const m = this.mediaEls.get(sourceId);

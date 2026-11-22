@@ -97,7 +97,7 @@
       audio: { inputs: [], media: { gain: 0, mute: false }, master: { gain: 0, limiter: true, monitor: false, monitorGain: -6, mono: false } },
       transition: { ms: 600 },
       service: {
-        hold: { mode: 'clock', target: '10:00', org: 'Pilgrim Baptist Church · Spokane, WA', title: 'Welcome', subtitle: 'Service will begin shortly', title2: 'Добро пожаловать', subtitle2: 'Служение скоро начнётся', lang2: 'ru', layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c', zoom: 1.06, focusX: 0.4, focusY: 0, bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
+        hold: { musicId: '', musicLoop: true, mode: 'clock', target: '10:00', org: 'Pilgrim Baptist Church · Spokane, WA', title: 'Welcome', subtitle: 'Service will begin shortly', title2: 'Добро пожаловать', subtitle2: 'Служение скоро начнётся', lang2: 'ru', layout: 'side', dim: 0.35, blur: 0, accent: '#d4a24c', zoom: 1.06, focusX: 0.4, focusY: 0, bgColor: '#0b1a33', bgColor2: '#1e1b4b', bgFile: '', textColor: '#ffffff', autoStart: false },
         start: { record: true, goLive: true, videoId: '', fadeMs: 2000, cameraShot: '', ytLive: true },
         end: { mode: 'video', videoId: '', slideImg: '', musicId: '', musicLoop: false, slideSecs: 60, fadeMs: 1500, then: 'hold', stopRec: true, endStream: true, endAfter: 30, ytComplete: true }
       },
@@ -395,6 +395,8 @@
      auto = a video plays with only its own sound, everything else uses the cameras / sound desk */
   const SOUND_MODES = [['auto', 'Automatic — videos & music: their own sound · everything else: sound desk'], ['video', 'Only the video / music'], ['live', 'Only the sound desk / cameras'], ['both', 'Both together']];
   function soundMode(sh) {
+    // the holding slide: its music (if any), and the sound desk only when it is not muted
+    if (sh && sh.role === 'hold') return SV().hold.mute !== false ? 'video' : sh.music ? 'both' : 'live';
     const m = (sh && sh.sound) || 'auto';
     if (m !== 'auto') return m;
     const main = sh && sh.main && sh.main.source;
@@ -404,6 +406,27 @@
   }
   const liveInputsOn = sh => !!sh && soundMode(sh) !== 'video';
   const videoSoundOn = sh => !!sh && soundMode(sh) !== 'live';
+  /* each shot's own mix: volume of its music, its video sound and the sound desk (dB; −40 = off) */
+  const holdMuted = sh => !!sh && sh.role === 'hold' && SV().hold.mute !== false;
+  const holdMusicOk = () => { const id = SV().hold.musicId; return !!(id && rt.files.get(id) && rt.files.get(id).ok); };
+  const dbGain = db => db <= -40 ? 0 : Math.pow(10, db / 20);
+  const mixOf = sh => Object.assign({ music: 0, video: 0, live: 0 }, sh && sh.mix);
+  const mediaLevel = (sh, id) => videoSoundOn(sh) ? dbGain((fileById(id) || {}).kind === 'audio' ? mixOf(sh).music : mixOf(sh).video) : 0;
+  const liveLevel = sh => liveInputsOn(sh) && !holdMuted(sh) ? dbGain(mixOf(sh).live) : 0;
+  const loopFor = (sh, id) => sh.role === 'hold' ? SV().hold.musicLoop !== false
+    : sh.role === 'close' ? !!(SV().end.mode === 'slide' && SV().end.musicLoop && id === sh.music)
+    : !!(fileById(id) || {}).loop && !sh.role;
+  // apply a shot's mix straight away if it is on air (after its sliders or music were changed)
+  function refreshOnAir(sh) {
+    if (sh && engine.programId === sh.id && !engine.inTransition) {
+      const want = mediaOf(sh);
+      for (const id of want) { const f = rt.files.get(id); if (f && f.el && f.el.paused) { f.el.loop = loopFor(sh, id); f.el.currentTime = 0; f.el.play().catch(() => {}); } }
+      for (const [id, f] of rt.files) if (f.el && (f.el.tagName === 'AUDIO' || f.el.tagName === 'VIDEO') && !want.includes(id) && !f.el.paused && !f.cued && !f.pvManual) { mixer.setMediaLevel(id, 0, 150); setTimeout(() => { if (!mediaOf(getShot(engine.programId)).includes(id)) f.el.pause(); }, 200); }
+      audioGate(150, sh.id);
+      for (const id of want) mixer.setMediaLevel(id, mediaLevel(sh, id), 120);
+    }
+    updatePfl();
+  }
 
   /* ================= switching ================= */
   function setPreview(id) {
@@ -420,12 +443,11 @@
     const to = getShot(toId), from = getShot(fromId);
     const toM = mediaOf(to), fromM = mediaOf(from);
     for (const id of toM) {
-      if (fromM.includes(id)) continue;
+      if (fromM.includes(id)) { mixer.setMediaLevel(id, mediaLevel(to, id), Math.max(60, ms)); continue; }
       const f = rt.files.get(id);
       if (f && f.el) {
-        // the before-service video can loop until you start the service
-        f.el.loop = to.role === 'close' ? !!(SV().end.mode === 'slide' && SV().end.musicLoop && id === to.music) : !!(fileById(id) || {}).loop && !to.role;
-        f.el.currentTime = 0; f.el.play().catch(() => {}); mixer.setMediaActive(id, videoSoundOn(to), Math.max(60, ms));
+        f.el.loop = loopFor(to, id);
+        f.el.currentTime = 0; f.el.play().catch(() => {}); mixer.setMediaLevel(id, mediaLevel(to, id), Math.max(60, ms));
       }
     }
     for (const id of fromM) {
@@ -460,13 +482,15 @@
   // the stream is silent while the holding slide is on air (and during fade to black)
   function audioGate(ms, targetId) {
     const sh = getShot(targetId || (engine.trans ? engine.trans.to : engine.programId));
-    const silent = (engine.isBlack && settings.ftbAudio) || (!!sh && sh.role === 'hold' && SV().hold.mute !== false);
+    // silent: fade to black (if set), or the holding slide when it is muted and has no music
+    const silent = (engine.isBlack && settings.ftbAudio) || (holdMuted(sh) && !(sh.music && holdMusicOk()));
     // coming out of the holding slide, the sound fades in gently even on a hard cut
-    if (!silent && rt.holdSilent) ms = Math.max(ms || 0, SV().hold.audioFade ?? 1500);
-    rt.holdSilent = !!sh && sh.role === 'hold' && SV().hold.mute !== false;
+    if (!silent && rt.holdSilent && !holdMuted(sh)) ms = Math.max(ms || 0, SV().hold.audioFade ?? 1500);
+    rt.holdSilent = holdMuted(sh);
     rt.gated = silent;
     mixer.fadeMaster(!silent, Math.max(50, ms || 300));
-    mixer.setLiveInputs(liveInputsOn(sh), Math.max(60, ms || 0));
+    const lv = liveLevel(sh);
+    mixer.setLiveInputs(lv > 0, Math.max(60, ms || 0), lv);
   }
   function setBlack(on) {
     engine.setBlack(on, show.transition.ms || 500);
@@ -499,6 +523,7 @@
     if (h.main.source !== 'hold') { const f = fileById(h.main.source); if (f && f.kind === 'image') SV().hold.bgFile = f.id; h.main.frame = { zoom: 1, x: 0.5, y: 0.5 }; }
     h.main.source = 'hold';
     h.main.frame = { zoom: 1, x: 0.5, y: 0.5 }; h.pip.enabled = false;
+    h.music = SV().hold.musicId && fileById(SV().hold.musicId) ? SV().hold.musicId : '';
     for (const [role, cfg, vname] of [['open', SV().start, 'Opening video'], ['close', SV().end, 'Closing video']]) {
       const slide = role === 'close' && cfg.mode === 'slide';
       const src = slide ? cfg.slideImg : cfg.videoId, name = slide ? 'Closing slide' : vname;
@@ -798,7 +823,7 @@
           h.mode === 'countdown' ? el('div', { class: 'field' }, el('span', null, 'Service starts at'), el('input', { type: 'time', value: h.target, oninput: e => { h.target = e.target.value; done(); } })) : null,
           h.mode !== 'clock' ? check(' Press START SERVICE automatically when the countdown ends', h.autoStart, v => { h.autoStart = v; done(); }) : null,
           el('div', { class: 'field', style: 'margin-top:10px' }, el('span', null, 'Date and countdown words'), select([['', 'English only'], ['ru', 'English and Russian (switch every 6 s)'], ['uk', 'English and Ukrainian (switch every 6 s)']], h.lang2 || '', v => { h.lang2 = v; done(); })),
-          el('div', { style: 'margin:10px 0' }, check(' Mute all audio while the holding slide is on air', h.mute !== false, v => { h.mute = v; done(); audioGate(200); })),
+          el('div', { style: 'margin:10px 0' }, check(' Mute the cameras / sound desk while the holding slide is on air (its music still plays)', h.mute !== false, v => { h.mute = v; done(); refreshOnAir(getShot('shot_hold')); })),
           el('div', { class: 'field' }, el('span', null, 'Sound fades in when leaving the slide'), select([[300, 'Quick — 0.3 s'], [1000, '1 second'], [1500, '1.5 seconds'], [2000, '2 seconds'], [3000, '3 seconds'], [5000, '5 seconds']], h.audioFade ?? 1500, v => { h.audioFade = +v; done(); })),
           el('div', { class: 'muted', style: 'font-size:.85em' }, 'To move or resize the clock, click it on the slide (Text & items tab).'));
       }
@@ -1321,9 +1346,9 @@
   function previewMedia() { const onAir = mediaOf(getShot(engine.programId)); return mediaOf(getShot(rt.previewId)).filter(m => !onAir.includes(m)); }
   function updatePfl() {
     const p = getShot(rt.previewId);
-    const inputsOn = !!p && !(p.role === 'hold' && SV().hold.mute !== false) && liveInputsOn(p);
-    const media = p && videoSoundOn(p) ? mediaOf(p) : [];
-    mixer.setPreviewMix(inputsOn, media, show.audio.media.gain, show.audio.media.mute);
+    const media = {};
+    if (p) for (const m of mediaOf(p)) media[m] = mediaLevel(p, m);
+    mixer.setPreviewMix(p ? liveLevel(p) : 0, media, show.audio.media.gain, show.audio.media.mute);
     // a video in Preview only makes sound while it plays: play it while listening, rewind it afterwards
     const cue = previewMedia();
     for (const [id, f] of rt.files) {
@@ -1554,6 +1579,7 @@
       put(body, pvw,
         el('div', { class: 'muted', style: 'margin-bottom:10px' }, 'This is the holding slide (clock / welcome). Its picture, text and clock are set in the slide designer.'),
         el('button', { class: 'btn primary big', onclick: openHoldDesigner }, '🎨 Design the slide…'),
+        el('div', { class: 'section' }, el('h4', null, 'Music before the service'), holdMusicPicker(), mixPanel(s)),
         el('div', { class: 'section row' }, el('button', { class: 'btn small', onclick: () => takeShot(s.id, 'auto') }, 'Take this shot')));
       return;
     }
@@ -1616,8 +1642,9 @@
         el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, 'Plays from the start each time this shot goes live — e.g. a slide with background music. Tick “Loop” on the music file in Inputs to repeat it.')) : null,
 
       el('div', { class: 'section' }, el('h4', null, 'Sound while this shot is live'),
-        select(SOUND_MODES, s.sound || 'auto', v => { s.sound = v; changed(); if (engine.programId === s.id) { mixer.setLiveInputs(liveInputsOn(s), 300); for (const m of mediaOf(s)) mixer.setMediaActive(m, videoSoundOn(s), 300); } updatePfl(); }),
-        el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, `Now: ${{ video: 'only the video / music', live: 'only the sound desk / cameras', both: 'video sound and sound desk together' }[soundMode(s)]}.`)),
+        select(SOUND_MODES, s.sound || 'auto', v => { s.sound = v; changed(); refreshOnAir(s); refresh('editor'); }),
+        el('div', { class: 'muted', style: 'font-size:.85em;margin-top:4px' }, `Now: ${{ video: 'only the video / music', live: 'only the sound desk / cameras', both: 'video sound and sound desk together' }[soundMode(s)]}.`),
+        mixPanel(s)),
 
       el('div', { class: 'section row wrap' },
         el('button', { class: 'btn small', onclick: () => { const c = clone(s); c.id = uid('shot'); c.name = s.name + ' copy'; c.role = ''; show.shots.splice(idx + 1, 0, c); changed(); refresh('shots'); editShot(c.id); } }, 'Duplicate'),
@@ -1640,6 +1667,34 @@
     if (s.role === 'close') SV().end.videoId = '';
     if (rt.previewId === s.id) setPreview(show.shots[0] && show.shots[0].id);
     rt.editingId = null; changed(); refresh('shots'); refresh('editor'); refresh('media');
+  }
+
+  /* the shot's own mixer: a volume slider for each sound it uses */
+  function mixPanel(s, only) {
+    const m = mixOf(s), kinds = mediaOf(s).map(id => (fileById(id) || {}).kind);
+    const row = (key, label) => slider({ label, min: -40, max: 10, step: 0.5, value: m[key], reset: 0,
+      fmt: v => v <= -40 ? 'off' : `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`,
+      onInput: v => { s.mix = Object.assign(mixOf(s), { [key]: v }); changed(); refreshOnAir(s); } });
+    const rows = [
+      kinds.includes('audio') && videoSoundOn(s) && (!only || only === 'music') ? row('music', '♪ Music') : null,
+      kinds.includes('video') && videoSoundOn(s) && (!only || only === 'video') ? row('video', '🎞 Video sound') : null,
+      liveInputsOn(s) && !holdMuted(s) && !only ? row('live', '🎚 Sound desk') : null
+    ].filter(Boolean);
+    if (only) return rows[0] || null;
+    return el('div', { class: 'shot-mix' },
+      el('div', { class: 'shot-mix-title' }, '🎛 Volume while this shot is live'),
+      rows.length ? rows : el('div', { class: 'muted', style: 'font-size:.85em' }, 'No sound for this shot.'),
+      el('div', { class: 'muted', style: 'font-size:.8em;margin-top:4px' }, 'Double-click a slider to go back to 0 dB. To hear it before it goes live, put the shot in Preview and press 🎧 Listen.'));
+  }
+  function holdMusicPicker(after) {
+    const H = SV().hold, h = getShot('shot_hold');
+    const apply = () => { syncRoleShots(); changed(); refreshOnAir(getShot('shot_hold')); refresh('editor'); refresh('media'); if (after) after(); };
+    return el('div', null,
+      el('div', { class: 'row' },
+        select([['', '— no music —'], ...show.files.filter(f => f.kind === 'audio').map(f => [f.id, '♪ ' + f.name])], H.musicId || '', v => { H.musicId = v; apply(); }, { class: 'grow' }),
+        el('button', { class: 'btn small', onclick: async () => { const a = await addFiles(); const m = a.find(f => f.kind === 'audio'); if (m) { H.musicId = m.id; apply(); } else if (a.length) toast('That is not a music file (MP3, WAV, M4A).', 'error'); } }, 'Import…')),
+      H.musicId ? el('div', { style: 'margin:6px 0' }, check(' Repeat the music', H.musicLoop !== false, v => { H.musicLoop = v; changed(); const f = rt.files.get(H.musicId); if (f && f.el && engine.programId === 'shot_hold') f.el.loop = v; })) : null,
+      el('div', { class: 'muted', style: 'font-size:.85em' }, H.mute !== false ? 'While the holding slide is up, only this music is heard (cameras / sound desk are muted).' : 'The holding slide is set to also let the cameras / sound desk through.'));
   }
 
   /* ================= panel: colour ================= */
@@ -2176,11 +2231,16 @@
           el('div', null, el('div', { class: 'muted', style: 'margin-bottom:10px' }, 'Background picture, every line of text, the clock, colours and positions.'),
             el('button', { class: 'btn primary big', onclick: openHoldDesigner }, '🎨 Design the slide…'))),
 
+        el('h4', { style: 'margin:12px 0 4px' }, '♪ Music before the service (while the holding slide is up)'),
+        holdMusicPicker(() => draw()),
+        H.musicId ? mixPanel(getShot('shot_hold'), 'music') : null,
+
         el('h3', null, '▶ When I press START SERVICE'),
         el('div', { class: 'row wrap', style: 'gap:18px;margin-bottom:10px' },
           check(' Go live on YouTube (if not live yet)', st.goLive, v => { st.goLive = v; done(); }),
           check(' Start recording', st.record, v => { st.record = v; done(); })),
         el('div', { class: 'field' }, el('span', null, 'Play this video first'), videoPick(st, 'videoId'), st.videoId ? fileStatus(st.videoId) : null),
+        roleShot('open') ? mixPanel(roleShot('open'), 'video') : null,
         el('div', { class: 'grid2' },
           el('div', { class: 'field' }, el('span', null, st.videoId ? 'Then fade into' : 'Fade into'), select(camShots.length ? camShots : [['', '— add a camera —']], st.cameraShot, v => { st.cameraShot = v; done(); })),
           el('div', { class: 'field' }, el('span', null, 'Fade length'), select([[500, '0.5 second'], [1000, '1 second'], [2000, '2 seconds'], [3000, '3 seconds'], [5000, '5 seconds']], st.fadeMs, v => { st.fadeMs = +v; done(); }))),
@@ -2189,11 +2249,13 @@
         el('h3', null, '■ When I press END SERVICE'),
         el('div', { class: 'field' }, el('span', null, 'First show'), select([['video', 'A closing video'], ['slide', 'A slide with music']], en.mode || 'video', v => { en.mode = v; done(); draw(); })),
         (en.mode || 'video') === 'video'
-          ? el('div', { class: 'field' }, el('span', null, 'Play this video'), videoPick(en, 'videoId'), en.videoId ? fileStatus(en.videoId) : null)
+          ? el('div', null, el('div', { class: 'field' }, el('span', null, 'Play this video'), videoPick(en, 'videoId'), en.videoId ? fileStatus(en.videoId) : null),
+            roleShot('close') ? mixPanel(roleShot('close'), 'video') : null)
           : el('div', null,
             el('div', { class: 'grid2' },
               el('div', { class: 'field' }, el('span', null, 'Slide (a picture)'), filePick(en, 'slideImg', 'image', '— choose a picture —'), en.slideImg ? fileStatus(en.slideImg) : null),
               el('div', { class: 'field' }, el('span', null, 'Music'), filePick(en, 'musicId', 'audio', '— no music —'), en.musicId ? fileStatus(en.musicId) : null)),
+            en.musicId && roleShot('close') ? mixPanel(roleShot('close'), 'music') : null,
             en.musicId
               ? el('div', { class: 'row wrap', style: 'gap:18px;margin-bottom:8px' }, check(' Keep the music going (repeat) until I press END SERVICE again', en.musicLoop, v => { en.musicLoop = v; done(); }))
               : null,
@@ -3194,6 +3256,7 @@
     await refreshDevices(); resolveDevices();
     await Promise.all(show.audio.inputs.map(a => openAudioInput(a, true)));
     refreshAll();
+    if (engine.programId === 'shot_hold') refreshOnAir(getShot('shot_hold')); // music before the service starts with the holding slide
     updatePfl();
     setTimeout(resetFrameStats, 8000); // starting up (opening cards, loading videos) is not counted as dropped frames
   }
