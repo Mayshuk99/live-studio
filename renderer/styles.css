@@ -552,3 +552,13 @@ textarea { width: 100%; box-sizing: border-box; }
 .gtile.armed { outline: 3px solid #22c55e; outline-offset: -3px; }
 .gtile.armed::after { content: 'IN PREVIEW'; position: absolute; left: 8px; top: 6px; padding: 2px 6px; border-radius: 4px; background: #16a34a; color: #fff; font-weight: 800; font-size: .68em; letter-spacing: .06em; }
 .gtile.on.armed::after { content: 'HIDE ON TAKE'; background: #b45309; }
+
+.dyn-wrap { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(300px, 1.1fr); gap: 18px; }
+.dyn-vis { display: grid; grid-template-columns: 1fr 0.4fr; gap: 10px; align-items: start; }
+.dyn-graph { width: 100%; aspect-ratio: 1; border-radius: 8px; background: #111114; }
+.dyn-meters { width: 100%; height: auto; aspect-ratio: 240 / 600; }
+.dyn-on { min-width: 150px; font-weight: 800; letter-spacing: .04em; }
+.dyn-on.on { background: #7c3aed; border-color: #8b5cf6; color: #fff; }
+.seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.seg .btn.sel { background: #7c3aed; border-color: #8b5cf6; color: #fff; }
+.modal-card:has(.dyn-wrap) { width: min(1100px, 96vw); }

@@ -7,6 +7,12 @@
 
   const dbToGain = db => (db <= -60 ? 0 : Math.pow(10, db / 20));
 
+  // compressor curve: output level (dB) for an input peak level x (dB)
+  function compCurve(x, T, R, K) {
+    if (x <= T) return x;
+    if (K > 0 && x <= T + K) return x + (1 / R - 1) * (x - T) * (x - T) / (2 * K);
+    return T + K * (1 + 1 / R) / 2 + (x - T - K) / R;
+  }
   class Mixer {
     constructor() {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -26,14 +32,24 @@
       // YouTube-safe output: auto-level stage, limiter, then a hard ceiling at -1 dBFS so the stream can never clip
       this.auto = ctx.createGain();
       this.ceil = ctx.createWaveShaper();
-      { const n = 4097, c = new Float32Array(n), knee = 0.7, top = 0.891; // 0.891 = -1 dBFS
-        for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1, a = Math.abs(x); c[i] = Math.sign(x) * (a <= knee ? a : knee + (top - knee) * Math.tanh((a - knee) / (top - knee))); }
-        this.ceil.curve = c; this.ceil.oversample = 'none'; }
-      this.limiter.threshold.value = -5; this.limiter.knee.value = 3;
+      this.ceil.oversample = 'none';
+      // compressor (with your own make-up gain) and limiter gain correction — see setDynamics
+      this.comp = ctx.createDynamicsCompressor();
+      this.makeup = ctx.createGain();
+      this.comp.connect(this.makeup);
+      this.limGain = ctx.createGain();
+      this.limiter.connect(this.limGain);
+      this.limGain.connect(this.ceil);
+      // level going into the dynamics (for the In meter)
+      this.dynSplit = ctx.createChannelSplitter(2);
+      this.dInL = ctx.createAnalyser(); this.dInR = ctx.createAnalyser(); this.dInL.fftSize = this.dInR.fftSize = 1024;
+      this.dynSplit.connect(this.dInL, 0); this.dynSplit.connect(this.dInR, 1);
+      this._db = new Float32Array(1024);
       this.masterFader.connect(this.auto);
       this.ceil.connect(this.masterOut);
-      this.limiterOn = null;
-      this.setLimiter(true);
+      this.compOn = false; this.limiterOn = true;
+      this.setDynamics({});
+      this._wire();
       this.dest = ctx.createMediaStreamDestination();
       this.dest.channelCount = 2;
       this.masterOut.connect(this.dest);
@@ -95,12 +111,48 @@
     stream() { return this.dest.stream; }
 
     setLimiter(on) {
-      if (this.limiterOn === on) return;
-      try { this.auto.disconnect(); } catch (e) { /* first run */ }
-      try { this.limiter.disconnect(); } catch (e) { /* first run */ }
-      if (on) { this.auto.connect(this.limiter); this.limiter.connect(this.ceil); }
-      else this.auto.connect(this.masterOut);
-      this.limiterOn = on;
+      if (this.limiterOn === !!on && this._wired) return;
+      this.limiterOn = !!on;
+      this._wire();
+    }
+    // auto-level → [compressor → make-up] → [limiter → hard ceiling] → master out
+    _wire() {
+      try { this.auto.disconnect(); } catch (e) { /* */ }
+      try { this.makeup.disconnect(); } catch (e) { /* */ }
+      this.auto.connect(this.dynSplit);
+      let last = this.auto;
+      if (this.compOn) { last.connect(this.comp); last = this.makeup; }
+      last.connect(this.limiterOn ? this.limiter : this.masterOut);
+      this._wired = true;
+    }
+    /* master dynamics. Times in ms, levels in dB, knee in dB.
+       The browser's compressor adds its own automatic make-up gain (0.6 × the reduction it would apply at full
+       level); it is cancelled here so the Out gain you set is exactly what you get, and the limiter adds nothing. */
+    setDynamics(d) {
+      const c = Object.assign({ on: false, threshold: -24, ratio: 3, attack: 10, release: 150, knee: 2, makeup: 0 }, d && d.comp);
+      const l = Object.assign({ ceiling: -1, release: 120 }, d && d.lim);
+      const t = this.ctx.currentTime, set = (prm, v) => prm.setTargetAtTime(v, t, 0.01);
+      set(this.comp.threshold, c.threshold); set(this.comp.ratio, c.ratio); set(this.comp.knee, c.knee);
+      set(this.comp.attack, c.attack / 1000); set(this.comp.release, Math.max(10, c.release) / 1000);
+      set(this.makeup.gain, dbToGain(c.makeup + 0.6 * compCurve(0, c.threshold, c.ratio, c.knee)));
+      const lt = l.ceiling - 1.5;
+      set(this.limiter.threshold, lt); set(this.limiter.ratio, 20); set(this.limiter.knee, 0);
+      set(this.limiter.attack, 0.001); set(this.limiter.release, Math.max(10, l.release) / 1000);
+      set(this.limGain.gain, dbToGain(0.6 * compCurve(0, lt, 20, 0)));
+      if (this._ceilDb !== l.ceiling) {
+        this._ceilDb = l.ceiling;
+        const n = 4097, cv = new Float32Array(n), top = Math.pow(10, l.ceiling / 20), knee = top * 0.785;
+        for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1, a = Math.abs(x); cv[i] = Math.sign(x) * (a <= knee ? a : knee + (top - knee) * Math.tanh((a - knee) / (top - knee))); }
+        this.ceil.curve = cv;
+      }
+      this.dyn = { comp: c, lim: l };
+      if (this.compOn !== !!c.on) { this.compOn = !!c.on; if (this._wired) this._wire(); }
+    }
+    // for the dynamics window: level going in (peak dB) and how much each stage is turning it down
+    dynMeters() {
+      let p = 0;
+      for (const an of [this.dInL, this.dInR]) { an.getFloatTimeDomainData(this._db); for (let i = 0; i < this._db.length; i++) { const v = Math.abs(this._db[i]); if (v > p) p = v; } }
+      return { in: p > 1e-6 ? 20 * Math.log10(p) : -90, comp: this.compOn ? this.comp.reduction : 0, lim: this.limiterOn ? this.limiter.reduction : 0 };
     }
     setAuto(db) { this.auto.gain.setTargetAtTime(Math.pow(10, db / 20), this.ctx.currentTime, 0.3); }
     setMono(on) {
@@ -111,8 +163,9 @@
       else this.masterOut.connect(this.monitor);
       this.monoOn = on;
     }
-    setMaster({ gain = 0, limiter = true, monitor = false, monitorGain = 0 }) {
+    setMaster({ gain = 0, limiter = true, monitor = false, monitorGain = 0, dyn = null }) {
       this.masterFader.gain.setTargetAtTime(dbToGain(gain), this.ctx.currentTime, 0.02);
+      if (dyn) this.setDynamics(dyn);
       this.setLimiter(limiter);
       this._mon = monitor ? dbToGain(monitorGain) : 0; this._monGain = dbToGain(monitorGain);
       this._applyListen();
@@ -366,5 +419,5 @@
     }
   }
 
-  window.LiveAudio = { Mixer, dbToGain };
+  window.LiveAudio = { compCurve, Mixer, dbToGain };
 })();

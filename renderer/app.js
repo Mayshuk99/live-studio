@@ -3,7 +3,7 @@
   'use strict';
   const S = window.studio;
   const { Engine, makeBars, NEUTRAL, LABEL_PRESETS, LABEL_STYLES, LABEL_ANIMS, labelDesign, labelAnimMs, drawLabel } = window.LiveEngine;
-  const { Mixer } = window.LiveAudio;
+  const { Mixer, compCurve } = window.LiveAudio;
 
   /* ================= helpers ================= */
   const $ = (s, r = document) => r.querySelector(s);
@@ -62,7 +62,7 @@
     shots: { title: 'Shots', hint: 'click = next · double-click = on air' },
     media: { title: 'Service', hint: 'start and end the service' },
     speakers: { title: 'People', hint: 'click = preview, then TAKE · double-click = on screen now' },
-    labels: { title: 'Titles & Graphics', hint: 'click to show / hide' },
+    labels: { title: 'Titles & Graphics', hint: 'click = Preview, then TAKE · double-click = on air now' },
     inputs: { title: 'Cameras & Files' },
     editor: { title: 'Shot Framing', hint: 'zoom and move the picture' },
     color: { title: 'Color & Exposure' }
@@ -2648,6 +2648,7 @@
         tog('🎧', 'monitor', 'Listen on this computer (headphones / speakers)', () => mixer.setMaster(m)),
         tog('MONO', 'mono', 'Listen in mono to check phase — only your headphones, not the stream', () => mixer.setMono(!!m.mono)),
         tog('LIMIT', 'limiter', 'YouTube-safe limiter: keeps peaks at or below −1 dB so the stream never clips', () => mixer.setMaster(m)),
+        el('button', { class: 'tbtn' + (dynCfg().comp.on ? ' on' : ''), title: 'Compressor & limiter: threshold, ratio, attack, release, knee, out gain, ceiling', onclick: openDynamics }, 'DYN'),
         tog('AUTO −14', 'auto', 'Auto level: slowly turns the overall volume up or down to sit at YouTube’s −14 LUFS', () => {}),
         el('span', { class: 'grow' }),
         el('button', { class: 'tbtn', title: 'Sound card, volumes, mute, sync test', onclick: openMixer }, names ? '🎚 Mixer' : '🔌 Connect sound card'))));
@@ -2691,6 +2692,93 @@
       el('div', { class: 'muted', style: 'font-size:.85em;margin-top:8px' }, 'Normally leave these at 0 and mix on your sound desk. LIMIT keeps peaks under −1 dB; AUTO −14 holds the overall loudness at YouTube’s level.'),
       el('div', { class: 'row', style: 'margin-top:14px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => closeModal() }, 'Done')));
     openModal('Audio mixer & sound card', body);
+  }
+  /* ---------- master dynamics: compressor + limiter (like a console's DYN screen) ---------- */
+  const COMP_PRESETS = [
+    ['Speech — gentle', { threshold: -24, ratio: 2.5, attack: 10, release: 150, knee: 6, makeup: 3 }],
+    ['Worship / music — light', { threshold: -20, ratio: 2, attack: 20, release: 250, knee: 8, makeup: 2 }],
+    ['Even it out — stronger', { threshold: -28, ratio: 4, attack: 5, release: 120, knee: 4, makeup: 6 }],
+    ['Console style (−26 dB, 3:1)', { threshold: -26, ratio: 3, attack: 1, release: 144, knee: 2, makeup: 4 }]];
+  const RATIOS = [1, 1.1, 1.3, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 6, 8, 10, 20];
+  function dynCfg() {
+    const m = show.audio.master;
+    m.dyn = m.dyn || {};
+    m.dyn.comp = Object.assign({ on: false, threshold: -24, ratio: 3, attack: 10, release: 150, knee: 2, makeup: 0 }, m.dyn.comp);
+    m.dyn.lim = Object.assign({ ceiling: -1, release: 120 }, m.dyn.lim);
+    return m.dyn;
+  }
+  function openDynamics() {
+    const d = dynCfg(), c = d.comp, l = d.lim, m = show.audio.master;
+    const apply = () => { mixer.setMaster(m); changed(); };
+    const graph = el('canvas', { width: 600, height: 600, class: 'dyn-graph' });
+    const meters = el('canvas', { width: 240, height: 600, class: 'dyn-meters' });
+    const body = el('div');
+    const draw = () => {
+      body.innerHTML = '';
+      const btnOn = (on, label, fn) => el('button', { class: 'btn dyn-on' + (on ? ' on' : ''), onclick: fn }, on ? `${label} ON` : `${label} OFF`);
+      const ri = Math.max(0, RATIOS.findIndex(r => r >= c.ratio - 1e-6));
+      put(body,
+        el('div', { class: 'dyn-wrap' },
+          el('div', { class: 'dyn-col' },
+            el('div', { class: 'row', style: 'gap:8px;margin-bottom:8px' },
+              btnOn(c.on, 'COMPRESSOR', () => { c.on = !c.on; apply(); draw(); }),
+              el('span', { class: 'grow' }),
+              select([['', 'Presets…'], ...COMP_PRESETS.map((p2, i) => [String(i), p2[0]])], '', v => { if (v === '') return; Object.assign(c, COMP_PRESETS[+v][1], { on: true }); apply(); draw(); })),
+            slider({ label: 'Threshold', min: -60, max: 0, step: 0.5, value: c.threshold, reset: -24, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { c.threshold = v; apply(); } }),
+            slider({ label: 'Ratio', min: 0, max: RATIOS.length - 1, step: 1, value: ri, reset: RATIOS.indexOf(3), fmt: v => `${RATIOS[v]}:1`, onInput: v => { c.ratio = RATIOS[v]; apply(); } }),
+            slider({ label: 'Attack', min: 0, max: 120, step: 1, value: c.attack, reset: 10, fmt: v => `${v} ms`, onInput: v => { c.attack = v; apply(); } }),
+            slider({ label: 'Release', min: 10, max: 1000, step: 1, value: c.release, reset: 150, fmt: v => `${v} ms`, onInput: v => { c.release = v; apply(); } }),
+            slider({ label: 'Out gain', min: 0, max: 18, step: 0.5, value: c.makeup, reset: 0, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { c.makeup = v; apply(); } }),
+            el('div', { class: 'row', style: 'gap:10px;align-items:center;margin:6px 0' }, el('span', { class: 'lbl', style: 'width:calc(110px * var(--scale));font-weight:600' }, 'Knee'),
+              el('div', { class: 'seg' }, [['HARD', 0], ['1', 2], ['2', 4], ['3', 6], ['4', 8], ['5', 10]].map(([t, k]) => el('button', { class: 'btn small' + (c.knee === k ? ' sel' : ''), onclick: () => { c.knee = k; apply(); draw(); } }, t)))),
+            el('h3', { style: 'margin-top:14px' }, 'Limiter'),
+            el('div', { class: 'row', style: 'gap:8px;margin-bottom:8px' }, btnOn(!!m.limiter, 'LIMITER', () => { m.limiter = !m.limiter; apply(); draw(); refresh('audio'); })),
+            slider({ label: 'Ceiling', min: -6, max: 0, step: 0.1, value: l.ceiling, reset: -1, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { l.ceiling = v; apply(); } }),
+            slider({ label: 'Release', min: 10, max: 500, step: 1, value: l.release, reset: 120, fmt: v => `${v} ms`, onInput: v => { l.release = v; apply(); } }),
+            el('div', { class: 'muted', style: 'font-size:.82em;margin-top:6px' }, 'The compressor evens out the level; the limiter stops peaks going over the ceiling (YouTube: keep it at −1 dB). Both work on what the stream and recording hear, after the mixer. Double-click a slider to reset it.')),
+          el('div', { class: 'dyn-col dyn-vis' }, graph, meters)),
+        el('div', { class: 'row', style: 'margin-top:12px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('audio'); } }, 'Done')));
+    };
+    // live picture: the curve, where the sound is on it right now, and In / GR / Out meters
+    const hist = { in: -90, comp: 0, lim: 0, out: -90 };
+    const tick = () => {
+      if (!graph.isConnected) return;
+      requestAnimationFrame(tick);
+      const now = performance.now(); if (now - (tick.at || 0) < 33) return; tick.at = now;
+      const M = mixer.dynMeters(), A = rt.MA || { peakL: -90, peakR: -90 };
+      hist.in = Math.max(M.in, hist.in - 1.5); hist.comp = Math.min(M.comp, hist.comp + 0.6); hist.lim = Math.min(M.lim, hist.lim + 0.6); hist.out = Math.max(Math.max(A.peakL, A.peakR), hist.out - 1.5);
+      const g = graph.getContext('2d'), W = graph.width, H = graph.height, pad = 46, S = W - pad - 14;
+      const X = db => pad + (db + 60) / 60 * S, Y = db => 14 + (1 - (db + 60) / 60) * S;
+      g.clearRect(0, 0, W, H); g.fillStyle = '#0a0a0c'; g.fillRect(pad, 14, S, S);
+      g.font = '18px Consolas, monospace'; g.fillStyle = '#8d8d96'; g.textAlign = 'right'; g.textBaseline = 'middle';
+      for (let db = -60; db <= 0; db += 6) {
+        g.fillStyle = '#26262b'; g.fillRect(X(db), 14, 1, S); g.fillRect(pad, Y(db), S, 1);
+        if (db % 12 === 0) { g.fillStyle = '#8d8d96'; g.fillText(String(db), pad - 6, Y(db)); g.textAlign = 'center'; g.fillText(String(db), X(db), 14 + S + 18); g.textAlign = 'right'; }
+      }
+      const out = x => { let y = c.on ? compCurve(x, c.threshold, c.ratio, c.knee) + c.makeup : x; if (m.limiter) y = Math.min(y, l.ceiling); return y; };
+      g.strokeStyle = '#3f3f46'; g.setLineDash([6, 6]); g.beginPath(); g.moveTo(X(-60), Y(-60)); g.lineTo(X(0), Y(0)); g.stroke(); g.setLineDash([]);
+      if (c.on) { g.strokeStyle = 'rgba(234,179,8,.5)'; g.beginPath(); g.moveTo(X(c.threshold), 14); g.lineTo(X(c.threshold), 14 + S); g.stroke(); }
+      if (m.limiter) { g.strokeStyle = 'rgba(239,68,68,.6)'; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(pad, Y(l.ceiling)); g.lineTo(pad + S, Y(l.ceiling)); g.stroke(); g.setLineDash([]); }
+      g.strokeStyle = '#4ade80'; g.lineWidth = 4; g.beginPath();
+      for (let x = -60; x <= 0; x += 0.5) { const y = Math.max(-60, Math.min(0, out(x))); if (x === -60) g.moveTo(X(x), Y(y)); else g.lineTo(X(x), Y(y)); }
+      g.stroke(); g.lineWidth = 1;
+      if (hist.in > -60) { const xi = Math.min(0, hist.in), yo = Math.max(-60, Math.min(0, out(xi))); g.fillStyle = '#fff'; g.beginPath(); g.arc(X(xi), Y(yo), 9, 0, 7); g.fill(); }
+      // meters: In · comp GR · limiter GR · Out
+      const mg = meters.getContext('2d'), mw = meters.width, mh = meters.height, top = 14, bh = mh - 110, bw = 40;
+      mg.clearRect(0, 0, mw, mh);
+      const col = (i, label, v, gr) => {
+        const x = 8 + i * (bw + 16);
+        mg.fillStyle = '#0a0a0c'; mg.fillRect(x, top, bw, bh);
+        if (gr) { const f = Math.min(1, -v / 20); mg.fillStyle = '#f59e0b'; mg.fillRect(x, top, bw, bh * f); }
+        else { const f = Math.max(0, (v + 60) / 60); mg.fillStyle = v > -6 ? '#ef4444' : v > -18 ? '#eab308' : '#22c55e'; mg.fillRect(x, top + bh * (1 - f), bw, bh * f); }
+        mg.fillStyle = '#d4d4d8'; mg.font = '700 28px Inter, Segoe UI, sans-serif'; mg.textAlign = 'center'; mg.fillText(label, x + bw / 2, top + bh + 36);
+        mg.font = '600 24px Consolas, monospace'; mg.fillStyle = '#a1a1aa'; mg.fillText(gr ? (v < -0.05 ? v.toFixed(1) : '0') : (v <= -60 ? '−∞' : v.toFixed(0)), x + bw / 2, top + bh + 76);
+      };
+      col(0, 'In', hist.in, false); col(1, 'GR', hist.comp, true); col(2, 'LIM', hist.lim, true); col(3, 'Out', hist.out, false);
+    };
+    draw();
+    openModal('Dynamics — compressor & limiter', body);
+    requestAnimationFrame(tick);
   }
   function drawMaster(A) {
     if (!masterCanvas.isConnected) return;
