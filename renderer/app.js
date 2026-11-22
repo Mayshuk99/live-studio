@@ -253,11 +253,25 @@
       }
       rt.devices.video = list.filter(d => d.kind === 'videoinput').map(d => ({ id: d.deviceId, label: d.label || 'Camera' }));
       rt.devices.audio = list.filter(d => d.kind === 'audioinput').map(d => ({ id: d.deviceId, label: d.label || 'Audio input' }));
+      rt.devices.out = list.filter(d => d.kind === 'audiooutput' && d.deviceId !== 'communications').map(d => ({ id: d.deviceId, label: d.label || 'Sound output' }));
     } catch (e) { console.warn(e); }
+  }
+  /* headphone / monitor output (e.g. the SSL 2, feeding a loudness meter): remembered by name, because Windows
+     gives devices new ids each time the program starts */
+  async function applyOutput(quiet) {
+    const o = settings.monitorOut;
+    const list = rt.devices.out || [];
+    let dev = null;
+    if (o && o.label) { const same = list.filter(d => d.label === o.label); dev = same[o.idx || 0] || same[0] || null; }
+    try {
+      await mixer.setOutput(dev ? dev.id : '');
+      rt.outNote = o && o.label && !dev ? `“${o.label}” not found — using the Windows default for now` : '';
+    } catch (e) { rt.outNote = e.message; if (!quiet) toast('Could not switch the sound output: ' + e.message, 'error'); }
   }
   navigator.mediaDevices && navigator.mediaDevices.addEventListener('devicechange', async () => {
     await refreshDevices();
     resolveDevices();
+    applyOutput(true);
     for (const c of show.cameras) if (!rt.cams.has(c.id) && rt.devices.video.find(d => d.id === c.deviceId)) openCamera(c);
     for (const a of show.audio.inputs) if (!mixer.strips.has(a.id) && rt.devices.audio.find(d => d.id === a.deviceId)) openAudioInput(a, true);
     refresh('inputs');
@@ -428,6 +442,25 @@
     updatePfl();
   }
 
+  /* busy moments: anything that holds up the program thread for more than 50 ms (shown in the frame monitor) */
+  try {
+    new PerformanceObserver(list => {
+      const L = rt.longTasks || (rt.longTasks = []);
+      for (const e of list.getEntries()) L.push([performance.now(), e.duration]);
+      const cut = performance.now() - 60000; while (L.length && L[0][0] < cut) L.shift();
+    }).observe({ entryTypes: ['longtask'] });
+  } catch (e) { /* not available */ }
+  /* the on-screen size of a canvas, remembered and only re-measured when it actually changes size */
+  const sizeCache = new WeakMap();
+  const sizeObs = new ResizeObserver(es => { for (const e of es) sizeCache.set(e.target, { width: e.contentRect.width, height: e.contentRect.height }); });
+  function cssSize(c) {
+    let r = sizeCache.get(c);
+    if (!r) { const b = c.getBoundingClientRect(); r = { width: b.width, height: b.height }; sizeCache.set(c, r); sizeObs.observe(c); }
+    return r;
+  }
+  // write text / styles only when they change (each write makes the browser redo the page layout)
+  const setText = (n, t) => { if (n.textContent !== t) n.textContent = t; };
+
   /* ================= switching ================= */
   function setPreview(id) {
     rt.previewId = id; engine.previewId = id;
@@ -464,6 +497,8 @@
   function take(kind, msOverride) {
     // a person cued in Preview goes on air with TAKE / CUT (the camera shot stays as it is)
     if (rt.armedSpk && msOverride === undefined) { const id = rt.armedSpk; armSpeaker(null); showSpeaker(id); return; }
+    // a title / graphic cued in Preview: TAKE shows it (or hides it, if it was already on)
+    if (rt.armedGfx && msOverride === undefined) { const it = gfxItems().find(x => x.id === rt.armedGfx); armGfx(null); if (it) { it.toggle(); refresh('labels'); } return; }
     if (engine.inTransition) return;
     const to = rt.previewId, from = engine.programId;
     if (!to || to === from) return;
@@ -1123,6 +1158,9 @@
         row('Frames missed by this computer', `${d.engine}${d.engine ? `  (${(d.engine / Math.max(1, st.frames + d.engine) * 100).toFixed(d.engine / Math.max(1, st.frames + d.engine) < 0.001 ? 3 : 2)}%)` : ''}`, d.engine / Math.max(1, st.frames + d.engine) > 0.001),
         row('…in the last minute', String((st.recent || []).filter(x => performance.now() - x[0] < 60000).reduce((a, x) => a + x[1], 0)), (st.recent || []).filter(x => performance.now() - x[0] < 60000).length > 3),
         row('Longest hiccup', st.worst ? `${Math.round(st.worst)} ms` : '—', st.worst > 100),
+        (() => { const L = (rt.longTasks || []).filter(x => performance.now() - x[0] < 60000), mx = L.reduce((a, x) => Math.max(a, x[1]), 0);
+          return row('Program thread busy > 50 ms (last minute)', L.length ? `${L.length}× · longest ${Math.round(mx)} ms` : 'none', L.length > 2); })(),
+        row('Screen updates (meters, playbars)', rt.uiMs !== undefined ? `${rt.uiMs.toFixed(1)} ms each` : '—', rt.uiMs > 4),
         row('Time to draw one frame', `${st.renderMs.toFixed(1)} ms of ${(1000 / engine.fps).toFixed(1)} ms`, st.renderMs > 1000 / engine.fps),
         el('h3', null, 'This computer'),
         rt.pc && rt.pc.cpu !== null ? [
@@ -1325,9 +1363,9 @@
     const bar = el('div', { class: `tl-bar ${kind} hidden` }, tag, playBtn, buttons.includes('start') ? btns.start : null, btns.back10, now, range, left, btns.fwd10, buttons.includes('fwd60') ? btns.fwd60 : null);
     const update = () => {
       const v = getEl();
-      bar.classList.toggle('hidden', !v);
+      if (bar.classList.contains('hidden') === !!v) bar.classList.toggle('hidden', !v);
       if (!v) return;
-      if (!drag) { range.value = Math.round(v.currentTime / v.duration * 1000); now.textContent = fmtShort(v.currentTime); left.textContent = '−' + fmtShort(v.duration - v.currentTime); }
+      if (!drag) { const rv = String(Math.round(v.currentTime / v.duration * 1000)); if (range.value !== rv) range.value = rv; setText(now, fmtShort(v.currentTime)); setText(left, '−' + fmtShort(v.duration - v.currentTime)); }
       const ic = v.paused ? '▶' : '⏸'; if (playBtn.textContent !== ic) playBtn.textContent = ic;
       const tg = `${v.tagName === 'AUDIO' ? '♪ MUSIC' : '🎞'} ${kind === 'pv' ? 'PREVIEW' : 'ON AIR'}`; if (tag.textContent !== tg) tag.textContent = tg;
     };
@@ -1361,28 +1399,40 @@
     pvListen.textContent = rt.pvListen ? '🎧 Listening' : '🎧 Listen';
   }
   function setPvListen(on) { rt.pvListen = !!on; mixer.resume(); mixer.setListen(on ? 'preview' : 'program'); updatePfl(); }
+  const METER_PTS = [[-60, 0], [-40, 0.1], [-30, 0.2], [-20, 0.36], [-12, 0.56], [-6, 0.75], [-3, 0.87], [0, 1]];
+  function meterFrac(db) {
+    if (db <= -60) return 0; if (db >= 0) return 1;
+    for (let i = 1; i < METER_PTS.length; i++) {
+      const [d1, f1] = METER_PTS[i];
+      if (db <= d1) { const [d0, f0] = METER_PTS[i - 1]; return f0 + (f1 - f0) * (db - d0) / (d1 - d0); }
+    }
+    return 1;
+  }
+  const METER_TICKS = [0, -3, -6, -9, -12, -15, -18, -24, -30, -40, -60];
   /* level meter beside a monitor: dB scale from 0 down to −60 (green / yellow above −18 / red above −6),
      peak-hold line, and the loudest recent peak as a number underneath. scaleSide = which side the numbers go */
   function drawMonMeter(A, cv = monMeterMain, scaleSide = 'left') {
     if (!cv.isConnected) return;
-    const r = cv.getBoundingClientRect(), k = devicePixelRatio;
+    const r = cssSize(cv), k = devicePixelRatio;
     const w = Math.max(10, Math.round(r.width * k)), h = Math.max(10, Math.round(r.height * k));
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     const g = cv.getContext('2d');
     g.clearRect(0, 0, w, h);
     const fs = Math.round(10.5 * k), top = 7 * k, foot = fs * 2.7, mh = h - top - foot;
     if (mh < 20) return;
-    const y = db => top + mh * (1 - Math.max(0, Math.min(1, (db + 60) / 60)));
+    const y = db => top + mh * (1 - meterFrac(db));
     const labW = Math.round(fs * 2.1), gap = 4 * k;
     const bx = scaleSide === 'left' ? labW + gap : 0, bwAll = w - labW - gap;
     const bw = Math.max(3 * k, (bwAll - 3 * k) / 2);
-    // scale: a number every 6 dB (every 12 dB if the meter is short)
-    const step = mh > 230 * k ? 6 : 12;
+    // scale: stretched towards the top (−20 … 0 is over half the height); numbers that would overlap are left out
     g.font = `600 ${fs}px Consolas, ui-monospace, monospace`; g.textBaseline = 'middle';
     g.textAlign = scaleSide === 'left' ? 'right' : 'left';
     const tx = scaleSide === 'left' ? labW - k : bwAll + gap + k;
-    for (let db = 0; db >= -60; db -= step) {
+    let lastY = -1e9;
+    for (const db of METER_TICKS) {
       const yy = Math.round(y(db));
+      if (yy - lastY < fs * 1.15) continue;
+      lastY = yy;
       g.fillStyle = db === 0 ? '#f87171' : db >= -18 ? '#d4d4d8' : '#8b8b94';
       g.fillText(db === 0 ? '0' : String(db), tx, Math.min(Math.max(yy, fs / 2), top + mh));
       g.fillStyle = 'rgba(255,255,255,.18)';
@@ -1755,29 +1805,47 @@
   }
   function openWeb(w) {
     const [pw, ph] = webPageSize(w);
+    // rt.webCanvas holds a small copy just for the thumbnails on screen; the full picture goes straight to the graphics card
     let c = rt.webCanvas.get(w.id);
-    if (!c) { c = el('canvas', { width: pw, height: ph }); rt.webCanvas.set(w.id, c); }
-    c.width = pw; c.height = ph;
-    engine.setSource(w.id, c, 'image');
+    if (!c) { c = el('canvas', { width: 480, height: 270 }); rt.webCanvas.set(w.id, c); }
+    rt.webBuf.delete(w.id);
+    engine.setRawSource(w.id);
     engine.setWeb(engineWeb(w), webWanted(w.id));
     S.webOpen(w.id, { url: w.url, width: pw, height: ph, fps: w.fps, zoom: w.zoom, transparent: w.transparent, css: w.css });
   }
-  function closeWeb(id) { S.webClose(id); engine.removeWeb(id); engine.removeSource(id); rt.webCanvas.delete(id); }
+  function closeWeb(id) { S.webClose(id); engine.removeWeb(id); engine.removeSource(id); rt.webCanvas.delete(id); rt.webBuf.delete(id); }
   const engineWeb = w => ({ id: w.id, rect: w.rect, opacity: w.opacity, key: w.key, fadeMs: w.fadeMs });
+  rt.webBuf = new Map();
   S.onWebFrame(f => {
-    const c = rt.webCanvas.get(f.id);
-    if (!c) return;
-    if (c.width !== f.w || c.height !== f.h) { c.width = f.w; c.height = f.h; }
-    const src = f.data, img = new ImageData(f.rw, f.rh), d = img.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const a = src[i + 3];
-      if (a === 255 || a === 0) { d[i] = src[i + 2]; d[i + 1] = src[i + 1]; d[i + 2] = src[i]; }
-      else { const k = 255 / a; d[i] = Math.min(255, src[i + 2] * k); d[i + 1] = Math.min(255, src[i + 1] * k); d[i + 2] = Math.min(255, src[i] * k); }
-      d[i + 3] = a;
-    }
-    c.getContext('2d').putImageData(img, f.x, f.y);
-    const s2 = engine.sources.get(f.id); if (s2) s2.dirty = true;
+    if (!rt.webCanvas.has(f.id)) return;
+    engine.rawPatch(f.id, f);                         // to the graphics card as it is (no per-pixel work here)
+    // keep the latest full-size pixels so the small on-screen thumbnail can be refreshed now and then
+    let b = rt.webBuf.get(f.id);
+    if (f.full || !b || b.w !== f.w || b.h !== f.h) { if (!f.full) return; b = { w: f.w, h: f.h, px: new Uint8Array(f.w * f.h * 4) }; rt.webBuf.set(f.id, b); }
+    if (f.full) b.px.set(f.data);
+    else { const row = f.rw * 4; for (let r = 0; r < f.rh; r++) b.px.set(f.data.subarray(r * row, r * row + row), ((f.y + r) * f.w + f.x) * 4); }
+    b.dirty = true;
   });
+  // thumbnails of web pages: twice a second, from a sample of the pixels (cheap)
+  setInterval(() => {
+    for (const [id, b] of rt.webBuf) {
+      const c = rt.webCanvas.get(id);
+      if (!c || !b.dirty) continue;
+      b.dirty = false;
+      const tw = Math.min(480, b.w), th = Math.max(1, Math.round(tw * b.h / b.w));
+      if (c.width !== tw || c.height !== th) { c.width = tw; c.height = th; }
+      const img = new ImageData(tw, th), d = img.data, src = b.px;
+      for (let y = 0; y < th; y++) {
+        const sy = Math.floor(y * b.h / th) * b.w;
+        for (let x = 0; x < tw; x++) {
+          const si = (sy + Math.floor(x * b.w / tw)) * 4, di = (y * tw + x) * 4, a = src[si + 3];
+          const k = a ? 255 / a : 0;
+          d[di] = Math.min(255, src[si + 2] * k); d[di + 1] = Math.min(255, src[si + 1] * k); d[di + 2] = Math.min(255, src[si] * k); d[di + 3] = a;
+        }
+      }
+      c.getContext('2d').putImageData(img, 0, 0);
+    }
+  }, 500);
   S.onWebStatus(st => {
     rt.webStatus.set(st.id, st);
     document.querySelectorAll(`[data-web-status="${st.id}"]`).forEach(n => { n.textContent = st.text; n.className = st.ok ? 'muted' : 'status-bad'; });
@@ -2090,7 +2158,10 @@
       const thumb = el('canvas', { width: 320, height: 180, class: 'g-thumb' });
       drawGfxThumb(thumb, it);
       const ds = { gid: it.id }; ds[it.kind === 'label' ? 'label' : it.kind] = it.id;
-      const tile = el('div', { class: `gtile big ${it.kind}` + (on ? ' on' : ''), dataset: ds, draggable: 'true', title: 'Click to show / hide · drag to reorder', onclick: it.toggle },
+      const tile = el('div', { class: `gtile big ${it.kind}` + (on ? ' on' : '') + (rt.armedGfx === it.id ? ' armed' : ''), dataset: ds, draggable: 'true',
+        title: on ? 'On air · click to cue hiding it, then TAKE (Ctrl+G) · double-click to hide right away · drag to reorder' : 'Click to put it in Preview, then TAKE (Ctrl+G) · double-click to show right away · drag to reorder',
+        onclick: () => armGfx(rt.armedGfx === it.id ? null : it.id),
+        ondblclick: () => { armGfx(null); it.toggle(); refresh('labels'); } },
         thumb,
         el('div', { class: 'g-cap' }, el('span', { class: 'g-ico' }, it.kind === 'label' ? 'T' : it.kind === 'pic' ? '🖼' : '🌐'), el('span', { class: 'g-title' }, it.name), keyChip(it.key)),
         el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''),
@@ -2490,10 +2561,27 @@
   // click a person = cue their caption on the Preview screen; TAKE (Ctrl+G) then puts it on air
   function armSpeaker(id) {
     const p = id && show.speakers.find(x => x.id === id);
+    if (p && rt.armedGfx) armGfx(null);
     rt.armedSpk = p ? id : null;
     engine.setPreviewLabel(p ? speakerLabel(p) : null);
     document.querySelectorAll('.spk[data-spk]').forEach(t => t.classList.toggle('armed', t.dataset.spk === rt.armedSpk));
-    const tb = document.querySelector('.take-btn'); if (tb) tb.classList.toggle('armed', !!rt.armedSpk);
+    const tb = document.querySelector('.take-btn'); if (tb) tb.classList.toggle('armed', !!(rt.armedSpk || rt.armedGfx));
+    renderTally();
+  }
+  /* titles & graphics: click = into Preview (shown over the live shot), TAKE / Ctrl+G = on air, double-click = now */
+  function armGfx(id) {
+    const it = id && gfxItems().find(x => x.id === id);
+    if (it && rt.armedSpk) armSpeaker(null);
+    rt.armedGfx = it ? id : null;
+    if (!it) { engine.setPreviewCue(null); if (!rt.armedSpk) engine.setPreviewLabel(null); }
+    else {
+      const on = it.on();
+      // already on air → Preview shows the live shot without it (TAKE hides it)
+      if (it.kind === 'label') { engine.setPreviewCue(on ? { hide: id } : null); engine.setPreviewLabel(on ? null : it.o); }
+      else { engine.setPreviewLabel(null); engine.setPreviewCue(on ? { hide: id } : { webId: id }); }
+    }
+    document.querySelectorAll('.gtile[data-gid]').forEach(t => t.classList.toggle('armed', t.dataset.gid === rt.armedGfx));
+    const tb = document.querySelector('.take-btn'); if (tb) tb.classList.toggle('armed', !!(rt.armedSpk || rt.armedGfx));
     renderTally();
   }
   function spkHint(t) {
@@ -2588,6 +2676,16 @@
         el('button', { class: 'btn', onclick: async () => { await refreshDevices(); toast(`Found ${rt.devices.audio.length} audio devices.`); openMixer(); } }, '↻ Rescan devices'),
         el('button', { class: 'btn', onclick: openSyncTest }, '⏱ Sync test')),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Click ⚙ on an input to pick which sound card and which channels it uses (capture card, SSL, etc.).'),
+      el('h3', null, 'Headphones / monitor output'),
+      el('div', { class: 'field' }, el('span', null, 'Send the sound to'),
+        select([['', 'Windows default output'], ...(rt.devices.out || []).filter(d => d.id !== 'default').map(d => [d.label + '|' + (rt.devices.out.filter(x => x.label === d.label).indexOf(d)), d.label])],
+          settings.monitorOut && settings.monitorOut.label ? settings.monitorOut.label + '|' + (settings.monitorOut.idx || 0) : '',
+          async v => { if (!v) settings.monitorOut = null; else { const i = v.lastIndexOf('|'); settings.monitorOut = { label: v.slice(0, i), idx: +v.slice(i + 1) }; } saveSettings(); await applyOutput(); openMixer(); })),
+      rt.outNote ? el('div', { class: 'status-bad', style: 'font-size:.85em;margin-bottom:6px' }, rt.outNote) : null,
+      el('div', { class: 'row wrap', style: 'gap:16px;margin:4px 0' },
+        check(' Send the program sound there all the time (same as 🎧)', !!show.audio.master.monitor, v => { show.audio.master.monitor = v; mixer.setMaster(show.audio.master); changed(); refresh('audio'); })),
+      slider({ label: 'Output level', min: -40, max: 0, step: 0.5, value: show.audio.master.monitorGain ?? -6, reset: -6, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { show.audio.master.monitorGain = v; mixer.setMaster(show.audio.master); changed(); } }),
+      el('div', { class: 'muted', style: 'font-size:.85em' }, 'For example choose the SSL 2 so its outputs feed your TC Electronic meter. The stream and the recording are not affected. 🎧 Listen (Preview) also goes here.'),
       el('h3', null, 'Master volume'),
       el('div', { class: 'ch master-ch' }, el('span', { class: 'ch-mute ghost' }, ''), el('div', { class: 'ch-name' }, 'MASTER'), mFader, mDb, el('span')),
       el('div', { class: 'muted', style: 'font-size:.85em;margin-top:8px' }, 'Normally leave these at 0 and mix on your sound desk. LIMIT keeps peaks under −1 dB; AUTO −14 holds the overall loudness at YouTube’s level.'),
@@ -2596,19 +2694,20 @@
   }
   function drawMaster(A) {
     if (!masterCanvas.isConnected) return;
-    const fit = (c) => { const r = c.getBoundingClientRect(); const w = Math.max(10, Math.round(r.width * devicePixelRatio)), h = Math.max(10, Math.round(r.height * devicePixelRatio)); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } return c.getContext('2d'); };
+    const fit = (c) => { const r = cssSize(c); const w = Math.max(10, Math.round(r.width * devicePixelRatio)), h = Math.max(10, Math.round(r.height * devicePixelRatio)); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } return c.getContext('2d'); };
     let g = fit(masterCanvas); const W = masterCanvas.width, H = masterCanvas.height, k = devicePixelRatio;
     g.clearRect(0, 0, W, H);
     const top = 20 * k, bot = 20 * k, mh = H - top - bot;
-    const y = db => top + mh * (1 - Math.max(0, Math.min(1, (db + 60) / 60)));
+    const y = db => top + mh * (1 - meterFrac(db));
     const scaleW = 24 * k, gap = 5 * k, bw = (W - scaleW - gap * 3) / 2;
     g.font = `${10 * k}px Inter, Segoe UI, sans-serif`; g.textAlign = 'right'; g.textBaseline = 'middle';
-    for (const d of [0, -6, -12, -18, -24, -36, -48, -60]) { g.fillStyle = '#8d8d96'; g.fillText(String(d), scaleW - 4 * k, y(d)); g.fillStyle = '#2a2a2f'; g.fillRect(scaleW, y(d), W - scaleW, 1); }
+    let lastY = -1e9;
+    for (const d of METER_TICKS) { const yy = y(d); if (yy - lastY < 11 * k) continue; lastY = yy; g.fillStyle = d >= -6 ? '#d4d4d8' : '#8d8d96'; g.fillText(String(d), scaleW - 4 * k, yy); g.fillStyle = '#2a2a2f'; g.fillRect(scaleW, yy, W - scaleW, 1); }
     const bar = (i, peak, rms, hold, clip, label) => {
       const x = scaleW + gap + i * (bw + gap);
       g.fillStyle = '#0a0a0c'; g.fillRect(x, top, bw, mh);
       const grad = g.createLinearGradient(0, top + mh, 0, top);
-      grad.addColorStop(0, '#15803d'); grad.addColorStop(0.7, '#22c55e'); grad.addColorStop(0.8, '#eab308'); grad.addColorStop(0.9, '#f97316'); grad.addColorStop(0.98, '#ef4444');
+      grad.addColorStop(0, '#15803d'); grad.addColorStop(meterFrac(-18), '#22c55e'); grad.addColorStop(meterFrac(-12), '#eab308'); grad.addColorStop(meterFrac(-6), '#f97316'); grad.addColorStop(meterFrac(-2), '#ef4444');
       g.fillStyle = grad; g.fillRect(x, y(peak), bw, top + mh - y(peak));
       g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(x, y(rms), bw, top + mh - y(rms));
       g.fillStyle = hold > -3 ? '#ef4444' : '#f4f4f5'; g.fillRect(x, y(hold) - 1.5 * k, bw, 3 * k);
@@ -2820,25 +2919,32 @@
     }
   }
   function tickMeters() {
+    // meters, scope and playbars refresh 30 times a second: smooth to the eye, and it leaves the
+    // program thread free for the video (which runs at the full frame rate)
+    const tNow = performance.now();
+    if (tNow - (rt.uiAt || 0) < 30) { requestAnimationFrame(tickMeters); return; }
+    rt.uiAt = tNow;
     const lv = mixer.levels();
     const MA = mixer.masterAnalysis(); rt.MA = MA;
     drawMaster(MA); drawMonMeter(MA, monMeterMain, 'left'); drawMonMeter(mixer.previewAnalysis(), pvMeter, 'right');
     for (const [id, m] of rt.meters) {
       const db = lv[id];
       if (db === undefined) continue;
-      m.i.style.clipPath = `inset(0 ${100 - clamp((db + 60) / 72, 0, 1) * 100}% 0 0)`; // same scale as the fader (−60 … +12 dB); colours stay fixed to the scale
+      const cp = `inset(0 ${(100 - clamp((db + 60) / 72, 0, 1) * 100).toFixed(1)}% 0 0)`; if (m.cp !== cp) { m.cp = cp; m.i.style.clipPath = cp; } // same scale as the fader (−60 … +12 dB); colours stay fixed to the scale
     }
     // media progress on program monitor
     const s = getShot(engine.programId);
     const mid = s ? mediaOf(s)[0] : null;
     const f = mid && rt.files.get(mid);
     if (f && f.el && f.el.duration && !f.el.loop) {
-      progInfo.classList.remove('hidden'); progBar.classList.remove('hidden');
-      progInfo.textContent = `−${fmtShort(f.el.duration - f.el.currentTime)}`;
-      progBar.firstChild.style.width = `${(f.el.currentTime / f.el.duration) * 100}%`;
-    } else { progInfo.classList.add('hidden'); progBar.classList.add('hidden'); }
+      if (progInfo.classList.contains('hidden')) { progInfo.classList.remove('hidden'); progBar.classList.remove('hidden'); }
+      setText(progInfo, `−${fmtShort(f.el.duration - f.el.currentTime)}`);
+      const wd = `${((f.el.currentTime / f.el.duration) * 100).toFixed(1)}%`; if (progBar.firstChild.style.width !== wd) progBar.firstChild.style.width = wd;
+    } else if (!progInfo.classList.contains('hidden')) { progInfo.classList.add('hidden'); progBar.classList.add('hidden'); }
     timelineLive.update(); timelinePv.update();
-    timeline.classList.toggle('hidden', timelineLive.bar.classList.contains('hidden') && timelinePv.bar.classList.contains('hidden'));
+    const tlHide = timelineLive.bar.classList.contains('hidden') && timelinePv.bar.classList.contains('hidden');
+    if (timeline.classList.contains('hidden') !== tlHide) timeline.classList.toggle('hidden', tlHide);
+    const spent = performance.now() - tNow; rt.uiMs = rt.uiMs === undefined ? spent : rt.uiMs * 0.95 + spent * 0.05;
     requestAnimationFrame(tickMeters);
   }
 
@@ -3254,6 +3360,7 @@
     ]);
     // sound cards after the cameras: a capture card can refuse audio while its video is still starting
     await refreshDevices(); resolveDevices();
+    applyOutput(true);
     await Promise.all(show.audio.inputs.map(a => openAudioInput(a, true)));
     refreshAll();
     if (engine.programId === 'shot_hold') refreshOnAir(getShot('shot_hold')); // music before the service starts with the holding slide
@@ -3272,5 +3379,5 @@
   if (S.pcStats) { const poll = () => S.pcStats().then(p2 => { rt.pc = p2; }).catch(() => {}); poll(); setInterval(poll, 3000); }
   setTimeout(resetFrameStats, 4000); // don't count the start-up hiccups
   ytInit().catch(e => console.warn('youtube', e));
-  window.__live = { engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack };
+  window.__live = { engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb };
 })();

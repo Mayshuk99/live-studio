@@ -95,7 +95,13 @@
         g.fillText(lines[n++ % lines.length], c.width / 2, c.height / 2);
         const d = g.getImageData(0, 0, c.width, c.height).data, out = new Uint8Array(d.length);
         for (let i = 0; i < d.length; i += 4) { const a = d[i + 3] / 255; out[i] = d[i + 2] * a; out[i + 1] = d[i + 1] * a; out[i + 2] = d[i] * a; out[i + 3] = d[i + 3]; }
-        webListeners.frame.forEach(cb => cb({ id, w: c.width, h: c.height, x: 0, y: 0, rw: c.width, rh: c.height, data: out }));
+        // like the real app: the whole picture first, then only the strip that changed
+        if (!n || n === 1) webListeners.frame.forEach(cb => cb({ id, full: true, w: c.width, h: c.height, x: 0, y: 0, rw: c.width, rh: c.height, data: out }));
+        else {
+          const x = Math.round(c.width * 0.08), y = Math.round(c.height * 0.25), rw = Math.round(c.width * 0.84), rh = Math.round(c.height * 0.5), part = new Uint8Array(rw * rh * 4);
+          for (let r = 0; r < rh; r++) part.set(out.subarray(((y + r) * c.width + x) * 4, ((y + r) * c.width + x + rw) * 4), r * rw * 4);
+          webListeners.frame.forEach(cb => cb({ id, full: false, w: c.width, h: c.height, x, y, rw, rh, data: part }));
+        }
       };
       webListeners.status.forEach(cb => cb({ id, ok: true, text: 'Browser preview (simulated page)' }));
       tick(); webTimers.set(id, setInterval(tick, 2500));

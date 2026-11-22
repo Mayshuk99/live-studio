@@ -118,6 +118,11 @@
       this._applyListen();
     }
     /* which sound goes to this computer's headphones / speakers: the programme (when 🎧 is on) or the Preview shot */
+    // which sound device the headphone / monitor sound goes to ('' = the Windows default)
+    async setOutput(deviceId) {
+      if (!this.ctx.setSinkId) throw new Error('Choosing the output is not supported here.');
+      await this.ctx.setSinkId(deviceId || '');
+    }
     setListen(which) { this.listen = which; this._applyListen(); }
     _applyListen() {
       const t = this.ctx.currentTime, pv = this.listen === 'preview';

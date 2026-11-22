@@ -548,3 +548,7 @@ textarea { width: 100%; box-sizing: border-box; }
 
 .slider .val { white-space: nowrap; }
 .shot-mix .slider, #modal .slider:has(.val) { grid-template-columns: calc(110px * var(--scale)) 1fr calc(70px * var(--scale)); }
+
+.gtile.armed { outline: 3px solid #22c55e; outline-offset: -3px; }
+.gtile.armed::after { content: 'IN PREVIEW'; position: absolute; left: 8px; top: 6px; padding: 2px 6px; border-radius: 4px; background: #16a34a; color: #fff; font-weight: 800; font-size: .68em; letter-spacing: .06em; }
+.gtile.on.armed::after { content: 'HIDE ON TAKE'; background: #b45309; }

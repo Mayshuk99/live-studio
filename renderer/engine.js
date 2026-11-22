@@ -35,9 +35,11 @@
   uniform int u_keyOn;       // remove one background colour from an overlay (web pages)
   uniform vec3 u_keyColor;
   uniform float u_keyTol;
+  uniform int u_bgra;        // web-page pictures arrive as BGRA with premultiplied alpha
   void main() {
     if (u_mode == 2) { o = vec4(u_solid.rgb, u_solid.a * u_opacity); return; }
     vec4 t = texture(u_tex, v_uv);
+    if (u_bgra == 1) { t = vec4(t.b, t.g, t.r, t.a); if (t.a > 0.0) t.rgb = t.rgb / t.a; }
     if (u_mode == 1) {
       float a = t.a;
       if (u_keyOn == 1) { float d = distance(t.rgb, u_keyColor); a *= smoothstep(u_keyTol, u_keyTol + 0.12, d); }
@@ -131,7 +133,7 @@
       gl.useProgram(p);
       this.u = {};
       ['u_dst', 'u_src', 'u_tex', 'u_mode', 'u_solid', 'u_opacity', 'u_exposure', 'u_contrast', 'u_saturation',
-        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra', 'u_keyOn', 'u_keyColor', 'u_keyTol'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
+        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra', 'u_keyOn', 'u_keyColor', 'u_keyTol', 'u_bgra'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
       const vao = gl.createVertexArray();
       gl.bindVertexArray(vao);
       const buf = gl.createBuffer();
@@ -173,6 +175,20 @@
       this.sources.set(id, s);
       return s;
     }
+    /* a web page's picture: raw BGRA pixels sent in pieces (only what changed), uploaded straight to the graphics card */
+    setRawSource(id) {
+      this.removeSource(id);
+      const s = { el: null, kind: 'raw', tex: this._newTex(), w: 0, h: 0, ready: false, uploaded: false, patches: [] };
+      this.sources.set(id, s);
+      return s;
+    }
+    rawPatch(id, f) {
+      const s = this.sources.get(id);
+      if (!s || s.kind !== 'raw') return;
+      if (f.full) s.patches = [];          // a whole picture replaces anything still waiting
+      s.patches.push(f);
+      if (s.patches.length > 120) s.patches = s.patches.slice(-60); // never let a backlog build up
+    }
     removeSource(id) {
       const s = this.sources.get(id);
       if (s) { this.gl.deleteTexture(s.tex); this.sources.delete(id); }
@@ -180,6 +196,7 @@
     sourceSize(id) {
       const s = this.sources.get(id);
       if (!s) return null;
+      if (s.kind === 'raw') return s.w && s.h ? { w: s.w, h: s.h } : null;
       const el = s.el;
       const w = el.videoWidth || el.naturalWidth || el.width || 0;
       const h = el.videoHeight || el.naturalHeight || el.height || 0;
@@ -192,6 +209,21 @@
       if (!s) return null;
       const el = s.el;
       const gl = this.gl;
+      if (s.kind === 'raw') {
+        if (!s.patches.length) return s;
+        gl.bindTexture(gl.TEXTURE_2D, s.tex);
+        for (const f of s.patches) {
+          if (f.full || f.w !== s.w || f.h !== s.h) {
+            if (!f.full) continue;           // a piece for a size we don't have yet: wait for the whole picture
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, f.w, f.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, f.data);
+            s.w = f.w; s.h = f.h; s.uploaded = true; s.ready = true;
+          } else if (s.uploaded) {
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, f.x, f.y, f.rw, f.rh, gl.RGBA, gl.UNSIGNED_BYTE, f.data);
+          }
+        }
+        s.patches = [];
+        return s;
+      }
       if (s.kind === 'video') {
         if (el.readyState < 2 || !el.videoWidth) { s.ready = false; return s; }
         if (s.rvfc && !s.fresh && s.uploaded) {
@@ -242,6 +274,8 @@
       PL.data = data ? Object.assign({}, data) : null; PL.dirty = true;
     }
     labelVisible(id) { const L = this.labels.get(id); return !!(L && L.target > 0); }
+    // a graphic cued in Preview: Preview shows the live shot with it (webId = a picture / web page), or without it (program only)
+    setPreviewCue(cue) { this.previewCue = cue || null; }
 
     /* ---------- web page overlays (e.g. live translation captions) ---------- */
     setWeb(cfg, visible) {
@@ -260,12 +294,19 @@
         if (w.alpha < w.target) w.alpha = Math.min(w.target, w.alpha + step);
         else if (w.alpha > w.target) w.alpha = Math.max(w.target, w.alpha - step);
         if (w.alpha <= 0) continue;
+        this._drawWebLayer(w, id, ease(w.alpha));
+      }
+    }
+    _drawWebLayer(w, id, alpha) {
+      const gl = this.gl;
+      {
         const d = w.data, s = this.sources.get(d.src || id);
-        if (!s || !s.ready) continue;
+        if (!s || !s.ready) return;
         const r = d.rect || [0, 0, 1, 1];
         gl.bindTexture(gl.TEXTURE_2D, s.tex);
         gl.uniform1i(this.u.u_mode, 1);
-        gl.uniform1f(this.u.u_opacity, ease(w.alpha) * (d.opacity ?? 1));
+        gl.uniform1i(this.u.u_bgra, s.kind === 'raw' ? 1 : 0);
+        gl.uniform1f(this.u.u_opacity, alpha * (d.opacity ?? 1));
         const k = d.key || {};
         gl.uniform1i(this.u.u_keyOn, k.on ? 1 : 0);
         const hex = /^#?([0-9a-f]{6})$/i.exec(k.color || '#000000'), n = hex ? parseInt(hex[1], 16) : 0;
@@ -275,6 +316,7 @@
         gl.uniform4fv(this.u.u_src, [0, 0, 1, 1]);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         gl.uniform1i(this.u.u_keyOn, 0);
+        gl.uniform1i(this.u.u_bgra, 0);
       }
     }
 
@@ -450,45 +492,41 @@
       if (this.trans) { addShot(shot(this.trans.from)); addShot(shot(this.trans.to)); }
       addShot(shot(this.previewId));
       for (const [id, w] of this.webs) if (w.alpha > 0 || w.target > 0) need.add(w.data.src || id);
-      const thumbsDue = now - this.lastThumbAt > this.thumbEvery;
-      if (thumbsDue) {
-        for (const id of this.thumbs.keys()) addShot(shot(id));
-        for (const sid of this.sourceViews.values()) need.add(sid);
-      }
+      if (this.previewCue && this.previewCue.webId) { const w = this.webs.get(this.previewCue.webId); if (w) need.add(w.data.src || this.previewCue.webId); }
+      // thumbnails + small source views are refreshed a couple at a time, in turn, so no frame has to do them all
+      const views = [...this.thumbs.entries()].map(([id, cnv]) => ['shot', id, cnv]).concat([...this.sourceViews.entries()].map(([cnv, sid]) => ['src', sid, cnv])).filter(v => v[2].isConnected);
+      const per = views.length ? Math.max(1, Math.ceil(views.length * (1000 / this.fps) / this.thumbEvery)) : 0;
+      const due = [];
+      for (let k = 0; k < Math.min(per, views.length); k++) due.push(views[(this._thumbIdx = ((this._thumbIdx || 0) + 1) % views.length)]);
+      for (const [kind, id, cnv] of due) { if (kind === 'shot') addShot(shot(id)); else need.add(id); }
       for (const id of need) this._upload(id);
-
-      // thumbnails + source views (small, rendered into a corner then copied)
-      if (thumbsDue) {
-        this.lastThumbAt = now;
+      // thumbnails + source views (small, rendered into a corner then copied) — only the few due this frame
+      if (due.length) {
         const tw = 320, th = 180;
-        for (const [id, cnv] of this.thumbs) {
-          if (!cnv.isConnected) continue;
-          const s = shot(id);
+        for (const [kind, id, cnv] of due) {
           this._viewport(tw, th);
-          if (s) this._drawShot(s, 1, false, false);
-          this._copyTo(cnv.getContext('2d'), tw, th);
-        }
-        for (const [cnv, sid] of this.sourceViews) {
-          if (!cnv.isConnected) { this.sourceViews.delete(cnv); continue; }
-          this._viewport(tw, th);
-          const sz = this.sourceSize(sid);
-          if (sz) {
-            const sa = sz.w / sz.h, da = 16 / 9;
-            let r = [0, 0, 1, 1];
-            if (sa > da) { const h = da / sa; r = [0, (1 - h) / 2, 1, h]; }
-            else { const w = sa / da; r = [(1 - w) / 2, 0, w, 1]; }
-            this._video(sid, r, [0, 0, 1, 1], 1, false);
+          if (kind === 'shot') { const s = shot(id); if (s) this._drawShot(s, 1, false, false); }
+          else {
+            const sz = this.sourceSize(id);
+            if (sz) {
+              const sa = sz.w / sz.h, da = 16 / 9;
+              let r = [0, 0, 1, 1];
+              if (sa > da) { const h = da / sa; r = [0, (1 - h) / 2, 1, h]; }
+              else { const w = sa / da; r = [(1 - w) / 2, 0, w, 1]; }
+              this._video(id, r, [0, 0, 1, 1], 1, false);
+            }
           }
           this._copyTo(cnv.getContext('2d'), tw, th);
         }
       }
+      for (const cnv of this.sourceViews.keys()) if (!cnv.isConnected) this.sourceViews.delete(cnv);
 
       // preview monitor
       if (this.previewCtx) {
         const pw = Math.max(320, Math.min(this.W, this.previewCtx.canvas.width)), ph = Math.round(pw * this.H / this.W); // drawn at the exact size it is shown, so it stays sharp
         this._viewport(pw, ph);
         // with a caption cued, Preview shows the LIVE shot plus the caption: exactly what viewers will get
-        const cued = this.previewLabel && this.previewLabel.data;
+        const cued = (this.previewLabel && this.previewLabel.data) || this.previewCue;
         const ps = shot(cued ? (this.trans ? this.trans.to : this.programId) : this.previewId);
         if (ps) this._drawShot(ps, 1, true, this.zebra);
         const PL = this.previewLabel;
@@ -500,6 +538,8 @@
           gl.uniform4fv(this.u.u_dst, [0, 0, 1, 1]); gl.uniform4fv(this.u.u_src, [0, 0, 1, 1]);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         }
+        const cw = this.previewCue && this.previewCue.webId && this.webs.get(this.previewCue.webId);
+        if (cw) this._drawWebLayer(cw, this.previewCue.webId, 1);
         this._copyTo(this.previewCtx, pw, ph);
       }
 
@@ -526,16 +566,21 @@
       const bp = clamp((now - b.start) / b.dur, 0, 1);
       b.v = b.from + (b.to - b.from) * bp;
       if (b.v > 0.001) this._solid([0, 0, 1, 1], [0, 0, 0, 1], b.v);
+      if (this._capTrack && this._capTrack.readyState === 'live' && this._capTrack.requestFrame) this._capTrack.requestFrame();
 
       this.stats.renderMs = performance.now() - t0;
       this._fpsCount++;
       if (now - this._fpsAt >= 1000) { this.stats.fps = Math.round(this._fpsCount * 1000 / (now - this._fpsAt)); this._fpsCount = 0; this._fpsAt = now; }
     }
 
-    _tick() {
+    _tick(fromTimer) {
       const now = performance.now();
       const interval = 1000 / this.fps;
-      if (this._next && now < this._next - 1.5) return;
+      // the timer is only a backup for when the window is minimised / covered and the screen refresh stops
+      if (fromTimer && now - (this._lastRaf || 0) < interval * 2.5) return;
+      // render on the refresh nearest to each frame's slot (half a frame early is fine): no skipped refreshes,
+      // so every refresh carries a new frame and the encoder gets an even 60 a second
+      if (this._next && now < this._next - interval * 0.5) return;
       // frame counter: a frame is "missed" only when it comes out a whole frame (or more) behind schedule.
       // A frame that is a few ms late still goes out in its own slot and is not a drop.
       if (this._next) {
@@ -548,16 +593,16 @@
     start() {
       if (this.running) return;
       this.running = true;
-      const raf = () => { if (!this.running) return; requestAnimationFrame(raf); this._tick(); };
+      const raf = () => { if (!this.running) return; requestAnimationFrame(raf); this._lastRaf = performance.now(); this._tick(false); };
       requestAnimationFrame(raf);
       // keeps rendering when the window is minimised or covered
-      this._timer = setInterval(() => this._tick(), Math.max(4, 1000 / this.fps / 2));
+      this._timer = setInterval(() => this._tick(true), Math.max(4, 1000 / this.fps / 2));
     }
     stop() { this.running = false; clearInterval(this._timer); }
     setFps(fps) {
       this.fps = fps; this.lastFrameAt = 0; this._next = 0; // changing the rate is not a dropped frame
       clearInterval(this._timer);
-      if (this.running) this._timer = setInterval(() => this._tick(), Math.max(4, 1000 / fps / 2));
+      if (this.running) this._timer = setInterval(() => this._tick(true), Math.max(4, 1000 / fps / 2));
       this._stream = null;
     }
     setSize(w, h) {
@@ -568,7 +613,9 @@
       this._stream = null;
     }
     videoTrack() {
-      if (!this._stream || this._stream.getVideoTracks()[0].readyState !== 'live') this._stream = this.canvas.captureStream(this.fps);
+      // captured on request: the engine hands over each finished program frame itself (see the end of _render),
+      // so the encoder gets exactly the frames drawn — none skipped by a separate capture timer
+      if (!this._stream || this._stream.getVideoTracks()[0].readyState !== 'live') { this._stream = this.canvas.captureStream(0); this._capTrack = this._stream.getVideoTracks()[0]; }
       return this._stream.getVideoTracks()[0];
     }
   }

@@ -305,10 +305,27 @@ function webOpen(id, cfg) {
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
   wc.on('paint', (e, dirty, image) => {
     if (webPages.get(id) !== entry) return;
-    // always send the whole page picture: simple and correct with Windows display scaling (paints only happen when the page changes)
+    // Send only the part of the page that changed (usually a line of text) instead of the whole 1920×1080 picture.
+    // The whole picture is sent first, after a resize/reload, when most of the page changed, or if the
+    // picture is scaled by Windows display settings (then the changed area can't be mapped exactly).
     const size = image.getSize();
-    const buf = image.toBitmap(); // BGRA, premultiplied
-    webSend('web:frame', { id, w: size.width, h: size.height, x: 0, y: 0, rw: size.width, rh: size.height, data: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) });
+    const unscaled = size.width === width && size.height === height;
+    const d = dirty || { x: 0, y: 0, width: size.width, height: size.height };
+    const big = d.width * d.height > size.width * size.height * 0.4;
+    // (plus a whole picture every 5 s as a safety net, so any piece that went wrong is corrected quickly)
+    if (!entry.sentFull || entry.needFull || !unscaled || big || entry.w !== size.width || entry.h !== size.height || Date.now() - (entry.fullAt || 0) > 5000) {
+      const buf = image.toBitmap(); // BGRA, premultiplied
+      entry.sentFull = true; entry.needFull = false; entry.w = size.width; entry.h = size.height; entry.fullAt = Date.now();
+      webSend('web:frame', { id, full: true, w: size.width, h: size.height, x: 0, y: 0, rw: size.width, rh: size.height, data: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) });
+      return;
+    }
+    const x = Math.max(0, Math.floor(d.x)), y = Math.max(0, Math.floor(d.y));
+    const rw = Math.min(size.width - x, Math.ceil(d.width)), rh = Math.min(size.height - y, Math.ceil(d.height));
+    if (rw <= 0 || rh <= 0) return;
+    const part = image.crop({ x, y, width: rw, height: rh }), ps = part.getSize();
+    if (ps.width !== rw || ps.height !== rh) { entry.needFull = true; wc.invalidate(); return; } // unexpected: resend everything
+    const buf = part.toBitmap();
+    webSend('web:frame', { id, full: false, w: size.width, h: size.height, x, y, rw, rh, data: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) });
   });
   const css = () => {
     let c = cfg.transparent ? 'html, body { background: transparent !important; background-color: transparent !important; }\n' : '';
