@@ -278,7 +278,6 @@
       }
     }
 
-    _drawLabelCanvas(L) { drawLabel(L.ctx, this.W, this.H, L.data); }
 
     /* ---------- program control ---------- */
     cut(shotId) {
@@ -397,24 +396,27 @@
     _drawLabels(now, dt) {
       const gl = this.gl;
       for (const L of this.labels.values()) {
-        const D = labelDesign(L.data || {});
-        const step = D.fadeMs > 0 ? dt / D.fadeMs : 1;
+        const d = L.data || {};
+        const out = L.target < L.alpha;
+        const ms = labelAnimMs(d, out);
+        const step = ms > 0 ? dt / ms : 1;
         if (L.alpha < L.target) L.alpha = Math.min(L.target, L.alpha + step);
         else if (L.alpha > L.target) L.alpha = Math.max(L.target, L.alpha - step);
-        if (L.alpha <= 0) continue;
-        if (L.dirty) {
-          this._drawLabelCanvas(L);
+        if (L.alpha <= 0) { L.shown = null; continue; }
+        if (L.canvas.width !== this.W || L.canvas.height !== this.H) { L.canvas.width = this.W; L.canvas.height = this.H; L.dirty = true; }
+        // while coming in or going out the label is redrawn every frame at its point in the animation
+        const state = L.alpha >= 1 ? 'full' : (out ? 'o' : 'i') + L.alpha.toFixed(4);
+        if (L.dirty || L.shown !== state) {
+          drawLabel(L.ctx, this.W, this.H, d, L.alpha, out);
           gl.bindTexture(gl.TEXTURE_2D, L.tex);
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, L.canvas);
-          L.dirty = false;
+          L.dirty = false; L.shown = state;
         }
-        const a = ease(L.alpha);
-        let slide = 0, rise = 0;
-        if (D.anim === 'slide') { const al = D.position[1]; if (al === 'l') slide = (1 - a) * -0.02; else if (al === 'r') slide = (1 - a) * 0.02; else rise = (1 - a) * 0.03; }
         gl.bindTexture(gl.TEXTURE_2D, L.tex);
         gl.uniform1i(this.u.u_mode, 1);
-        gl.uniform1f(this.u.u_opacity, a);
-        gl.uniform4fv(this.u.u_dst, [slide, rise, 1, 1]);
+        gl.uniform1i(this.u.u_keyOn, 0);
+        gl.uniform1f(this.u.u_opacity, 1);
+        gl.uniform4fv(this.u.u_dst, [0, 0, 1, 1]);
         gl.uniform4fv(this.u.u_src, [0, 0, 1, 1]);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }
@@ -572,53 +574,270 @@
   }
 
   /* ---------- label designs ----------
-   * A label's look is a "design". Presets are starting points; every value can be changed in the designer. */
+   * A label's look is a "design". Presets are starting points; every value can be changed in the designer.
+   * A label is built from parts (boxes, accent bars, text lines); the entrance animation moves, clips or
+   * fades each part, so a design can build itself up (bar first, then the name, then the second line). */
+  const LBL_BASE = {
+    font: 'Segoe UI', size: 1, bold: true, italic: false, upper: false, subUpper: false, subSpacing: 0, subSize: 1, subAccent: false,
+    textColor: '#ffffff', subColor: '#ffffff', bgColor: '#0a0c12', bgOpacity: 0.88, bar: 'left', barWidth: 12, radius: 0,
+    position: 'bl', margin: 0.095, shadow: false, anim: 'slide', animOut: 'reverse', fadeMs: 300,
+    layout: 'stack', subBox: 'auto', skew: 0, fadeEdge: false, accentTitle: false
+  };
   const LABEL_PRESETS = {
     'lower':       { font: 'Segoe UI', size: 1, bold: true, upper: false, textColor: '#ffffff', subColor: '#ffffff', bgColor: '#0a0c12', bgOpacity: 0.88, bar: 'left', radius: 0, position: 'bl', margin: 0.095, shadow: false, anim: 'slide', fadeMs: 300 },
     'lower-light': { font: 'Segoe UI', size: 1, bold: true, upper: false, textColor: '#0b1220', subColor: '#ffffff', bgColor: '#ffffff', bgOpacity: 0.96, bar: 'left', radius: 0, position: 'bl', margin: 0.095, shadow: false, anim: 'slide', fadeMs: 300 },
+    'modern':      { layout: 'panel', bgColor: '#0b1020', bgOpacity: 0.85, fadeEdge: true, bar: 'top', barWidth: 8, subUpper: true, subSpacing: 3, subSize: 0.82, subAccent: true, position: 'bl', margin: 0.085, anim: 'wipe', fadeMs: 400 },
+    'news':        { layout: 'stack', accentTitle: true, subBox: 'box', bgColor: '#0a0c12', bgOpacity: 0.94, bar: 'none', subUpper: true, subSpacing: 2, subSize: 0.88, position: 'bl', margin: 0.09, anim: 'build', fadeMs: 300 },
+    'sport':       { font: 'Bahnschrift', upper: true, skew: 12, bgColor: '#111318', bgOpacity: 0.95, bar: 'left', barWidth: 16, subBox: 'accent', subSpacing: 1, position: 'bl', margin: 0.09, anim: 'stagger', fadeMs: 350 },
+    'minimal':     { bgOpacity: 0, bar: 'left', barWidth: 5, shadow: true, subColor: '#e5e7eb', position: 'bl', margin: 0.09, anim: 'rise', fadeMs: 400 },
+    'tag':         { layout: 'tag', bgColor: '#0a0c12', bgOpacity: 0.86, radius: 6, bar: 'none', subUpper: true, subSpacing: 2, subSize: 0.8, position: 'bl', margin: 0.09, anim: 'slide', fadeMs: 300 },
+    'elegant':     { layout: 'band', font: 'Georgia', bold: false, bgColor: '#000000', bgOpacity: 0.62, bar: 'under', barWidth: 4, shadow: true, subColor: '#e5e7eb', position: 'bc', margin: 0.05, anim: 'blur', fadeMs: 700 },
+    'pill':        { layout: 'split', bgColor: '#ffffff', bgOpacity: 0.96, textColor: '#0b1220', subColor: '#475569', radius: 60, bar: 'left', size: 0.9, position: 'bl', margin: 0.09, anim: 'pop', fadeMs: 350 },
     'title':       { font: 'Segoe UI', size: 1.75, bold: true, upper: false, textColor: '#ffffff', subColor: '#e5e7eb', bgColor: '#000000', bgOpacity: 0, bar: 'under', radius: 0, position: 'mc', margin: 0.095, shadow: true, anim: 'fade', fadeMs: 600 },
     'corner':      { font: 'Segoe UI', size: 0.65, bold: true, upper: false, textColor: '#ffffff', subColor: '#ffffff', bgColor: '#0a0c12', bgOpacity: 0.85, bar: 'none', radius: 8, position: 'tr', margin: 0.05, shadow: false, anim: 'fade', fadeMs: 300, accentTitle: true }
   };
+  const LABEL_STYLES = [['lower', 'Classic dark'], ['lower-light', 'Classic light'], ['modern', 'Modern glass'], ['news', 'News two-tier'], ['sport', 'Slanted'], ['minimal', 'Minimal line'],
+    ['tag', 'Tag on top'], ['elegant', 'Elegant band'], ['pill', 'Pill'], ['title', 'Big centre title'], ['corner', 'Corner tag']];
+  const LABEL_ANIMS = [
+    ['fade', 'Fade', 'Simply fades in'], ['slide', 'Slide + fade', 'Slides in a little from the side while fading'],
+    ['wipe', 'Wipe', 'Revealed from the side like a curtain'], ['build', 'Build up', 'Accent bar first, then the name, then the second line'],
+    ['rise', 'Rise from a line', 'Each line rises up out of an invisible line'], ['stagger', 'Line by line', 'The name slides in, then the second line follows'],
+    ['pop', 'Pop', 'Zooms in with a small bounce'], ['blur', 'Soft focus', 'Comes into focus from a blur'], ['type', 'Typewriter', 'Typed out letter by letter']];
+  const ANIM_SPEED = { fade: 1, slide: 1, wipe: 1.3, build: 2, rise: 1.6, stagger: 1.7, pop: 1.2, blur: 1.4, type: 1 };
   function labelDesign(d) {
-    return Object.assign({}, LABEL_PRESETS[d.style] || LABEL_PRESETS.lower, d.design || {});
+    return Object.assign({}, LBL_BASE, LABEL_PRESETS[d.style] || LABEL_PRESETS.lower, d.design || {});
+  }
+  // how long a label takes to come in / go out (the "speed" setting, stretched for the animations that build in steps)
+  function labelAnimMs(d, out) {
+    const D = labelDesign(d || {}), base = +D.fadeMs || 0, a = D.anim || 'fade';
+    if (!base) return 0;
+    if (out) return D.animOut === 'fade' || a === 'type' ? base : Math.round(base * Math.min(1.4, ANIM_SPEED[a] || 1));
+    if (a === 'type') return Math.round(Math.max(base * 2, Math.min(3500, 300 + 40 * (String(d.title || '').length + String(d.subtitle || '').length))));
+    return Math.round(base * (ANIM_SPEED[a] || 1));
   }
   function rgba(hex, a) {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
     const n = m ? parseInt(m[1], 16) : 0;
     return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
   }
-  function drawLabel(ctx, W, H, d) {
-    ctx.clearRect(0, 0, W, H);
-    if (!d) return;
+
+  /* where every part of a label sits (in pixels of a W x H frame) */
+  function labelLayout(ctx, W, H, d) {
     const D = labelDesign(d), k = H / 1080, z = D.size;
     const accent = d.color || '#2563eb';
-    const title = D.upper ? (d.title || '').toUpperCase() : (d.title || '');
-    const sub = D.upper ? (d.subtitle || '').toUpperCase() : (d.subtitle || '');
-    const fam = `"${D.font}", "Segoe UI", system-ui, sans-serif`;
-    const tFont = `${D.bold ? 700 : 400} ${54 * k * z}px ${fam}`, sFont = `${D.bold ? 500 : 400} ${32 * k * z}px ${fam}`;
-    const boxed = D.bgOpacity > 0.01;
-    const padX = (boxed ? 34 : 0) * k * z, th = (boxed ? 92 : 70) * k * z, sh = sub ? (boxed ? 56 : 46) * k * z : 0;
-    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    ctx.font = tFont; const tw = ctx.measureText(title).width + padX * 2;
-    ctx.font = sFont; const sw = sub ? ctx.measureText(sub).width + padX * 2 : 0;
-    const align = D.position[1] === 'c' ? 'c' : D.position[1];
-    const barW = D.bar === 'left' && align !== 'c' ? 12 * k * z : 0;
-    const underH = D.bar === 'under' ? 26 * k * z : 0;
-    const blockW = Math.max(tw, sw) + barW, blockH = th + sh + underH;
+    const title = D.upper ? String(d.title || '').toUpperCase() : String(d.title || '');
+    const subRaw = String(d.subtitle || '');
+    const sub = D.upper || D.subUpper ? subRaw.toUpperCase() : subRaw;
+    if (!title && !sub) return null;
+    const fam = `"${D.font}", "Segoe UI", system-ui, sans-serif`, it = D.italic ? 'italic ' : '';
+    const tPx = 54 * k * z, sPx = 32 * k * z * D.subSize;
+    const tFont = `${it}${D.bold ? 700 : 400} ${tPx}px ${fam}`, sFont = `${it}${D.bold ? 500 : 400} ${sPx}px ${fam}`;
+    const sSp = D.subSpacing * k * z;
+    const measure = (str, f, sp) => { if (!str) return 0; ctx.font = f; ctx.letterSpacing = `${sp}px`; const w = ctx.measureText(str).width; ctx.letterSpacing = '0px'; return w; };
+    const tW = measure(title, tFont, 0), sW = measure(sub, sFont, sSp);
+    const boxed = D.bgOpacity > 0.01, boxFill = rgba(D.bgColor, D.bgOpacity);
+    const align = D.position[1] === 'c' ? 'c' : D.position[1], v = D.position[0];
+    const thick = D.barWidth * k * z, line = Math.max(2 * k, thick * 0.45);
     const mx = D.margin * W * 0.53, my = D.margin * H;
-    const x0 = align === 'l' ? mx : align === 'r' ? W - mx - blockW : (W - blockW) / 2;
-    const v = D.position[0];
-    const y0 = v === 't' ? my : v === 'b' ? H - my - blockH : (H - blockH) / 2;
-    const r = D.radius * k;
-    const bx = w => align === 'l' ? x0 + barW : align === 'r' ? x0 + blockW - barW - w : x0 + (blockW - w) / 2;
-    const box = (x, y, w, h, fill) => { ctx.fillStyle = fill; if (r > 0) { roundRect(ctx, x, y, w, h, Math.min(r, h / 2)); ctx.fill(); } else ctx.fillRect(x, y, w, h); };
-    if (barW) box(align === 'l' ? x0 : x0 + blockW - barW, y0, barW, th + sh, accent);
-    if (D.shadow) { ctx.shadowColor = 'rgba(0,0,0,0.75)'; ctx.shadowBlur = 18 * k * z; ctx.shadowOffsetY = 2 * k; }
-    if (boxed) { const sv = ctx.shadowColor; ctx.shadowColor = 'transparent'; box(bx(tw), y0, tw, th, D.accentTitle ? accent : rgba(D.bgColor, D.bgOpacity)); if (sub) box(bx(sw), y0 + th, sw, sh, D.accentTitle ? rgba(D.bgColor, D.bgOpacity) : accent); ctx.shadowColor = sv; }
-    ctx.font = tFont; ctx.fillStyle = D.textColor; ctx.fillText(title, bx(tw) + padX, y0 + th / 2 + 2 * k);
-    if (sub) { ctx.font = sFont; ctx.fillStyle = D.subColor; ctx.fillText(sub, bx(sw) + padX, y0 + th + sh / 2 + 1); }
-    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    if (underH) { const uw = 160 * k * z, ux = align === 'l' ? x0 : align === 'r' ? x0 + blockW - uw : x0 + (blockW - uw) / 2; ctx.fillStyle = accent; ctx.fillRect(ux, y0 + th + sh + 14 * k * z, uw, 8 * k * z); }
+    const subColor = D.subAccent ? accent : D.subColor;
+    const parts = [], add = P => { parts.push(P); return P; };
+    const text = (row, str, font, px, sp, color, left, y, w) => add({ t: 'text', row, str, font, px, sp, color, left, y, w, shadow: D.shadow });
+    let BW = 0, BH = 0, full = false;
+    const layout = D.layout || 'stack';
+
+    if (layout === 'panel') {
+      const padX = 36 * k * z, padT = 20 * k * z, padB = 22 * k * z, th = 66 * k * z, sh = sub ? 46 * k * z * D.subSize : 0, gp = sub ? 2 * k * z : 0;
+      const barW = D.bar === 'left' ? thick : 0, topH = D.bar === 'top' ? line : 0, underH = D.bar === 'under' ? 26 * k * z : 0;
+      const PW = Math.max(tW, sW) + padX * 2 + barW, PH = topH + padT + th + gp + sh + padB;
+      const ext = D.fadeEdge && boxed ? PW * 0.5 : 0;
+      BW = PW + ext; BH = PH + underH;
+      const px = align === 'r' ? ext : align === 'c' ? ext / 2 : 0;
+      if (boxed) add({ t: 'box', row: -1, x: 0, y: 0, w: BW, h: PH, fill: boxFill, fade: ext ? { side: align, solid: PW / BW } : null });
+      if (barW) add({ t: 'bar', row: -1, axis: 'v', x: align === 'r' ? px + PW - barW : px, y: 0, w: barW, h: PH, fill: accent, r: 0 });
+      if (topH) add({ t: 'bar', row: -1, axis: 'h', x: px, y: 0, w: PW, h: topH, fill: accent, r: 0 });
+      const cx0 = px + (align === 'r' ? 0 : barW) + padX, cw = PW - barW - padX * 2;
+      const lx = w => align === 'l' ? cx0 : align === 'r' ? cx0 + cw - w : cx0 + (cw - w) / 2;
+      text(0, title, tFont, tPx, 0, D.textColor, lx(tW), topH + padT + th / 2 + 2 * k, tW);
+      if (sub) text(1, sub, sFont, sPx, sSp, subColor, lx(sW), topH + padT + th + gp + sh / 2, sW);
+      if (underH) { const uw = 160 * k * z; add({ t: 'bar', row: -1, axis: 'h', x: align === 'l' ? px : align === 'r' ? px + PW - uw : px + (PW - uw) / 2, y: PH + 12 * k * z, w: uw, h: 8 * k * z, fill: accent }); }
+    } else if (layout === 'tag') {
+      const tagPad = 16 * k * z, tagH = sub ? 44 * k * z * D.subSize : 0, gap = sub ? 10 * k * z : 0, tagW = sub ? sW + tagPad * 2 : 0;
+      const padX = (boxed ? 30 : 0) * k * z, th = (boxed ? 86 : 70) * k * z, tw = tW + padX * 2;
+      const barW = D.bar === 'left' && align !== 'c' ? thick : 0, bgap = barW && !boxed ? 20 * k * z : 0, underH = D.bar === 'under' ? 26 * k * z : 0;
+      BW = Math.max(tagW, tw + barW + bgap); BH = tagH + gap + th + underH;
+      const ax = w => align === 'l' ? 0 : align === 'r' ? BW - w : (BW - w) / 2;
+      if (sub) { const x = ax(tagW); add({ t: 'box', row: 0, x, y: 0, w: tagW, h: tagH, fill: accent, r: Math.max(D.radius, 4) * k }); text(0, sub, sFont, sPx, sSp, D.subColor, x + tagPad, tagH / 2 + 1, sW); }
+      const ty = tagH + gap, tx = ax(tw + barW + bgap), boxX = align === 'r' ? tx : tx + barW + bgap;
+      if (barW) add({ t: 'bar', row: -1, axis: 'v', x: align === 'r' ? tx + tw + bgap : tx, y: ty, w: barW, h: th, fill: accent });
+      if (boxed) add({ t: 'box', row: 1, x: boxX, y: ty, w: tw, h: th, fill: D.accentTitle ? accent : boxFill });
+      text(1, title, tFont, tPx, 0, D.textColor, boxX + padX, ty + th / 2 + 2 * k, tW);
+      if (underH) { const uw = 160 * k * z; add({ t: 'bar', row: -1, axis: 'h', x: align === 'l' ? 0 : align === 'r' ? BW - uw : (BW - uw) / 2, y: ty + th + 14 * k * z, w: uw, h: 8 * k * z, fill: accent }); }
+    } else if (layout === 'split') {
+      const h = 84 * k * z, padX = 32 * k * z, gap = 22 * k * z, dv = sub ? 3 * k * z : 0;
+      const dot = D.bar === 'left' ? h * 0.34 : 0, dotGap = dot ? 16 * k * z : 0, underH = D.bar === 'under' ? 26 * k * z : 0;
+      BW = padX + dot + dotGap + tW + (sub ? gap * 2 + dv + sW : 0) + padX; BH = h + underH;
+      if (boxed) add({ t: 'box', row: -1, x: 0, y: 0, w: BW, h, fill: boxFill });
+      if (dot) add({ t: 'bar', row: -1, axis: 'c', x: padX, y: (h - dot) / 2, w: dot, h: dot, fill: accent, r: dot });
+      const x = padX + dot + dotGap;
+      text(0, title, tFont, tPx, 0, D.textColor, x, h / 2 + 2 * k, tW);
+      if (sub) { add({ t: 'bar', row: 1, axis: 'v', x: x + tW + gap, y: h * 0.26, w: dv, h: h * 0.48, fill: accent, r: 0 }); text(1, sub, sFont, sPx, sSp, subColor, x + tW + gap * 2 + dv, h / 2 + 1, sW); }
+      if (D.bar === 'top') add({ t: 'bar', row: -1, axis: 'h', x: BW * 0.1, y: 0, w: BW * 0.8, h: line, fill: accent, r: 0 });
+      if (underH) { const uw = 160 * k * z; add({ t: 'bar', row: -1, axis: 'h', x: align === 'l' ? 0 : align === 'r' ? BW - uw : (BW - uw) / 2, y: h + 14 * k * z, w: uw, h: 8 * k * z, fill: accent }); }
+    } else if (layout === 'band') {
+      full = true;
+      const padV = 24 * k * z, th = 70 * k * z, sh = sub ? 46 * k * z * D.subSize : 0, underH = D.bar === 'under' ? 24 * k * z : 0;
+      BW = W; BH = padV * 2 + th + sh + underH;
+      const m = Math.max(mx, 60 * k), lx = w => align === 'l' ? m : align === 'r' ? W - m - w : (W - w) / 2;
+      if (boxed) add({ t: 'box', row: -1, x: 0, y: 0, w: W, h: BH, fill: boxFill, r: 0, fade: { side: 'band-' + align } });
+      if (D.bar === 'top') add({ t: 'bar', row: -1, axis: 'h', x: 0, y: 0, w: W, h: line, fill: accent, r: 0 });
+      if (D.bar === 'left' && align !== 'c') add({ t: 'bar', row: -1, axis: 'v', x: align === 'l' ? m - 24 * k * z - thick : W - m + 24 * k * z, y: padV, w: thick, h: th + sh, fill: accent });
+      text(0, title, tFont, tPx, 0, D.textColor, lx(tW), padV + th / 2 + 2 * k, tW);
+      if (sub) text(1, sub, sFont, sPx, sSp, subColor, lx(sW), padV + th + sh / 2, sW);
+      if (underH) { const uw = 120 * k * z, uh = Math.max(2 * k, Math.min(thick, 8 * k * z)); add({ t: 'bar', row: -1, axis: 'h', x: align === 'l' ? m : align === 'r' ? W - m - uw : (W - uw) / 2, y: padV + th + sh + 8 * k * z, w: uw, h: uh, fill: accent, r: 0 }); }
+    } else { // 'stack': one box per line, sized to its text
+      const padX = (boxed ? 34 : 0) * k * z, th = (boxed ? 92 : 70) * k * z, sh = sub ? (boxed ? 56 : 46) * k * z * D.subSize : 0;
+      const tw = tW + padX * 2, sw = sub ? sW + padX * 2 : 0;
+      const barW = D.bar === 'left' && align !== 'c' ? thick : 0, gap = barW && !boxed ? 20 * k * z : 0;
+      const topH = D.bar === 'top' ? line : 0, underH = D.bar === 'under' ? 26 * k * z : 0;
+      BW = Math.max(tw, sw) + barW + gap; BH = topH + th + sh + underH;
+      const bx = w => align === 'l' ? barW + gap : align === 'r' ? BW - barW - gap - w : (BW - w) / 2;
+      const sMode = D.subBox === 'auto' ? (D.accentTitle ? 'box' : 'accent') : D.subBox;
+      const sFill = sMode === 'none' ? null : sMode === 'box' ? boxFill : accent;
+      if (barW) add({ t: 'bar', row: -1, axis: 'v', x: align === 'l' ? 0 : BW - barW, y: topH, w: barW, h: th + sh, fill: accent });
+      if (topH) add({ t: 'bar', row: -1, axis: 'h', x: bx(tw), y: 0, w: tw, h: topH, fill: accent, r: 0 });
+      if (boxed) {
+        add({ t: 'box', row: 0, x: bx(tw), y: topH, w: tw, h: th, fill: D.accentTitle ? accent : boxFill });
+        if (sub && sFill) add({ t: 'box', row: 1, x: bx(sw), y: topH + th, w: sw, h: sh, fill: sFill });
+      }
+      text(0, title, tFont, tPx, 0, D.textColor, bx(tw) + padX, topH + th / 2 + 2 * k, tW);
+      if (sub) text(1, sub, sFont, sPx, sSp, subColor, bx(sw) + padX, topH + th + sh / 2 + 1, sW);
+      if (underH) { const uw = 160 * k * z; add({ t: 'bar', row: -1, axis: 'h', x: align === 'l' ? 0 : align === 'r' ? BW - uw : (BW - uw) / 2, y: topH + th + sh + 14 * k * z, w: uw, h: 8 * k * z, fill: accent }); }
+    }
+
+    const x0 = full ? 0 : align === 'l' ? mx : align === 'r' ? W - mx - BW : (W - BW) / 2;
+    const y0 = v === 't' ? my : v === 'b' ? H - my - BH : (H - BH) / 2;
+    for (const P of parts) { if (P.t === 'text') { P.left += x0; P.y += y0; } else { P.x += x0; P.y += y0; } }
+    // rows (one per line of text, in reading order) are what the step-by-step animations move one after another
+    const raw = new Map();
+    const grow = (r, x, y, w, h) => { const R = raw.get(r); if (!R) raw.set(r, { x, y, w, h }); else { const x2 = Math.max(R.x + R.w, x + w), y2 = Math.max(R.y + R.h, y + h); R.x = Math.min(R.x, x); R.y = Math.min(R.y, y); R.w = x2 - R.x; R.h = y2 - R.y; } };
+    for (const P of parts) if (P.row >= 0) { if (P.t === 'text') { if (P.str) grow(P.row, P.left, P.y - P.px * 0.62, P.w, P.px * 1.24); } else grow(P.row, P.x, P.y, P.w, P.h); }
+    const order = [...raw.entries()].sort((a, b) => a[1].y - b[1].y || a[1].x - b[1].x).map(e => e[0]);
+    const pad = 40 * k, rows = order.map(r => { const R = raw.get(r); return { x: R.x - pad, y: R.y - 4 * k, w: R.w + pad * 2, h: R.h + 8 * k }; });
+    for (const P of parts) if (P.row >= 0) P.row = Math.max(0, order.indexOf(P.row));
+    return { D, parts, rows, W, H, k, z, accent, align, r: D.radius * k, lead: parts.some(P => P.row < 0),
+      block: { x: x0 - pad, y: y0 - pad, w: BW + pad * 2, h: BH + pad * 2 }, cx: x0 + BW / 2, cy: y0 + BH / 2, base: y0 + BH };
+  }
+
+  const clamp01 = t => t < 0 ? 0 : t > 1 ? 1 : t;
+  const seg = (p, a, b) => clamp01((p - a) / (b - a));
+  const out3 = t => 1 - Math.pow(1 - t, 3);
+  const inout = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  const back = t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+  const wipeRect = (R, e, al) => { const w = R.w * e; return { x: al === 'r' ? R.x + R.w - w : al === 'c' ? R.x + (R.w - w) / 2 : R.x, y: R.y, w, h: R.h }; };
+  const NOANIM = { a: 1, dx: 0, dy: 0, clip: null };
+
+  // what one part looks like at progress p (0 = not there yet, 1 = fully in) for a given entrance animation
+  function animState(style, P, L, p) {
+    const st = { a: 1, dx: 0, dy: 0, clip: null };
+    const r = P.row, R = r >= 0 ? (L.rows[r] || L.block) : L.block, al = L.align, n = Math.max(1, L.rows.length);
+    const side = amt => { if (al === 'l') st.dx = -amt * L.W; else if (al === 'r') st.dx = amt * L.W; else st.dy = amt * L.H * 1.4; };
+    switch (style) {
+      case 'fade': st.a = inout(p); break;
+      case 'slide': { const e = out3(p); st.a = e; side((1 - e) * 0.03); break; }
+      case 'wipe': st.clip = wipeRect(L.block, inout(p), al); st.a = Math.min(1, p * 8); break;
+      case 'build':
+        if (P.t === 'bar') st.grow = out3(seg(p, 0, 0.35));
+        else if (r < 0) st.clip = wipeRect(R, inout(seg(p, 0.12, 0.55)), al);
+        else { const o = L.lead ? 0.25 : 0, w = L.lead ? 0.45 : 0.6, g = L.lead ? 0.17 : 0.3; // with no bar or panel to draw first, the lines start straight away
+          st.clip = wipeRect(R, inout(seg(p, o + r * g, o + w + r * g)), al); if (P.t === 'text') st.a = seg(p, o + 0.1 + r * g, o + w + 0.13 + r * g); }
+        break;
+      case 'rise':
+        if (P.t === 'bar') st.grow = out3(seg(p, 0, 0.5));
+        else if (r < 0) { const e = out3(seg(p, 0, 0.5)); st.clip = { x: R.x, y: R.y + R.h * (1 - e), w: R.w, h: R.h * e }; }
+        else { const e = out3(seg(p, 0.15 + r * 0.2, 0.75 + r * 0.2)); st.clip = R; st.dy = (1 - e) * R.h; }
+        st.a = Math.min(1, p * 8);
+        break;
+      case 'stagger':
+        if (r < 0) { st.a = seg(p, 0, 0.35); if (P.t === 'bar') st.grow = out3(seg(p, 0, 0.45)); }
+        else { const e = out3(seg(p, r * 0.28, 0.72 + r * 0.28)); st.a = e; side((1 - e) * 0.05); }
+        break;
+      case 'type':
+        if (P.t === 'text') { const a = 0.15 + r * 0.85 / n, t = seg(p, a, a + 0.85 / n); st.chars = Math.round(P.str.length * t); st.caret = t > 0 && t < 1; }
+        else if (P.t === 'bar') st.grow = out3(seg(p, 0, 0.15));
+        else st.clip = wipeRect(R, inout(seg(p, 0, 0.15)), al);
+        break;
+      default: break; // pop / blur act on the whole label
+    }
+    return st;
+  }
+  function fillFor(ctx, P) {
+    if (!P.fade) return P.fill;
+    const c0 = P.fill, cT = P.fill.replace(/[\d.]+\)$/, '0)'), s = P.fade.solid || 0.5, side = P.fade.side;
+    const g = ctx.createLinearGradient(P.x, 0, P.x + P.w, 0);
+    if (side === 'l') { g.addColorStop(0, c0); g.addColorStop(s * 0.9, c0); g.addColorStop(1, cT); }
+    else if (side === 'r') { g.addColorStop(0, cT); g.addColorStop(1 - s * 0.9, c0); g.addColorStop(1, c0); }
+    else if (side === 'band-l') { g.addColorStop(0, c0); g.addColorStop(0.5, c0); g.addColorStop(0.92, cT); g.addColorStop(1, cT); }
+    else if (side === 'band-r') { g.addColorStop(0, cT); g.addColorStop(0.08, cT); g.addColorStop(0.5, c0); g.addColorStop(1, c0); }
+    else if (side === 'band-c') { g.addColorStop(0, cT); g.addColorStop(0.24, c0); g.addColorStop(0.76, c0); g.addColorStop(1, cT); }
+    else { const a = (1 - s) / 2; g.addColorStop(0, cT); g.addColorStop(a * 0.9, c0); g.addColorStop(1 - a * 0.9, c0); g.addColorStop(1, cT); }
+    return g;
+  }
+  function paintPart(ctx, P, L, st) {
+    if (P.t === 'text') {
+      if (!P.str) return;
+      const s = st.chars === undefined ? P.str : P.str.slice(0, st.chars);
+      ctx.font = P.font; ctx.letterSpacing = `${P.sp}px`; ctx.fillStyle = P.color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      if (P.shadow) { ctx.shadowColor = 'rgba(0,0,0,0.75)'; ctx.shadowBlur = 18 * L.k * L.z; ctx.shadowOffsetY = 2 * L.k; }
+      if (s) ctx.fillText(s, P.left, P.y);
+      ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+      if (st.caret) { const w = s ? ctx.measureText(s).width : 0; ctx.fillStyle = L.accent; ctx.fillRect(P.left + w + 3 * L.k, P.y - P.px * 0.42, Math.max(2, 4 * L.k * L.z), P.px * 0.84); }
+      ctx.letterSpacing = '0px';
+      return;
+    }
+    let { x, y, w, h } = P;
+    if (st.grow !== undefined && st.grow < 1) {
+      const g = st.grow;
+      if (P.axis === 'v') { const nh = h * g; y += h - nh; h = nh; }
+      else if (P.axis === 'c') { const nw = w * g, nh = h * g; x += (w - nw) / 2; y += (h - nh) / 2; w = nw; h = nh; }
+      else { const nw = w * g; x = L.align === 'r' ? x + w - nw : L.align === 'c' ? x + (w - nw) / 2 : x; w = nw; }
+      if (w <= 0.5 || h <= 0.5) return;
+    }
+    const r = Math.min(P.r ?? L.r, h / 2, w / 2);
+    ctx.fillStyle = fillFor(ctx, P);
+    if (r > 0.5) roundRect(ctx, x, y, w, h, r); else { ctx.beginPath(); ctx.rect(x, y, w, h); }
+    ctx.fill();
+  }
+  /* draw a label; prog 0..1 is how far its entrance has got (or, with out = true, how much of it is left while leaving) */
+  function drawLabel(ctx, W, H, d, prog = 1, out = false) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.filter = 'none'; ctx.letterSpacing = '0px';
+    ctx.clearRect(0, 0, W, H);
+    if (!d) return;
+    const p = clamp01(prog);
+    if (p <= 0) return;
+    const L = labelLayout(ctx, W, H, d);
+    if (!L) return;
+    let style = L.D.anim || 'fade';
+    if (out && (L.D.animOut === 'fade' || style === 'type')) style = 'fade';
+    if (p >= 1) style = 'none';
+    ctx.save();
+    if (L.D.skew) { const t = Math.tan(L.D.skew * Math.PI / 180); ctx.setTransform(1, 0, -t, 1, t * L.base, 0); }
+    let gA = 1;
+    if (style === 'pop') { const s = 0.72 + 0.28 * back(p); ctx.translate(L.cx, L.cy); ctx.scale(s, s); ctx.translate(-L.cx, -L.cy); gA = seg(p, 0, 0.3); }
+    else if (style === 'blur') { const e = out3(p), s = 1.05 - 0.05 * e; ctx.translate(L.cx, L.cy); ctx.scale(s, s); ctx.translate(-L.cx, -L.cy); ctx.filter = `blur(${((1 - e) * 14 * L.k).toFixed(2)}px)`; gA = e; }
+    for (const P of L.parts) {
+      const st = style === 'none' ? NOANIM : animState(style, P, L, p);
+      const a = gA * st.a;
+      if (a <= 0.003) continue;
+      if (st.clip && (st.clip.w <= 0.5 || st.clip.h <= 0.5)) continue;
+      ctx.save();
+      if (st.clip) { ctx.beginPath(); ctx.rect(st.clip.x, st.clip.y, st.clip.w, st.clip.h); ctx.clip(); }
+      if (st.dx || st.dy) ctx.translate(st.dx, st.dy);
+      ctx.globalAlpha = a;
+      paintPart(ctx, P, L, st);
+      ctx.restore();
+    }
+    ctx.restore();
+    ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.letterSpacing = '0px';
   }
 
   function roundRect(ctx, x, y, w, h, r) {
@@ -650,5 +869,5 @@
     return c;
   }
 
-  window.LiveEngine = { Engine, makeBars, NEUTRAL, LABEL_PRESETS, labelDesign, drawLabel };
+  window.LiveEngine = { Engine, makeBars, NEUTRAL, LABEL_PRESETS, LABEL_STYLES, LABEL_ANIMS, labelDesign, labelAnimMs, drawLabel };
 })();

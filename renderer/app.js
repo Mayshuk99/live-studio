@@ -2,7 +2,7 @@
 (async function () {
   'use strict';
   const S = window.studio;
-  const { Engine, makeBars, NEUTRAL, LABEL_PRESETS, labelDesign, drawLabel } = window.LiveEngine;
+  const { Engine, makeBars, NEUTRAL, LABEL_PRESETS, LABEL_STYLES, LABEL_ANIMS, labelDesign, labelAnimMs, drawLabel } = window.LiveEngine;
   const { Mixer } = window.LiveAudio;
 
   /* ================= helpers ================= */
@@ -403,7 +403,7 @@
     const to = rt.previewId, from = engine.programId;
     if (!to || to === from) return;
     const ms = kind === 'cut' ? 0 : (msOverride !== undefined ? msOverride : show.transition.ms);
-    for (const f of rt.files.values()) f.cued = false; // a video that was being listened to starts from the beginning on air
+    for (const f of rt.files.values()) { f.cued = false; f.pvManual = false; } // a video that was previewed starts from the beginning on air
     startProgram(to, from, ms);
     if (ms) engine.fade(to, ms); else engine.cut(to);
     audioGate(ms, to);
@@ -799,7 +799,7 @@
       // another person's caption is up: slide it out, then bring the new one in
       engine.setLabel(rt.speakerObj, false);
       rt.speakerId = id; refreshSpeakerStates();
-      rt.speakerSwap = setTimeout(go, labelDesign(rt.speakerObj).fadeMs + 80);
+      rt.speakerSwap = setTimeout(go, labelAnimMs(rt.speakerObj, true) + 80);
     } else go();
   }
   function hideSpeaker() {
@@ -1206,22 +1206,41 @@
   /* ================= panel: monitors ================= */
   const progInfo = el('div', { class: 'media-time hidden' });
   const progBar = el('div', { class: 'media-bar hidden' }, el('i'));
-  /* video timeline: shown under the monitors while the live shot is playing a video */
-  const liveVideo = () => { const s2 = getShot(engine.programId), mid = s2 ? mediaOf(s2)[0] : null, f = mid && rt.files.get(mid); return f && f.el && f.el.tagName === 'VIDEO' && isFinite(f.el.duration) && f.el.duration > 0 ? f.el : null; };
-  const tlRange = el('input', { type: 'range', min: 0, max: 1000, step: 1, value: 0, class: 'tl-range', title: 'Drag to jump to another part of the video' });
-  const tlNow = el('span', { class: 'mono tl-t' }, '0:00'), tlLeft = el('span', { class: 'mono tl-t' }, '−0:00');
-  const tlPlay = el('button', { class: 'btn small', title: 'Pause / play the video', onclick: () => { const v = liveVideo(); if (v) { if (v.paused) v.play().catch(() => {}); else v.pause(); } } }, '⏸');
-  const tlSkip = d => () => { const v = liveVideo(); if (v) v.currentTime = clamp(v.currentTime + d, 0, Math.max(0, v.duration - 0.5)); };
-  let tlDrag = false;
-  tlRange.addEventListener('pointerdown', () => { tlDrag = true; });
-  tlRange.addEventListener('input', () => { const v = liveVideo(); if (v) { const t = tlRange.value / 1000 * v.duration; tlNow.textContent = fmtShort(t); tlLeft.textContent = '−' + fmtShort(v.duration - t); } });
-  tlRange.addEventListener('change', () => { const v = liveVideo(); if (v) v.currentTime = Math.min(tlRange.value / 1000 * v.duration, Math.max(0, v.duration - 0.5)); tlDrag = false; tlRange.blur(); });
-  const timeline = el('div', { class: 'tl-bar hidden' },
-    el('span', { class: 'tl-tag' }, '🎞 VIDEO'), tlPlay,
-    el('button', { class: 'btn small', title: 'Back 10 seconds', onclick: tlSkip(-10) }, '−10 s'),
-    tlNow, tlRange, tlLeft,
-    el('button', { class: 'btn small', title: 'Forward 10 seconds', onclick: tlSkip(10) }, '+10 s'),
-    el('button', { class: 'btn small', title: 'Forward 1 minute', onclick: tlSkip(60) }, '+1 min'));
+  /* video playbars under the monitors: one for a video waiting in Preview, one for the video on air */
+  const videoOf = id => { const s2 = getShot(id), mid = s2 ? mediaOf(s2)[0] : null, f = mid && rt.files.get(mid); return f && f.el && f.el.tagName === 'VIDEO' && isFinite(f.el.duration) && f.el.duration > 0 ? f : null; };
+  const liveVideo = () => { const f = videoOf(engine.programId); return f ? f.el : null; };
+  // a video in Preview that is not also on air (the same file on air is controlled by the live bar)
+  const previewVideoFile = () => { const f = videoOf(rt.previewId); return f && !mediaOf(getShot(engine.programId)).includes(f.id) ? f : null; };
+  function makeVideoBar(kind, getEl, buttons) {
+    const range = el('input', { type: 'range', min: 0, max: 1000, step: 1, value: 0, class: 'tl-range', title: 'Drag to jump to another part of the video' });
+    const now = el('span', { class: 'mono tl-t' }, '0:00'), left = el('span', { class: 'mono tl-t' }, '−0:00');
+    const playBtn = el('button', { class: 'btn small', title: 'Play / pause', onclick: () => { const v = getEl(); if (!v) return; if (v.paused) { if (kind === 'pv') markManual(true); v.play().catch(() => {}); } else v.pause(); } }, '▶');
+    const skip = dt => () => { const v = getEl(); if (v) v.currentTime = clamp(v.currentTime + dt, 0, Math.max(0, v.duration - 0.5)); };
+    let drag = false;
+    range.addEventListener('pointerdown', () => { drag = true; });
+    range.addEventListener('input', () => { const v = getEl(); if (v) { const t = range.value / 1000 * v.duration; now.textContent = fmtShort(t); left.textContent = '−' + fmtShort(v.duration - t); if (kind === 'pv') v.currentTime = t; } });
+    range.addEventListener('change', () => { const v = getEl(); if (v) v.currentTime = Math.min(range.value / 1000 * v.duration, Math.max(0, v.duration - 0.5)); drag = false; range.blur(); });
+    const b = (label, title, fn) => el('button', { class: 'btn small', title, onclick: fn }, label);
+    const btns = {
+      start: b('⏮', 'Back to the beginning', () => { const v = getEl(); if (v) v.currentTime = 0; }),
+      back10: b('−10 s', 'Back 10 seconds', skip(-10)), fwd10: b('+10 s', 'Forward 10 seconds', skip(10)), fwd60: b('+1 min', 'Forward 1 minute', skip(60))
+    };
+    const tag = el('span', { class: 'tl-tag' }, kind === 'pv' ? '🎞 PREVIEW' : '🎞 ON AIR');
+    const bar = el('div', { class: `tl-bar ${kind} hidden` }, tag, playBtn, buttons.includes('start') ? btns.start : null, btns.back10, now, range, left, btns.fwd10, buttons.includes('fwd60') ? btns.fwd60 : null);
+    const update = () => {
+      const v = getEl();
+      bar.classList.toggle('hidden', !v);
+      if (!v) return;
+      if (!drag) { range.value = Math.round(v.currentTime / v.duration * 1000); now.textContent = fmtShort(v.currentTime); left.textContent = '−' + fmtShort(v.duration - v.currentTime); }
+      const ic = v.paused ? '▶' : '⏸'; if (playBtn.textContent !== ic) playBtn.textContent = ic;
+    };
+    return { bar, update };
+  }
+  // a Preview video you started yourself keeps playing until you take it or pick another shot
+  function markManual(on) { const f = previewVideoFile(); if (f) f.pvManual = on; }
+  const timelineLive = makeVideoBar('live', liveVideo, ['fwd60']);
+  const timelinePv = makeVideoBar('pv', () => { const f = previewVideoFile(); return f ? f.el : null; }, ['start']);
+  const timeline = el('div', { class: 'tl-row' }, el('div', { class: 'tl-slot' }, timelinePv.bar), el('div', { class: 'tl-slot' }, timelineLive.bar));
   // slim master meter beside the program screen (like a hardware switcher)
   const monMeterMain = el('canvas', { class: 'mon-meter', width: 40, height: 300 }), monMeter = monMeterMain;
   // the same kind of meter for the Preview shot, and a button to listen to it before it goes on air
@@ -1238,7 +1257,8 @@
     for (const [id, f] of rt.files) {
       if (!f.el || f.el.tagName !== 'VIDEO' || mediaOf(getShot(engine.programId)).includes(id)) continue;
       if (rt.pvListen && cue.includes(id)) { if (f.el.paused) f.el.play().catch(() => {}); f.cued = true; }
-      else if (f.cued) { f.cued = false; f.el.pause(); f.el.currentTime = 0; }
+      else if (f.pvManual && !cue.includes(id)) { f.pvManual = false; f.cued = false; f.el.pause(); f.el.currentTime = 0; }
+      else if (f.cued && !f.pvManual) { f.cued = false; f.el.pause(); f.el.currentTime = 0; }
     }
     pvListen.classList.toggle('on', !!rt.pvListen);
     pvListen.textContent = rt.pvListen ? '🎧 Listening' : '🎧 Listen';
@@ -1741,63 +1761,117 @@
   }
   function openDesigner(holder, sample, onChange) {
     const pv = el('canvas', { width: 960, height: 540, class: 'design-preview' });
-    const off = el('canvas', { width: 960, height: 540 });
+    const off = el('canvas', { width: 960, height: 540 }), toff = el('canvas', { width: 320, height: 180 });
     const pctx = pv.getContext('2d'), octx = off.getContext('2d');
-    let anim = 1;
+    let prog = 1, goingOut = false, playId = 0;
     const D = () => labelDesign(holder);
-    const paint = () => {
-      const g = pctx.createLinearGradient(0, 0, 960, 540);
-      g.addColorStop(0, '#3b4a63'); g.addColorStop(0.5, '#7b6a58'); g.addColorStop(1, '#1f2937');
-      pctx.globalAlpha = 1; pctx.fillStyle = g; pctx.fillRect(0, 0, 960, 540);
-      pctx.fillStyle = 'rgba(255,255,255,.10)'; pctx.beginPath(); pctx.arc(480, 250, 110, 0, 7); pctx.fill(); pctx.fillRect(330, 370, 300, 170);
-      drawLabel(octx, 960, 540, { title: sample.title || 'Name', subtitle: sample.subtitle, style: holder.style, color: holder.color, design: holder.design });
-      const d = D(), e = anim < 0.5 ? 2 * anim * anim : 1 - Math.pow(-2 * anim + 2, 2) / 2;
-      let dx = 0, dy = 0;
-      if (d.anim === 'slide') { const al = d.position[1]; if (al === 'l') dx = (1 - e) * -0.02 * 960; else if (al === 'r') dx = (1 - e) * 0.02 * 960; else dy = (1 - e) * 0.03 * 540; }
-      pctx.globalAlpha = e; pctx.drawImage(off, dx, dy); pctx.globalAlpha = 1;
+    const base = key => labelDesign({ style: holder.style })[key];
+    const sampleOf = (style, design) => ({ title: sample.title || 'John Smith', subtitle: sample.subtitle === undefined ? 'Senior Pastor' : sample.subtitle, style, color: holder.color, design });
+    const backdrop = (g, w, h) => {
+      const gr = g.createLinearGradient(0, 0, w, h);
+      gr.addColorStop(0, '#3b4a63'); gr.addColorStop(0.5, '#7b6a58'); gr.addColorStop(1, '#1f2937');
+      g.globalAlpha = 1; g.fillStyle = gr; g.fillRect(0, 0, w, h);
+      g.fillStyle = 'rgba(255,255,255,.10)'; g.beginPath(); g.arc(w / 2, h * 0.46, h * 0.2, 0, 7); g.fill(); g.fillRect(w * 0.344, h * 0.685, w * 0.312, h * 0.315);
     };
+    const paint = () => { backdrop(pctx, 960, 540); drawLabel(octx, 960, 540, sampleOf(holder.style, holder.design), prog, goingOut); pctx.drawImage(off, 0, 0); };
+    // one animation run: progress goes 0 → 1 (coming in) or 1 → 0 (going out)
+    const run = (id, ms, out, frame, done) => {
+      const t0 = performance.now();
+      const step = () => {
+        if (id() || !pv.isConnected) return;
+        const t = ms ? Math.min(1, (performance.now() - t0) / ms) : 1;
+        frame(out ? 1 - t : t, out);
+        if (t < 1) requestAnimationFrame(step); else if (done) done();
+      };
+      step();
+    };
+    // ▶ Test: comes in, stays a moment, goes out, then shows again
     const play = () => {
-      const ms = D().fadeMs, t0 = performance.now();
-      if (!ms) { anim = 1; paint(); return; }
-      const step = () => { if (!pv.isConnected) return; anim = Math.min(1, (performance.now() - t0) / ms); paint(); if (anim < 1) requestAnimationFrame(step); };
-      anim = 0; paint(); setTimeout(() => requestAnimationFrame(step), 250);
+      const id = ++playId, stale = () => id !== playId, d = sampleOf(holder.style, holder.design);
+      const frame = (pp, out) => { prog = pp; goingOut = out; paint(); };
+      frame(0, false);
+      setTimeout(() => !stale() && run(stale, labelAnimMs(d, false), false, frame, () =>
+        setTimeout(() => !stale() && run(stale, labelAnimMs(d, true), true, frame, () =>
+          setTimeout(() => { if (!stale()) frame(1, false); }, 450)), 1300)), 200);
+    };
+    const thumbs = [];
+    const drawThumb = (c, key, pp = 1) => {
+      const g = c.getContext('2d');
+      backdrop(g, c.width, c.height);
+      // drawn larger than real so the design can be seen at thumbnail size
+      const dz = key === holder.style ? holder.design : {}, z0 = labelDesign({ style: key, design: dz });
+      drawLabel(toff.getContext('2d'), 320, 180, sampleOf(key, Object.assign({}, dz, { size: z0.size * Math.min(1.9, 2.3 / z0.size), margin: Math.min(z0.margin, 0.06) })), pp);
+      g.drawImage(toff, 0, 0, c.width, c.height);
+    };
+    const redrawThumbs = () => thumbs.forEach(([c, key]) => drawThumb(c, key));
+    const hoverPlay = (c, key) => {
+      const id = (c._pid = (c._pid || 0) + 1), stale = () => id !== c._pid || !c.isConnected;
+      run(stale, labelAnimMs(sampleOf(key, {}), false), false, pp => drawThumb(c, key, pp));
     };
     const set = (k, v) => { holder.design = Object.assign({}, holder.design, { [k]: v }); onChange(); paint(); };
     const body = el('div');
     const draw = () => {
       const d = D();
-      body.innerHTML = '';
+      body.innerHTML = ''; thumbs.length = 0;
       const color = (label, value, fn) => el('label', { class: 'inline' }, el('input', { type: 'color', value, oninput: e => fn(e.target.value) }), label);
+      const looks = el('div', { class: 'look-grid' }, LABEL_STYLES.map(([key, name]) => {
+        const c = el('canvas', { width: 320, height: 180 });
+        thumbs.push([c, key]);
+        return el('button', { class: 'look' + (holder.style === key ? ' sel' : ''), title: 'Use the “' + name + '” design (point at it to see it animate)',
+          onmouseenter: () => hoverPlay(c, key),
+          onclick: () => { holder.style = key; holder.design = {}; onChange(); draw(); paint(); play(); } }, c, el('span', null, name));
+      }));
+      const anims = el('div', { class: 'anim-grid' }, LABEL_ANIMS.map(([key, name, hint]) =>
+        el('button', { class: 'btn small' + (d.anim === key ? ' sel' : ''), title: hint, onclick: e => {
+          set('anim', key);
+          anims.querySelectorAll('.btn').forEach(b => b.classList.remove('sel')); e.currentTarget.classList.add('sel');
+          play();
+        } }, name)));
+      const layout = d.layout || 'stack';
       put(body,
         pv,
-        el('div', { class: 'row wrap', style: 'margin:10px 0 14px' },
-          el('span', { class: 'muted' }, 'Start from'),
-          select([['lower', 'Lower third — dark'], ['lower-light', 'Lower third — light'], ['title', 'Big centre title'], ['corner', 'Corner tag']], holder.style, v => { holder.style = v; holder.design = {}; onChange(); draw(); paint(); }),
+        el('div', { class: 'row wrap', style: 'margin:10px 0 6px' },
+          el('h3', { style: 'margin:0' }, 'Design'), el('span', { class: 'muted', style: 'font-size:.85em' }, 'point at one to see it animate, click to use it'),
           el('span', { class: 'grow' }),
-          el('button', { class: 'btn small', onclick: play }, '▶ Test animation')),
-        el('div', { class: 'grid2' },
+          el('button', { class: 'btn small primary', onclick: play }, '▶ Test in & out')),
+        looks,
+        el('h3', null, 'How it comes in'),
+        anims,
+        el('div', { class: 'grid2', style: 'margin-top:8px' },
+          el('div', { class: 'field' }, el('span', null, 'Speed'), select([[0, 'Instant — no animation'], [150, 'Fast'], [300, 'Normal'], [450, 'Relaxed'], [600, 'Smooth'], [1000, 'Slow'], [2000, 'Very slow']], d.fadeMs, v => { set('fadeMs', +v); play(); })),
+          el('div', { class: 'field' }, el('span', null, 'How it leaves'), select([['reverse', 'The same way, backwards'], ['fade', 'Just fade out']], d.animOut, v => { set('animOut', v); play(); }))),
+        el('div', { class: 'grid2', style: 'margin-top:6px' },
           el('div', null,
             el('h3', null, 'Text'),
             el('div', { class: 'field' }, el('span', null, 'Font'), select(['Segoe UI', 'Arial', 'Calibri', 'Verdana', 'Trebuchet MS', 'Bahnschrift', 'Georgia', 'Times New Roman', 'Impact', 'Consolas'].map(f => [f, f]), d.font, v => set('font', v))),
-            slider({ label: 'Size', min: 0.5, max: 2.5, step: 0.05, value: d.size, reset: LABEL_PRESETS[holder.style].size, fmt: v => `${Math.round(v * 100)}%`, onInput: v => set('size', v) }),
+            slider({ label: 'Size', min: 0.5, max: 2.5, step: 0.05, value: d.size, reset: base('size'), fmt: v => `${Math.round(v * 100)}%`, onInput: v => set('size', v) }),
             el('div', { class: 'row wrap', style: 'gap:16px;margin:8px 0' },
-              check(' Bold', d.bold, v => set('bold', v)), check(' ALL CAPS', d.upper, v => set('upper', v)), check(' Shadow', d.shadow, v => set('shadow', v))),
+              check(' Bold', d.bold, v => set('bold', v)), check(' Italic', d.italic, v => set('italic', v)), check(' ALL CAPS', d.upper, v => set('upper', v)), check(' Shadow', d.shadow, v => set('shadow', v))),
             el('div', { class: 'row wrap', style: 'gap:16px' },
               color('Main text', d.textColor, v => set('textColor', v)), color('Second line', d.subColor, v => set('subColor', v))),
-            el('h3', null, 'Box'),
-            el('div', { class: 'row wrap', style: 'gap:16px;margin-bottom:8px' },
-              color('Box colour', d.bgColor, v => set('bgColor', v)), color('Accent colour', holder.color || '#2563eb', v => { holder.color = v; onChange(); paint(); })),
-            slider({ label: 'Box opacity', min: 0, max: 1, step: 0.02, value: d.bgOpacity, reset: LABEL_PRESETS[holder.style].bgOpacity, fmt: v => v < 0.02 ? 'no box' : `${Math.round(v * 100)}%`, onInput: v => set('bgOpacity', v) }),
-            slider({ label: 'Round corners', min: 0, max: 40, step: 1, value: d.radius, reset: 0, fmt: v => `${v}`, onInput: v => set('radius', v) }),
-            el('div', { class: 'field' }, el('span', null, 'Accent bar'), select([['left', 'On the side'], ['under', 'Line underneath'], ['none', 'None']], d.bar, v => set('bar', v)))),
+            el('h4', { style: 'margin:12px 0 4px' }, 'Second line'),
+            slider({ label: 'Size', min: 0.6, max: 1.5, step: 0.02, value: d.subSize, reset: base('subSize'), fmt: v => `${Math.round(v * 100)}%`, onInput: v => set('subSize', v) }),
+            slider({ label: 'Letter spacing', min: 0, max: 10, step: 0.5, value: d.subSpacing, reset: base('subSpacing'), fmt: v => v ? `${v}` : 'normal', onInput: v => set('subSpacing', v) }),
+            el('div', { class: 'row wrap', style: 'gap:16px;margin:6px 0' },
+              check(' CAPS', d.subUpper, v => set('subUpper', v)), check(' In accent colour', d.subAccent, v => set('subAccent', v)))),
           el('div', null,
+            el('h3', null, 'Shape'),
+            el('div', { class: 'field' }, el('span', null, 'Layout'), select([['stack', 'A box for each line'], ['panel', 'One panel'], ['tag', 'Small tag above the name'], ['split', 'Side by side, one line'], ['band', 'Full-width band']], layout, v => { set('layout', v); draw(); paint(); })),
+            layout === 'stack' ? el('div', { class: 'field' }, el('span', null, 'Second line box'), select([['auto', 'Automatic'], ['accent', 'Accent colour'], ['box', 'Same as the name box'], ['none', 'No box']], d.subBox, v => set('subBox', v))) : null,
+            layout === 'panel' ? el('div', { style: 'margin:4px 0 8px' }, check(' Fade the panel out to the side', d.fadeEdge, v => set('fadeEdge', v))) : null,
+            el('div', { class: 'row wrap', style: 'gap:16px;margin:6px 0 8px' },
+              color('Box colour', d.bgColor, v => set('bgColor', v)),
+              color('Accent colour', holder.color || '#2563eb', v => { holder.color = v; onChange(); paint(); redrawThumbs(); })),
+            slider({ label: 'Box opacity', min: 0, max: 1, step: 0.02, value: d.bgOpacity, reset: base('bgOpacity'), fmt: v => v < 0.02 ? 'no box' : `${Math.round(v * 100)}%`, onInput: v => set('bgOpacity', v) }),
+            slider({ label: 'Round corners', min: 0, max: 60, step: 1, value: d.radius, reset: base('radius'), fmt: v => v >= 60 ? 'full' : `${v}`, onInput: v => set('radius', v) }),
+            slider({ label: 'Slant', min: 0, max: 20, step: 1, value: d.skew, reset: base('skew'), fmt: v => v ? `${v}°` : 'none', onInput: v => set('skew', v) }),
+            el('div', { class: 'field' }, el('span', null, 'Accent'), select([['left', layout === 'split' ? 'Dot at the start' : 'Bar on the side'], ['under', 'Line underneath'], ['top', 'Line on top'], ['none', 'None']], d.bar, v => set('bar', v))),
+            slider({ label: 'Accent thickness', min: 2, max: 30, step: 1, value: d.barWidth, reset: base('barWidth'), fmt: v => `${v}`, onInput: v => set('barWidth', v) }),
             el('h3', null, 'Position on screen'),
             el('div', { class: 'pos-grid' }, ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'].map(p => el('button', { class: 'btn' + (d.position === p ? ' sel' : ''), title: p, onclick: () => { set('position', p); draw(); } }, d.position === p ? '●' : ''))),
-            slider({ label: 'From edge', min: 0.02, max: 0.25, step: 0.005, value: d.margin, reset: LABEL_PRESETS[holder.style].margin, fmt: v => `${Math.round(v * 100)}%`, onInput: v => set('margin', v) }),
-            el('h3', null, 'Animation'),
-            el('div', { class: 'field' }, el('span', null, 'How it appears'), select([['slide', 'Slide in + fade'], ['fade', 'Fade only']], d.anim, v => { set('anim', v); play(); })),
-            el('div', { class: 'field' }, el('span', null, 'Fade speed (in and out)'), select([[0, 'Instant — no fade'], [150, 'Fast — 0.15 s'], [300, 'Normal — 0.3 s'], [600, 'Smooth — 0.6 s'], [1000, 'Slow — 1 s'], [2000, 'Very slow — 2 s']], d.fadeMs, v => { set('fadeMs', +v); play(); })))),
+            slider({ label: 'From edge', min: 0.02, max: 0.25, step: 0.005, value: d.margin, reset: base('margin'), fmt: v => `${Math.round(v * 100)}%`, onInput: v => set('margin', v) }))),
         el('div', { class: 'row', style: 'margin-top:14px' },
+          el('button', { class: 'btn small', onclick: () => { holder.design = {}; onChange(); draw(); paint(); } }, 'Reset this design'),
           el('button', { class: 'btn small', onclick: () => {
             const look = { style: holder.style, color: holder.color, design: clone(holder.design || {}) };
             show.labels.forEach(L => { Object.assign(L, clone(look)); engine.setLabel(L); });
@@ -1806,6 +1880,7 @@
           } }, 'Use this look for all labels and speakers'),
           el('span', { class: 'grow' }),
           el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('labels'); refresh('speakers'); } }, 'Done')));
+      redrawThumbs();
     };
     draw(); paint();
     openModal('Design the label look', body);
@@ -2567,12 +2642,8 @@
       progInfo.textContent = `−${fmtShort(f.el.duration - f.el.currentTime)}`;
       progBar.firstChild.style.width = `${(f.el.currentTime / f.el.duration) * 100}%`;
     } else { progInfo.classList.add('hidden'); progBar.classList.add('hidden'); }
-    const tv = liveVideo();
-    timeline.classList.toggle('hidden', !tv);
-    if (tv) {
-      if (!tlDrag) { tlRange.value = Math.round(tv.currentTime / tv.duration * 1000); tlNow.textContent = fmtShort(tv.currentTime); tlLeft.textContent = '−' + fmtShort(tv.duration - tv.currentTime); }
-      const ic = tv.paused ? '▶' : '⏸'; if (tlPlay.textContent !== ic) tlPlay.textContent = ic;
-    }
+    timelineLive.update(); timelinePv.update();
+    timeline.classList.toggle('hidden', timelineLive.bar.classList.contains('hidden') && timelinePv.bar.classList.contains('hidden'));
     requestAnimationFrame(tickMeters);
   }
 
