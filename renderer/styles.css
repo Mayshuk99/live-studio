@@ -538,3 +538,5 @@ textarea { width: 100%; box-sizing: border-box; }
 .tl-bar.live .tl-tag { color: #f87171; }
 .tl-bar.live .tl-range { accent-color: #ef4444; }
 .tl-bar .tl-t { min-width: 2.8em; font-size: .85em; }
+
+#btnSave.dirty { color: #fbbf24; border-color: #b45309; background: rgba(245,158,11,.12); }

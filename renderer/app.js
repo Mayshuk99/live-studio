@@ -143,9 +143,22 @@
   let view = 'live';
   const curLayout = () => settings.ui.layouts[view];
 
-  const saveShow = debounce(() => S.saveShow(show), 400);
-  const saveSettings = debounce(() => S.saveSettings(settings), 400);
-  const changed = () => saveShow();
+  /* Nothing is written to disk until you press Save. A change only marks the show (or the settings) as
+     unsaved; closing the program then asks whether to save. */
+  let booting = true;
+  const dirty = { show: false, settings: false };
+  function updateSaveBtn() {
+    const b = $('#btnSave'), d = dirty.show || dirty.settings;
+    if (!b || b.classList.contains('ok')) return;
+    b.classList.toggle('dirty', d);
+    b.textContent = d ? '💾 Save •' : '💾 Save';
+    b.title = d ? 'You have unsaved changes — click to save them (Ctrl+Shift+S)' : 'Everything is saved (Ctrl+Shift+S)';
+    if (S.setDirty) S.setDirty(d);
+  }
+  function markDirty(which) { if (booting) return; if (!dirty[which]) { dirty[which] = true; updateSaveBtn(); } }
+  const saveShow = () => markDirty('show');
+  const saveSettings = () => markDirty('settings');
+  const changed = () => markDirty('show');
 
   const rt = {
     previewId: null, editingId: null, colorSrc: null, padTarget: 'main',
@@ -1066,13 +1079,19 @@
   $('#btnSettings').addEventListener('click', () => openSettings());
   // Save button: everything also saves by itself, this writes it to disk right now and confirms it
   async function saveAll(quiet) {
-    try { await S.saveShow(show); await S.saveSettings(settings); if (!quiet) { const b = $('#btnSave'); b.textContent = '✓ Saved'; b.classList.add('ok'); setTimeout(() => { b.textContent = '💾 Save'; b.classList.remove('ok'); }, 2000); } }
-    catch (e) { toast('Could not save: ' + e.message, 'error'); }
+    try {
+      await S.saveShow(show); await S.saveSettings(settings);
+      dirty.show = dirty.settings = false;
+      const b = $('#btnSave');
+      if (!quiet) { b.textContent = '✓ Saved'; b.classList.remove('dirty'); b.classList.add('ok'); setTimeout(() => { b.classList.remove('ok'); updateSaveBtn(); }, 1800); }
+      updateSaveBtn();
+      return true;
+    } catch (e) { toast('Could not save: ' + e.message, 'error'); return false; }
   }
   $('#btnSave').addEventListener('click', () => saveAll());
-  window.addEventListener('beforeunload', () => { S.saveShow(show); S.saveSettings(settings); });
-  setInterval(() => saveAll(true), 60000);
   document.addEventListener('keydown', e => { if (e.ctrlKey && e.shiftKey && e.code === 'KeyS') { e.preventDefault(); saveAll(); } });
+  // closing the window with unsaved changes: the program asks, and if you choose Save it saves here first
+  if (S.onSaveRequest) S.onSaveRequest(async () => { const ok = await saveAll(true); S.saved(ok); });
   $('#btnLayout').addEventListener('click', () => setEditing(!rt.editing));
   const showNameInput = $('#showName');
   showNameInput.value = show.showName;
@@ -1708,7 +1727,7 @@
   }
   const applyPic = p2 => engine.setWeb({ id: p2.id, src: p2.fileId, rect: picRect(p2), opacity: p2.opacity, fadeMs: p2.fadeMs, key: {} }, !!p2.fileId && webWanted(p2.id));
   // pictures remember whether they were on air, so a logo stays up after restarting Live Studio
-  function togglePic(id) { toggleWeb(id); const p2 = show.pics.find(x => x.id === id); if (p2) { p2.on = rt.webManual.has(id); changed(); } }
+  function togglePic(id) { toggleWeb(id); const p2 = show.pics.find(x => x.id === id); if (p2) p2.on = rt.webManual.has(id); } // showing / hiding during the service is not an edit
   function editPic(p2, isNew) {
     const body = el('div');
     const view = el('canvas', { width: 480, height: 270, style: 'width:100%;aspect-ratio:16/9;border-radius:8px;display:block;background:#000' });
@@ -2123,8 +2142,8 @@
       }
       settings.youtube.key = stream.cdn.ingestionInfo.streamName;
       if (settings.youtube.server === 'custom') settings.youtube.server = 'rtmps://a.rtmps.youtube.com:443/live2';
-      saveSettings();
-      rt.yt.event = ev; show.ytEventId = ev.id; changed();
+      if (!quiet) saveSettings(); // re-selecting the saved event when the program starts is not a change
+      rt.yt.event = ev; show.ytEventId = ev.id; if (!quiet) changed();
       ytApplyStream(stream);
       if (!quiet) toast(`YouTube event “${ev.title}” selected — stream key filled in.`, 'ok');
       ytStartPolling();
@@ -2270,7 +2289,6 @@
     openModal('YouTube', body);
     draw();
   }
-  const saveSettingsNow = debounce(() => S.saveSettings(settings), 300);
 
   /* ================= panel: speakers ================= */
   RENDER.speakers = body => {
@@ -2617,7 +2635,7 @@
         if (attempt >= 2 && !a.deviceLabel && !rt.devices.audio.find(d => d.id === a.deviceId)) {
           // saved before names were remembered: fall back to the capture card (or the SSL)
           const g = rt.devices.audio.find(d => /blackmagic|decklink/i.test(d.label) && d.id !== 'default' && d.id !== 'communications') || rt.devices.audio.find(d => /ssl/i.test(d.label));
-          if (g) { a.deviceId = g.id; rememberDevice(a, 'audio'); changed(); }
+          if (g) { a.deviceId = g.id; rememberDevice(a, 'audio'); }
         }
         openAudioInput(a, true, attempt + 1);
       }, attempt < 5 ? 2000 : 6000));
@@ -3032,7 +3050,7 @@
     changed();
   }
   async function bootShow() {
-    if (!show.firstRunDone) await firstRun();
+    if (!show.firstRunDone) { await firstRun(); await S.saveShow(show); await S.saveSettings(settings); }
     show.labels.forEach(l => engine.setLabel(l, false));
     // older shows: carry the before-service / ending video over to Start / End Service
     if (show.intro && show.intro.fileId && !SV().start.videoId) SV().start.videoId = show.intro.fileId;
@@ -3068,6 +3086,7 @@
   engine.start();
   requestAnimationFrame(tickMeters);
   await bootShow();
+  booting = false; dirty.show = dirty.settings = false; updateSaveBtn();
   renderHeader();
   checkWake();
   if (S.pcStats) { const poll = () => S.pcStats().then(p2 => { rt.pc = p2; }).catch(() => {}); poll(); setInterval(poll, 3000); }

@@ -87,14 +87,27 @@ function createWindow() {
   // hidden web-overlay pages must not keep the app running after the main window closes
   win.on('closed', () => { for (const id of [...webPages.keys()]) webClose(id); app.quit(); });
   win.on('close', e => {
-    if (!isLive && !outputs.active) return;
-    const r = dialog.showMessageBoxSync(win, {
-      type: 'warning', buttons: ['Keep streaming', 'End stream and quit'], defaultId: 0, cancelId: 0,
-      title: 'You are live', message: 'You are live or recording right now.', detail: 'Quitting will end the stream and finish the recording.'
-    });
-    if (r === 0) { e.preventDefault(); return; }
+    if (closeOK) return;
+    const live = isLive || outputs.active;
+    if (live) {
+      const r = dialog.showMessageBoxSync(win, {
+        type: 'warning', buttons: ['Keep streaming', 'End stream and quit'], defaultId: 0, cancelId: 0,
+        title: 'You are live', message: 'You are live or recording right now.', detail: 'Quitting will end the stream and finish the recording.'
+      });
+      if (r === 0) { e.preventDefault(); return; }
+    }
+    const save = askSave();
+    if (save === 'cancel') { e.preventDefault(); return; }
+    if (!live && save === 'no') return;
     e.preventDefault();
-    outputs.stopAll().then(() => { isLive = false; win.destroy(); });
+    (async () => {
+      if (save === 'yes' && !(await saveFromWindow())) {
+        const r = dialog.showMessageBoxSync(win, { type: 'error', buttons: ['Cancel', 'Close without saving'], defaultId: 0, cancelId: 0, title: 'Could not save', message: 'Your changes could not be saved.' });
+        if (r === 0) return;
+      }
+      if (live) { await outputs.stopAll(); isLive = false; }
+      closeOK = true; win.destroy();
+    })();
   });
 }
 
@@ -206,6 +219,26 @@ ipcMain.handle('out:start', (e, opts) => {
 ipcMain.on('out:data', (e, id, data) => outputs.write(id, data));
 ipcMain.handle('out:stop', (e, id) => outputs.stop(id));
 ipcMain.on('app:live', (e, live) => { isLive = !!live; });
+// unsaved changes: the window tells us when there are some, and we ask before closing
+let unsaved = false, closeOK = false;
+ipcMain.on('app:dirty', (e, d) => { unsaved = !!d; if (win && !win.isDestroyed()) win.setTitle(unsaved ? 'Live Studio — unsaved changes' : 'Live Studio'); });
+function askSave() {
+  if (!unsaved || !win || win.isDestroyed()) return 'no';
+  const r = dialog.showMessageBoxSync(win, {
+    type: 'question', buttons: ['Save', "Don't save", 'Cancel'], defaultId: 0, cancelId: 2, noLink: true,
+    title: 'Save changes?', message: 'Do you want to save your changes?',
+    detail: 'You changed shots, slides, titles, people or settings since you last saved. If you don\'t save, those changes are lost.'
+  });
+  return r === 0 ? 'yes' : r === 1 ? 'no' : 'cancel';
+}
+function saveFromWindow() {
+  return new Promise(resolve => {
+    const t = setTimeout(() => { ipcMain.removeListener('app:saved', done); resolve(false); }, 10000);
+    function done(e, ok) { clearTimeout(t); resolve(!!ok); }
+    ipcMain.once('app:saved', done);
+    win.webContents.send('app:save');
+  });
+}
 
 /* ---------- PC monitoring: CPU / GPU usage and temperatures ---------- */
 const os = require('os');
@@ -408,5 +441,11 @@ ipcMain.handle('update:check', async () => {
 });
 ipcMain.on('update:install', () => {
   if (outputs.active) return;
-  if (autoUpdater) { isLive = false; autoUpdater.quitAndInstall(false, true); }
+  if (!autoUpdater) return;
+  (async () => {
+    const save = askSave();
+    if (save === 'cancel') return;
+    if (save === 'yes' && !(await saveFromWindow())) return;
+    isLive = false; closeOK = true; autoUpdater.quitAndInstall(false, true);
+  })();
 });

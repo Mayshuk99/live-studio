@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('studio', {
   saveShow: obj => ipcRenderer.invoke('show:save', obj),
   loadSettings: () => ipcRenderer.invoke('settings:load'),
   saveSettings: obj => ipcRenderer.invoke('settings:save', obj),
+  setDirty: d => ipcRenderer.send('app:dirty', !!d),
+  onSaveRequest: fn => ipcRenderer.on('app:save', () => fn()),
+  saved: ok => ipcRenderer.send('app:saved', !!ok),
   pickMedia: () => ipcRenderer.invoke('media:pick'),
   // reads a video/image file; the interface turns it into a playable in-memory URL
   readMedia: p => ipcRenderer.invoke('media:read', p),
