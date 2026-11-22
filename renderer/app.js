@@ -54,6 +54,33 @@
     return el('div', { class: 'slider', title: 'Double-click to reset' }, el('span', { class: 'lbl' }, label), inp, val);
   }
 
+  /* vertical fader (like a plug-in fader): drag up / down anywhere on it (hold Shift for fine moves), mouse wheel
+     for small steps, double-click to reset, or type a number in the box under it */
+  function vfader({ min, max, value, log = false, round = v => Math.round(v * 10) / 10, fmt, onInput, reset, title }) {
+    const toF = v => log ? Math.log(v / min) / Math.log(max / min) : (v - min) / (max - min);
+    const fromF = f => { f = clamp(f, 0, 1); return round(log ? min * Math.pow(max / min, f) : min + f * (max - min)); };
+    let cur = clamp(value, min, max);
+    const cap = el('div', { class: 'vf-cap' }, el('i'));
+    const track = el('div', { class: 'vf-track', title: title || 'Drag up / down · Shift = fine · double-click = reset' }, el('div', { class: 'vf-slot' }), cap);
+    const box = el('input', { class: 'vf-val mono', type: 'text', value: fmt(cur), title: 'Type a value and press Enter' });
+    const place = () => { cap.style.top = `${(1 - toF(cur)) * 100}%`; if (document.activeElement !== box) box.value = fmt(cur); };
+    const set = v => { v = clamp(round(v), min, max); if (v === cur) return; cur = v; place(); onInput(v); };
+    track.addEventListener('pointerdown', e => {
+      e.preventDefault(); track.setPointerCapture(e.pointerId);
+      const h = track.getBoundingClientRect().height, y0 = e.clientY, f0 = toF(cur);
+      const move = ev => set(fromF(f0 - (ev.clientY - y0) / h * (ev.shiftKey ? 0.15 : 1)));
+      const up = () => { track.removeEventListener('pointermove', move); track.removeEventListener('pointerup', up); track.removeEventListener('pointercancel', up); };
+      track.addEventListener('pointermove', move); track.addEventListener('pointerup', up); track.addEventListener('pointercancel', up);
+    });
+    track.addEventListener('wheel', e => { e.preventDefault(); set(fromF(toF(cur) + (e.deltaY < 0 ? 1 : -1) * (log ? 0.01 : 0.1 / (max - min)) * (e.shiftKey ? 1 : 1))); }, { passive: false });
+    track.addEventListener('dblclick', () => { if (reset !== undefined) set(reset); });
+    const typed = () => { const v = parseFloat(String(box.value).replace('−', '-').replace(',', '.')); if (isFinite(v)) set(v); box.value = fmt(cur); };
+    box.addEventListener('keydown', e => { if (e.key === 'Enter') { typed(); box.blur(); } if (e.key === 'Escape') { box.value = fmt(cur); box.blur(); } });
+    box.addEventListener('blur', typed);
+    place();
+    return { track, box };
+  }
+
   /* ================= defaults ================= */
   const SHOT_COLORS = ['#64748b', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#9333ea', '#0891b2', '#db2777'];
   const PANEL_DEFS = {
@@ -2749,7 +2776,7 @@
     const fill = (o, def) => { for (const k in def) if (o[k] === undefined) o[k] = def[k]; return o; };
     m.dyn = m.dyn || {};
     m.dyn.comp = fill(m.dyn.comp || {}, { on: false, threshold: -24, ratio: 3, attack: 10, release: 150, knee: 2, makeup: 0 });
-    m.dyn.lim = fill(m.dyn.lim || {}, { ceiling: -1, release: 120 });
+    m.dyn.lim = fill(m.dyn.lim || {}, { ceiling: -1, release: 100, arc: true, bits: 24, dither: 'type1', shaping: 'normal' });
     if (m.dyn.lim.threshold === undefined) m.dyn.lim.threshold = m.dyn.lim.ceiling;
     return m.dyn;
   }
@@ -2759,6 +2786,9 @@
     const graph = el('canvas', { width: 600, height: 600, class: 'dyn-graph' });
     const meters = el('canvas', { width: 240, height: 600, class: 'dyn-meters' });
     const body = el('div');
+    const L2H = 380, L2P = 12; // fader / meter height and padding (css px) — the faders and meters share one scale
+    const mk = w => { const cv = el('canvas', { class: 'l2-meter', style: `width:${w}px;height:${L2H + 2 * L2P}px` }); cv.width = Math.round(w * devicePixelRatio); cv.height = Math.round((L2H + 2 * L2P) * devicePixelRatio); return cv; };
+    const L2 = { cIn: mk(92), cOut: mk(92), cAtt: mk(66), hold: { inL: -90, inR: -90, outL: -90, outR: -90, att: 0 }, lv: { inL: -90, inR: -90, outL: -90, outR: -90, att: 0 } };
     let picked = null; // the saved preset last loaded (so it can be updated or deleted)
     const mine = () => settings.dynPresets || (settings.dynPresets = []);
     const draw = () => {
@@ -2774,41 +2804,67 @@
         picked !== null && mine()[picked] ? el('button', { class: 'btn small danger', onclick: () => { const n = mine()[picked].name; settings.dynPresets.splice(picked, 1); picked = null; saveSettings(); toast(`Preset “${n}” deleted.`); draw(); } }, 'Delete “' + mine()[picked].name + '”') : null);
       const btnOn = (on, label, fn) => el('button', { class: 'btn dyn-on' + (on ? ' on' : ''), onclick: fn }, on ? `${label} ON` : `${label} OFF`);
       const ri = Math.max(0, RATIOS.findIndex(r => r >= c.ratio - 1e-6));
+      const tab = rt.dynTab || 'comp';
+      const presetSel = select([['', 'Presets…'], ...mine().map((p2, i) => ['u' + i, '★ ' + p2.name]), ...COMP_PRESETS.map((p2, i) => ['b' + i, p2[0]])], '', v => {
+        if (!v) return;
+        if (v[0] === 'u') { const pr = mine()[+v.slice(1)]; Object.assign(c, clone(pr.comp)); Object.assign(l, clone(pr.lim)); m.limiter = pr.limiter !== false; picked = +v.slice(1); }
+        else { Object.assign(c, COMP_PRESETS[+v.slice(1)][1], { on: true }); picked = null; }
+        apply(); draw(); syncAudioButtons();
+      });
+      const tabs = el('div', { class: 'dyn-tabs' },
+        el('button', { class: 'btn dyn-tab' + (tab === 'comp' ? ' sel' : ''), onclick: () => { rt.dynTab = 'comp'; draw(); } }, 'COMPRESSOR', el('span', { class: 'dot' + (c.on ? ' on' : '') })),
+        el('button', { class: 'btn dyn-tab' + (tab === 'lim' ? ' sel' : ''), onclick: () => { rt.dynTab = 'lim'; draw(); } }, 'LIMITER', el('span', { class: 'dot' + (m.limiter ? ' on' : '') })),
+        el('span', { class: 'grow' }), presetSel);
+      const compPage = () => el('div', { class: 'dyn-col' },
+        el('div', { class: 'row', style: 'gap:8px;margin-bottom:10px' }, btnOn(c.on, 'COMPRESSOR', () => { c.on = !c.on; apply(); draw(); syncAudioButtons(); })),
+        slider({ label: 'Threshold', min: -60, max: 0, step: 0.5, value: c.threshold, reset: -24, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { c.threshold = v; apply(); } }),
+        slider({ label: 'Ratio', min: 0, max: RATIOS.length - 1, step: 1, value: ri, reset: RATIOS.indexOf(3), fmt: v => `${RATIOS[v]}:1`, onInput: v => { c.ratio = RATIOS[v]; apply(); } }),
+        slider({ label: 'Attack', min: 0, max: 120, step: 1, value: c.attack, reset: 10, fmt: v => `${v} ms`, onInput: v => { c.attack = v; apply(); } }),
+        slider({ label: 'Release', min: 10, max: 1000, step: 1, value: c.release, reset: 150, fmt: v => `${v} ms`, onInput: v => { c.release = v; apply(); } }),
+        slider({ label: 'Out gain', min: 0, max: 18, step: 0.5, value: c.makeup, reset: 0, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { c.makeup = v; apply(); } }),
+        el('div', { class: 'row', style: 'gap:10px;align-items:center;margin:6px 0' }, el('span', { class: 'lbl', style: 'width:calc(110px * var(--scale));font-weight:600' }, 'Knee'),
+          el('div', { class: 'seg' }, [['HARD', 0], ['1', 2], ['2', 4], ['3', 6], ['4', 8], ['5', 10]].map(([t, k]) => el('button', { class: 'btn small' + (c.knee === k ? ' sel' : ''), onclick: () => { c.knee = k; apply(); draw(); } }, t)))),
+        el('div', { class: 'muted', style: 'font-size:.82em;margin-top:10px' }, 'The compressor evens out the level before the limiter. It works on what the stream and recording hear, after the mixer. Double-click a slider to reset it.'));
+      // the limiter page, laid out like an L2: input meters + Threshold, Out Ceiling + output meters, Atten, Release + ARC
+      const limPage = () => {
+        const thr = vfader({ min: -30, max: 0, value: l.threshold, reset: l.ceiling, fmt: v => v.toFixed(1), onInput: v => { l.threshold = v; apply(); } });
+        const ceil = vfader({ min: -30, max: 0, value: l.ceiling, reset: -1, fmt: v => v.toFixed(1), onInput: v => { l.ceiling = v; apply(); } });
+        const rel = vfader({ min: 0.01, max: 1000, log: true, value: l.release, reset: 100, round: v => v < 10 ? Math.round(v * 100) / 100 : v < 100 ? Math.round(v * 10) / 10 : Math.round(v), fmt: v => v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0), onInput: v => { l.release = v; apply(); } });
+        const pk = k => el('button', { class: 'l2-pk mono', 'data-pk': k, title: 'Highest level — click to reset', onclick: () => { L2.hold[k] = k === 'att' ? 0 : -90; } }, '—');
+        const sec = (name, peaks, row, foot) => el('div', { class: 'l2-sec' }, el('div', { class: 'l2-name' }, name), el('div', { class: 'l2-peaks' }, ...peaks), el('div', { class: 'l2-row' }, ...row), el('div', { class: 'l2-foot' }, ...foot));
+        return el('div', { class: 'l2' + (m.limiter ? '' : ' off') },
+          el('div', { class: 'l2-head' },
+            btnOn(!!m.limiter, 'LIMITER', () => { m.limiter = !m.limiter; apply(); draw(); refresh('audio'); syncAudioButtons(); }),
+            el('span', { class: 'l2-title' }, 'Peak limiter'), el('span', { class: 'grow' }),
+            el('span', { class: 'l2-gain mono', title: 'How much the level is pushed up (ceiling − threshold)' }, `+${Math.max(0, l.ceiling - l.threshold).toFixed(1)} dB`)),
+          el('div', { class: 'l2-body' },
+            sec('Threshold', [pk('inL'), pk('inR')], [L2.cIn, thr.track], [thr.box, el('span', { class: 'l2-unit' }, 'dB')]),
+            sec('Out Ceiling', [pk('outL'), pk('outR')], [ceil.track, L2.cOut], [ceil.box, el('span', { class: 'l2-unit' }, 'dB')]),
+            sec('Atten', [pk('att')], [L2.cAtt], [el('span', { class: 'l2-unit' }, 'dB')]),
+            sec('Release', [], [rel.track], [rel.box, el('span', { class: 'l2-unit' }, 'ms'),
+              el('button', { class: 'btn l2-arc' + (l.arc ? ' on' : ''), title: 'ARC — automatic release: follows the music, longer when the limiter works all the time so it does not pump', onclick: () => { l.arc = !l.arc; apply(); draw(); } }, 'ARC')]),
+            el('div', { class: 'l2-idr' },
+              el('div', { class: 'l2-name' }, 'IDR'),
+              el('div', { class: 'l2-idr-cols' },
+                ...[['Quantize', 'bits', [[24, '24 bit'], [22, '22'], [20, '20'], [16, '16'], [12, '12'], [8, '8']]],
+                  ['Dither', 'dither', [['none', 'None'], ['type1', 'Type 1'], ['type2', 'Type 2']]],
+                  ['Shaping', 'shaping', [['none', 'None'], ['moderate', 'Moderate'], ['normal', 'Normal'], ['ultra', 'Ultra']]]].map(([name, key, opts]) =>
+                  el('div', { class: 'l2-idr-col' }, el('div', { class: 'l2-sub' }, name),
+                    ...opts.map(([v, t]) => el('button', { class: 'btn small l2-opt' + (l[key] === v ? ' sel' : ''), onclick: () => { l[key] = v; apply(); draw(); } }, t))))))),
+          el('div', { class: 'l2-help' }, 'Works like an L2: lower the Threshold to make it louder — the level goes up by (ceiling − threshold) and a look-ahead brickwall stops every peak at the Out Ceiling. ARC makes the release follow the music. IDR rounds the output to the bits you choose (for YouTube 24 bit is right). Drag a fader (Shift = fine), mouse wheel, double-click to reset, or type in the box.'));
+      };
       put(body,
-        el('div', { class: 'dyn-wrap' },
-          el('div', { class: 'dyn-col' },
-            el('div', { class: 'row', style: 'gap:8px;margin-bottom:8px' },
-              btnOn(c.on, 'COMPRESSOR', () => { c.on = !c.on; apply(); draw(); }),
-              el('span', { class: 'grow' }),
-              select([['', 'Presets…'], ...mine().map((p2, i) => ['u' + i, '★ ' + p2.name]), ...COMP_PRESETS.map((p2, i) => ['b' + i, p2[0]])], '', v => {
-                if (!v) return;
-                if (v[0] === 'u') { const pr = mine()[+v.slice(1)]; Object.assign(c, clone(pr.comp)); Object.assign(l, clone(pr.lim)); m.limiter = pr.limiter !== false; picked = +v.slice(1); }
-                else { Object.assign(c, COMP_PRESETS[+v.slice(1)][1], { on: true }); picked = null; }
-                apply(); draw(); syncAudioButtons();
-              })),
-            presetRow,
-            slider({ label: 'Threshold', min: -60, max: 0, step: 0.5, value: c.threshold, reset: -24, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { c.threshold = v; apply(); } }),
-            slider({ label: 'Ratio', min: 0, max: RATIOS.length - 1, step: 1, value: ri, reset: RATIOS.indexOf(3), fmt: v => `${RATIOS[v]}:1`, onInput: v => { c.ratio = RATIOS[v]; apply(); } }),
-            slider({ label: 'Attack', min: 0, max: 120, step: 1, value: c.attack, reset: 10, fmt: v => `${v} ms`, onInput: v => { c.attack = v; apply(); } }),
-            slider({ label: 'Release', min: 10, max: 1000, step: 1, value: c.release, reset: 150, fmt: v => `${v} ms`, onInput: v => { c.release = v; apply(); } }),
-            slider({ label: 'Out gain', min: 0, max: 18, step: 0.5, value: c.makeup, reset: 0, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { c.makeup = v; apply(); } }),
-            el('div', { class: 'row', style: 'gap:10px;align-items:center;margin:6px 0' }, el('span', { class: 'lbl', style: 'width:calc(110px * var(--scale));font-weight:600' }, 'Knee'),
-              el('div', { class: 'seg' }, [['HARD', 0], ['1', 2], ['2', 4], ['3', 6], ['4', 8], ['5', 10]].map(([t, k]) => el('button', { class: 'btn small' + (c.knee === k ? ' sel' : ''), onclick: () => { c.knee = k; apply(); draw(); } }, t)))),
-            el('h3', { style: 'margin-top:14px' }, 'Limiter'),
-            el('div', { class: 'row', style: 'gap:8px;margin-bottom:8px' }, btnOn(!!m.limiter, 'LIMITER', () => { m.limiter = !m.limiter; apply(); draw(); refresh('audio'); })),
-            slider({ label: 'Threshold', min: -30, max: 0, step: 0.1, value: l.threshold, reset: l.ceiling, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { l.threshold = v; apply(); } }),
-            slider({ label: 'Out ceiling', min: -6, max: 0, step: 0.1, value: l.ceiling, reset: -1, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { l.ceiling = v; apply(); } }),
-            slider({ label: 'Release', min: 1, max: 1000, step: 1, value: l.release, reset: 100, fmt: v => `${v} ms`, onInput: v => { l.release = v; apply(); } }),
-            el('div', { class: 'muted', style: 'font-size:.82em;margin:2px 0 6px' }, 'Like an L2: lowering the Threshold pushes the level up by (ceiling − threshold); peaks are held at the Out ceiling. Threshold = ceiling adds nothing.'),
-            el('div', { class: 'muted', style: 'font-size:.82em;margin-top:6px' }, 'The compressor evens out the level; the limiter stops peaks going over the ceiling (−1 dB is the safe YouTube setting; −0.2 like your L2 also works). Both work on what the stream and recording hear, after the mixer. Double-click a slider to reset it.')),
-          el('div', { class: 'dyn-col dyn-vis' }, graph, meters)),
+        tabs,
+        presetRow,
+        tab === 'lim' ? limPage() : el('div', { class: 'dyn-wrap' }, compPage(), el('div', { class: 'dyn-col dyn-vis' }, graph, meters)),
         el('div', { class: 'row', style: 'margin-top:12px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('audio'); } }, 'Done')));
     };
     // live picture: the curve, where the sound is on it right now, and In / GR / Out meters
     const hist = { in: -90, comp: 0, lim: 0, out: -90 };
     const tick = () => {
-      if (!graph.isConnected) return;
+      if (!body.isConnected) return;
       requestAnimationFrame(tick);
+      if (!graph.isConnected) return; // limiter page open
       const now = performance.now(); if (now - (tick.at || 0) < 33) return; tick.at = now;
       const M = mixer.dynMeters(), A = rt.MA || { peakL: -90, peakR: -90 };
       hist.in = Math.max(M.in, hist.in - 1.5); hist.comp = Math.min(M.comp, hist.comp + 0.6); hist.lim = Math.min(M.lim, hist.lim + 0.6); hist.out = Math.max(Math.max(A.peakL, A.peakR), hist.out - 1.5);
@@ -2841,8 +2897,55 @@
       };
       col(0, 'In', hist.in, false); col(1, 'GR', hist.comp, true); col(2, 'LIM', hist.lim, true); col(3, 'Out', hist.out, false);
     };
+    // L2-style meters: 0 dB at the top, −30 at the bottom, same scale as the faders next to them
+    const drawL2 = () => {
+      const k = devicePixelRatio, y = db => (L2P + L2H * Math.min(1, Math.max(0, -db / 30))) * k;
+      const lvl = (cv, a, b, scaleLeft) => {
+        const g = cv.getContext('2d'), W = cv.width, H = cv.height; g.clearRect(0, 0, W, H);
+        const sw = 30 * k, bw = 22 * k, gap = 6 * k, x0 = scaleLeft ? sw : 4 * k;
+        g.font = `600 ${12 * k}px Consolas, monospace`; g.textBaseline = 'middle'; g.textAlign = scaleLeft ? 'right' : 'left';
+        for (let d = 0; d >= -30; d -= 3) { g.fillStyle = '#9fb0c2'; g.fillText(String(-d === 0 ? 0 : d), scaleLeft ? sw - 5 * k : x0 + 2 * bw + gap + 5 * k, y(d)); }
+        [a, b].forEach((v, i) => {
+          const x = x0 + i * (bw + gap);
+          g.fillStyle = '#0b0f14'; g.fillRect(x, y(0), bw, y(-30) - y(0));
+          g.fillStyle = '#1c2530'; for (let d = -3; d > -30; d -= 3) g.fillRect(x, y(d), bw, 1);
+          if (v > -30) {
+            const grd = g.createLinearGradient(0, y(-30), 0, y(0)); grd.addColorStop(0, '#16a34a'); grd.addColorStop(0.6, '#4ade80'); grd.addColorStop(0.8, '#facc15'); grd.addColorStop(0.95, '#ef4444');
+            g.fillStyle = grd; g.fillRect(x, y(v), bw, y(-30) - y(v));
+          }
+        });
+      };
+      lvl(L2.cIn, L2.lv.inL, L2.lv.inR, true);
+      lvl(L2.cOut, L2.lv.outL, L2.lv.outR, false);
+      // attenuation: grows down from the top, 0 … 30 dB
+      const g = L2.cAtt.getContext('2d'), W = L2.cAtt.width; g.clearRect(0, 0, W, L2.cAtt.height);
+      const bw = 26 * k, x = 4 * k, ya = d => (L2P + L2H * Math.min(1, d / 30)) * k;
+      g.fillStyle = '#0b0f14'; g.fillRect(x, ya(0), bw, ya(30) - ya(0));
+      g.fillStyle = '#1c2530'; for (let d = 3; d < 30; d += 3) g.fillRect(x, ya(d), bw, 1);
+      if (L2.lv.att > 0.05) { g.fillStyle = '#f59e0b'; g.fillRect(x, ya(0), bw, ya(L2.lv.att) - ya(0)); }
+      g.font = `600 ${12 * k}px Consolas, monospace`; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillStyle = '#9fb0c2';
+      for (let d = 0; d <= 30; d += 3) g.fillText(String(d), x + bw + 5 * k, ya(d));
+      // highest levels, in the boxes over the meters
+      for (const b of body.querySelectorAll('.l2-pk')) {
+        const key = b.dataset.pk, v = L2.hold[key];
+        b.textContent = key === 'att' ? (v > 0.05 ? v.toFixed(1) : '0.0') : (v <= -60 ? '−∞' : v.toFixed(1));
+        b.classList.toggle('hot', key === 'outL' || key === 'outR' ? v > l.ceiling + 0.05 : key === 'att' ? v > 6 : false);
+      }
+    };
+    const tickL2 = () => {
+      if (!body.isConnected) return;
+      requestAnimationFrame(tickL2);
+      const now = performance.now(); if (now - (tickL2.at || 0) < 33) return; tickL2.at = now;
+      if (!body.querySelector('.l2')) return;
+      const [iL, iR] = mixer.limInput(), A = rt.MA || { peakL: -90, peakR: -90 }, att = m.limiter ? -mixer.dynMeters().lim : 0;
+      const fall = (key, v) => { L2.lv[key] = Math.max(v, L2.lv[key] - 1.2); if (v > L2.hold[key]) L2.hold[key] = v; };
+      fall('inL', iL); fall('inR', iR); fall('outL', A.peakL); fall('outR', A.peakR);
+      L2.lv.att = Math.max(att, L2.lv.att - 0.8); if (att > L2.hold.att) L2.hold.att = att;
+      drawL2();
+    };
     draw();
     openModal('Dynamics — compressor & limiter', body);
+    requestAnimationFrame(tickL2);
     requestAnimationFrame(tick);
   }
   function drawMaster(A) {

@@ -40,6 +40,12 @@
       this.limGain = ctx.createGain();
       this.limDrive = ctx.createGain();          // limiter threshold: how far the level is pushed up into the ceiling (like an L2)
       this.limDrive.connect(this.limiter);
+      // level going into the limiter (for its input meters, next to the Threshold fader)
+      this.limIn = ctx.createGain();
+      const ls = ctx.createChannelSplitter(2);
+      this.limIn.connect(ls);
+      this.lInL = ctx.createAnalyser(); this.lInR = ctx.createAnalyser(); this.lInL.fftSize = this.lInR.fftSize = 1024;
+      ls.connect(this.lInL, 0); ls.connect(this.lInR, 1);
       this.limiter.connect(this.limGain);
       this.limGain.connect(this.ceil);
       // level going into the dynamics (for the In meter)
@@ -50,8 +56,21 @@
       this.masterFader.connect(this.auto);
       this.ceil.connect(this.masterOut);
       this.compOn = false; this.limiterOn = true;
+      this.l2 = null; this._l2gr = 0;
       this.setDynamics({});
       this._wire();
+      // the L2-style look-ahead limiter runs on the audio thread; until it has loaded (or if it cannot load) the
+      // browser's own limiter above is used
+      this.l2Ready = ctx.audioWorklet ? ctx.audioWorklet.addModule('l2-worklet.js').then(() => {
+        const n = new AudioWorkletNode(ctx, 'l2-limiter', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers', processorOptions: this._l2p || {} });
+        n.port.onmessage = e => { this._l2gr = e.data.gr; this._l2at = performance.now(); };
+        n.connect(this.masterOut);
+        this.l2 = n;
+        if (this._l2p) n.port.postMessage(this._l2p);
+        this._arc({ arc: false, release: 100 });
+        this._wire();
+        return true;
+      }).catch(e => { console.warn('L2 limiter not available — using the built-in limiter', e); return false; }) : Promise.resolve(false);
       this.dest = ctx.createMediaStreamDestination();
       this.dest.channelCount = 2;
       this.masterOut.connect(this.dest);
@@ -127,10 +146,14 @@
     _wire() {
       try { this.auto.disconnect(); } catch (e) { /* */ }
       try { this.makeup.disconnect(); } catch (e) { /* */ }
+      try { this.limIn.disconnect(this.limDrive); } catch (e) { /* */ }
+      try { this.limIn.disconnect(this.masterOut); } catch (e) { /* */ }
+      if (this.l2) try { this.limIn.disconnect(this.l2); } catch (e) { /* */ }
       this.auto.connect(this.dynSplit);
       let last = this.auto;
       if (this.compOn) { last.connect(this.comp); last = this.makeup; }
-      last.connect(this.limiterOn ? this.limDrive : this.masterOut);
+      last.connect(this.limIn);
+      this.limIn.connect(this.limiterOn ? (this.l2 || this.limDrive) : this.masterOut);
       this._wired = true;
     }
     /* master dynamics. Times in ms, levels in dB, knee in dB.
@@ -138,7 +161,7 @@
        level); it is cancelled here so the Out gain you set is exactly what you get, and the limiter adds nothing. */
     setDynamics(d) {
       const c = Object.assign({ on: false, threshold: -24, ratio: 3, attack: 10, release: 150, knee: 2, makeup: 0 }, d && d.comp);
-      const l = Object.assign({ ceiling: -1, release: 120 }, d && d.lim);
+      const l = Object.assign({ ceiling: -1, release: 120, arc: false, bits: 24, dither: 'type1', shaping: 'normal' }, d && d.lim);
       if (l.threshold === undefined) l.threshold = l.ceiling; // threshold = ceiling → no extra level
       const t = this.ctx.currentTime, set = (prm, v) => prm.setTargetAtTime(v, t, 0.01);
       set(this.comp.threshold, c.threshold); set(this.comp.ratio, c.ratio); set(this.comp.knee, c.knee);
@@ -149,6 +172,10 @@
       set(this.limDrive.gain, dbToGain(Math.max(0, l.ceiling - l.threshold)));
       set(this.limiter.threshold, lt); set(this.limiter.ratio, 20); set(this.limiter.knee, 0);
       set(this.limiter.attack, 0.001); set(this.limiter.release, Math.max(1, l.release) / 1000);
+      this._l2p = { drive: dbToGain(Math.max(0, l.ceiling - l.threshold)), ceil: dbToGain(l.ceiling), rel: Math.max(0.01, l.release) / 1000, arc: !!l.arc,
+        bits: +l.bits || 24, dither: { none: 0, type1: 1, type2: 2 }[l.dither] ?? 1, shaping: { none: 0, moderate: 1, normal: 2, ultra: 3 }[l.shaping] ?? 2 };
+      if (this.l2) this.l2.port.postMessage(this._l2p);
+      else this._arc(l);
       set(this.limGain.gain, dbToGain(0.6 * compCurve(0, lt, 20, 0)));
       if (this._ceilDb !== l.ceiling) {
         this._ceilDb = l.ceiling;
@@ -159,11 +186,33 @@
       this.dyn = { comp: c, lim: l };
       if (this.compOn !== !!c.on) { this.compOn = !!c.on; if (this._wired) this._wire(); }
     }
+    /* ARC (automatic release, like the L2): when the limiter is working all the time the release is made longer
+       (up to 4×) so it does not pump or distort; short peaks still get your Release time */
+    _arc(l) {
+      this._arcBase = Math.max(1, l.release) / 1000;
+      if (l.arc && !this._arcT) {
+        this._arcAvg = 0;
+        this._arcT = setInterval(() => {
+          const r = this.limiterOn ? this.limiter.reduction : 0;       // negative dB
+          this._arcAvg = this._arcAvg * 0.96 + r * 0.04;                // about a second of history
+          const k = 1 + Math.min(3, Math.max(0, -this._arcAvg) / 2);  // 2 dB of steady limiting → twice as long
+          this.limiter.release.setTargetAtTime(this._arcBase * k, this.ctx.currentTime, 0.05);
+        }, 50);
+      } else if (!l.arc && this._arcT) { clearInterval(this._arcT); this._arcT = null; }
+      this.arcOn = !!l.arc;
+    }
+    // peak level going into the limiter, per channel (dB)
+    limInput() {
+      const out = [];
+      for (const an of [this.lInL, this.lInR]) { an.getFloatTimeDomainData(this._db); let p = 0; for (let i = 0; i < this._db.length; i++) { const v = Math.abs(this._db[i]); if (v > p) p = v; } out.push(p > 1e-6 ? 20 * Math.log10(p) : -90); }
+      return out;
+    }
     // for the dynamics window: level going in (peak dB) and how much each stage is turning it down
     dynMeters() {
       let p = 0;
       for (const an of [this.dInL, this.dInR]) { an.getFloatTimeDomainData(this._db); for (let i = 0; i < this._db.length; i++) { const v = Math.abs(this._db[i]); if (v > p) p = v; } }
-      return { in: p > 1e-6 ? 20 * Math.log10(p) : -90, comp: this.compOn ? this.comp.reduction : 0, lim: this.limiterOn ? this.limiter.reduction : 0 };
+      const lim = !this.limiterOn ? 0 : this.l2 ? (performance.now() - (this._l2at || 0) < 200 ? -this._l2gr : 0) : this.limiter.reduction;
+      return { in: p > 1e-6 ? 20 * Math.log10(p) : -90, comp: this.compOn ? this.comp.reduction : 0, lim };
     }
     setAuto(db) { this.auto.gain.setTargetAtTime(Math.pow(10, db / 20), this.ctx.currentTime, 0.3); }
     setMono(on) {
