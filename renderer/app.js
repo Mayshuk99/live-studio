@@ -1283,27 +1283,56 @@
     pvListen.textContent = rt.pvListen ? '🎧 Listening' : '🎧 Listen';
   }
   function setPvListen(on) { rt.pvListen = !!on; mixer.resume(); mixer.setListen(on ? 'preview' : 'program'); updatePfl(); }
-  function drawMonMeter(A, monMeter = monMeterMain) {
-    if (!monMeter.isConnected) return;
-    const r = monMeter.getBoundingClientRect(), k = devicePixelRatio;
+  /* level meter beside a monitor: dB scale from 0 down to −60 (green / yellow above −18 / red above −6),
+     peak-hold line, and the loudest recent peak as a number underneath. scaleSide = which side the numbers go */
+  function drawMonMeter(A, cv = monMeterMain, scaleSide = 'left') {
+    if (!cv.isConnected) return;
+    const r = cv.getBoundingClientRect(), k = devicePixelRatio;
     const w = Math.max(10, Math.round(r.width * k)), h = Math.max(10, Math.round(r.height * k));
-    if (monMeter.width !== w || monMeter.height !== h) { monMeter.width = w; monMeter.height = h; }
-    const g = monMeter.getContext('2d'), top = 6 * k, mh = h - top - 18 * k;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const g = cv.getContext('2d');
     g.clearRect(0, 0, w, h);
+    const fs = Math.round(10.5 * k), top = 7 * k, foot = fs * 2.7, mh = h - top - foot;
+    if (mh < 20) return;
     const y = db => top + mh * (1 - Math.max(0, Math.min(1, (db + 60) / 60)));
-    const bw = (w - 6 * k) / 2;
+    const labW = Math.round(fs * 2.1), gap = 4 * k;
+    const bx = scaleSide === 'left' ? labW + gap : 0, bwAll = w - labW - gap;
+    const bw = Math.max(3 * k, (bwAll - 3 * k) / 2);
+    // scale: a number every 6 dB (every 12 dB if the meter is short)
+    const step = mh > 230 * k ? 6 : 12;
+    g.font = `600 ${fs}px Consolas, ui-monospace, monospace`; g.textBaseline = 'middle';
+    g.textAlign = scaleSide === 'left' ? 'right' : 'left';
+    const tx = scaleSide === 'left' ? labW - k : bwAll + gap + k;
+    for (let db = 0; db >= -60; db -= step) {
+      const yy = Math.round(y(db));
+      g.fillStyle = db === 0 ? '#f87171' : db >= -18 ? '#d4d4d8' : '#8b8b94';
+      g.fillText(db === 0 ? '0' : String(db), tx, Math.min(Math.max(yy, fs / 2), top + mh));
+      g.fillStyle = 'rgba(255,255,255,.18)';
+      g.fillRect(bx, yy, bwAll, Math.max(1, k * 0.6));
+    }
+    const zones = [[-60, -18, '#22c55e'], [-18, -6, '#eab308'], [-6, 0, '#ef4444']];
     [[A.peakL, A.holdL, A.clipL], [A.peakR, A.holdR, A.clipR]].forEach(([p, hd, clip], i) => {
-      const x = 2 * k + i * (bw + 2 * k);
-      g.fillStyle = '#0a0a0b'; g.fillRect(x, top, bw, mh);
-      const gr = g.createLinearGradient(0, top + mh, 0, top);
-      gr.addColorStop(0, '#16a34a'); gr.addColorStop(0.7, '#22c55e'); gr.addColorStop(0.82, '#eab308'); gr.addColorStop(0.95, '#ef4444');
-      g.fillStyle = gr; g.fillRect(x, y(p), bw, top + mh - y(p));
-      g.fillStyle = '#fff'; g.fillRect(x, y(hd) - k, bw, 2 * k);
-      if (clip) { g.fillStyle = '#ef4444'; g.fillRect(x, 0, bw, 4 * k); }
+      const x = bx + i * (bw + 3 * k);
+      g.fillStyle = '#09090b'; g.fillRect(x, top, bw, mh);
+      for (const [a, b2, col] of zones) {
+        if (p <= a) continue;
+        const y1 = y(Math.min(p, b2)), y0 = y(a);
+        g.fillStyle = col; g.fillRect(x, y1, bw, y0 - y1);
+      }
+      if (hd > -60) { g.fillStyle = '#fff'; g.fillRect(x, y(hd) - k, bw, 2 * k); }
+      g.fillStyle = clip ? '#ef4444' : '#27272a'; g.fillRect(x, 0, bw, 4 * k);
     });
+    // readout: loudest recent peak, and L / R under the bars
+    const peak = Math.max(A.holdL, A.holdR), cx = bx + bwAll / 2;
+    g.textAlign = 'center'; g.font = `700 ${fs}px Consolas, ui-monospace, monospace`;
+    g.fillStyle = A.silent || peak <= -60 ? '#71717a' : peak > -1.2 ? '#f87171' : peak > -6 ? '#facc15' : '#e4e4e7';
+    g.fillText(A.silent || peak <= -60 ? '−∞' : peak.toFixed(1).replace('-', '−'), cx, top + mh + fs * 0.95);
+    g.font = `600 ${Math.round(fs * 0.85)}px Consolas, ui-monospace, monospace`; g.fillStyle = '#71717a';
+    g.fillText('L', bx + bw / 2, top + mh + fs * 2.1); g.fillText('R', bx + bw * 1.5 + 3 * k, top + mh + fs * 2.1);
+    // phase dot (program meter only): green = fine, orange = wide, red = out of phase
     if (A.corr === undefined) return;
-    g.fillStyle = A.silent ? '#555' : A.corr < -0.2 ? '#ef4444' : A.corr < 0.2 ? '#f59e0b' : '#22c55e';
-    g.beginPath(); g.arc(w / 2, h - 8 * k, 4 * k, 0, 7); g.fill();
+    g.fillStyle = A.silent ? '#52525b' : A.corr < -0.2 ? '#ef4444' : A.corr < 0.2 ? '#f59e0b' : '#22c55e';
+    g.beginPath(); g.arc(scaleSide === 'left' ? labW / 2 : bwAll + gap + labW / 2, top + mh + fs * 0.95, 3.5 * k, 0, 7); g.fill();
   }
   RENDER.monitors = body => {
     body.innerHTML = '';
@@ -1312,10 +1341,10 @@
     const durSel = select([[0, 'Cut'], [300, 'Fade 0.3 s'], [600, 'Smooth 0.6 s'], [1000, 'Fade 1 s'], [2000, 'Fade 2 s']], show.transition.ms, v => { show.transition.ms = +v; changed(); }, { class: 'trans-sel' });
     put(body, el('div', { class: 'mon-wrap' },
       el('div', { class: 'monitors' },
-        el('div', { class: 'mon-meter-wrap pv', title: 'Sound of the Preview shot (what it will sound like on air)' }, pvMeter),
+        el('div', { class: 'mon-meter-wrap pv', title: 'Preview sound — what the Preview shot will sound like on air. Numbers are dB (0 = maximum); number underneath = loudest recent peak' }, pvMeter),
         el('div', { class: 'monitor preview' }, el('div', { class: 'screen' }, previewCanvas), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot green' }), el('span', { class: 'tagtxt' }, 'Preview'), pvName, el('span', { class: 'grow' }), pvListen)),
         el('div', { class: 'monitor program' }, el('div', { class: 'screen' }, engine.canvas, progInfo, progBar), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot red' }), el('span', { class: 'tagtxt' }, 'Live'), pgName)),
-        el('div', { class: 'mon-meter-wrap', title: 'Master level · dot = phase (green good, red out of phase)' }, monMeter)),
+        el('div', { class: 'mon-meter-wrap', title: 'Program sound — what the stream hears. Numbers are dB (0 = maximum); the stream never goes above −1. Number underneath = loudest recent peak. Dot = phase (green good, red out of phase)' }, monMeter)),
       timeline,
       el('div', { class: 'trans-bar' },
         el('button', { class: 'btn cut-btn', onclick: () => take('cut') }, 'CUT', keyChip('cut')),
@@ -2645,7 +2674,7 @@
   function tickMeters() {
     const lv = mixer.levels();
     const MA = mixer.masterAnalysis(); rt.MA = MA;
-    drawMaster(MA); drawMonMeter(MA); drawMonMeter(mixer.previewAnalysis(), pvMeter);
+    drawMaster(MA); drawMonMeter(MA, monMeterMain, 'left'); drawMonMeter(mixer.previewAnalysis(), pvMeter, 'right');
     for (const [id, m] of rt.meters) {
       const db = lv[id];
       if (db === undefined) continue;
