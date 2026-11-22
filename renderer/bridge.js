@@ -20,6 +20,9 @@
   window.studio = {
     isApp: false,
     platform: 'browser',
+    logWrite: async t => { (window.__log = window.__log || []).push(t); return true; },
+    logInfo: async () => ({ file: 'C:\\Users\\you\\Documents\\Live Studio\\Logs\\Live Studio test.log', dir: '' }),
+    logShow: async () => {},
     version: async () => 'dev',
     loadShow: async () => ls.get('ls.show'),
     saveShow: async obj => ls.set('ls.show', obj),

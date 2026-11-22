@@ -26,11 +26,18 @@
   function put(parent, ...kids) { for (const k of kids.flat(Infinity)) if (k !== null && k !== undefined && k !== false) parent.append(k); return parent; }
   const uid = p => `${p}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  /* service log (see “service log” near the end): events are collected here and written to the file every 5 s */
+  const LOG = { buf: [], on: !!S.logWrite };
+  const logTime = () => { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}.${Math.floor(d.getMilliseconds() / 100)}`; };
+  function logEvent(kind, msg) { if (LOG.on) { LOG.buf.push(`${logTime()}  ${kind.padEnd(8)} ${msg}`); if (LOG.buf.length > 5000) LOG.buf.splice(0, 1000); } }
+  function logFlush() { if (!LOG.on || !LOG.buf.length) return; const t = LOG.buf.join('\r\n') + '\r\n'; LOG.buf = []; S.logWrite(t).catch(() => {}); }
+  setInterval(logFlush, 5000);
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
   const fmt = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`; };
   const fmtShort = s => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const clone = o => JSON.parse(JSON.stringify(o));
   function toast(msg, type = '', action) {
+    logEvent(type === 'error' ? 'ERROR' : 'MESSAGE', String(msg));
     const t = el('div', { class: `toast ${type}` }, msg);
     if (action) t.append(' ', el('button', { class: 'btn small', onclick: () => { action.fn(); t.remove(); } }, action.label));
     $('#toasts').append(t);
@@ -204,10 +211,20 @@
   const fileById = id => show.files.find(f => f.id === id);
   const camById = id => show.cameras.find(c => c.id === id);
 
+  // 1.27: the output runs at the cameras' exact rate. 60.00 with 59.94 cameras means one camera picture is shown
+  // twice about every 17 seconds (a small hitch on YouTube); 59.94 avoids it.
+  if (!settings.output.fpsV) {
+    const camRates = show.cameras.map(c => String(c.fps || ''));
+    if (settings.output.fps === 60 && camRates.includes('59.94')) settings.output.fps = 59.94;
+    if (settings.output.fps === 30 && camRates.includes('29.97')) settings.output.fps = 29.97;
+    settings.output.fpsV = 1;
+    setTimeout(() => S.saveSettings(settings).catch(() => {}), 3000);
+  }
   /* ================= engine + mixer ================= */
   let engine;
   try {
     engine = new Engine({ width: settings.output.width, height: settings.output.height, fps: settings.output.fps });
+    engine.frameSync = settings.frameSync !== false;
   } catch (e) {
     document.body.innerHTML = `<div style="padding:40px;font-size:18px">Live Studio could not start the video engine.<br><br>${e.message}<br><br>Update your graphics driver and restart.</div>`;
     return;
@@ -492,7 +509,7 @@
   try {
     new PerformanceObserver(list => {
       const L = rt.longTasks || (rt.longTasks = []);
-      for (const e of list.getEntries()) L.push([performance.now(), e.duration]);
+      for (const e of list.getEntries()) { L.push([performance.now(), e.duration]); rt.longWin = rt.longWin || []; rt.longWin.push(e.duration); }
       const cut = performance.now() - 60000; while (L.length && L[0][0] < cut) L.shift();
     }).observe({ entryTypes: ['longtask'] });
   } catch (e) { /* not available */ }
@@ -917,7 +934,15 @@
   function roundRectPath(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
   engine.setSource('hold', holdCanvas, 'image');
   let lastHoldSec = -1;
-  setInterval(() => { const s2 = Math.floor(Date.now() / 1000); if (s2 !== lastHoldSec) { lastHoldSec = s2; drawHold(); } }, 100);
+  // the clock on the holding slide is redrawn every second only while the slide is on the Program / Preview or its
+  // designer is open; otherwise every 10 s (enough for its shot tile) — redrawing a full-size slide is not free
+  let holdStale = true, holdLazyAt = 0;
+  setInterval(() => {
+    const s2 = Math.floor(Date.now() / 1000);
+    const shown = engine.usedRecently('hold', 1500) || !!document.querySelector('.hold-stage');
+    if (shown) { if (s2 !== lastHoldSec || holdStale) { lastHoldSec = s2; holdStale = false; drawHold(); } }
+    else if (Date.now() - holdLazyAt > 10000) { holdLazyAt = Date.now(); lastHoldSec = s2; holdStale = true; drawHold(); }
+  }, 100);
 
   /* ================= labels ================= */
   function setLabelVisible(id, on) {
@@ -1013,7 +1038,10 @@
       this.id = r.id;
       this.track = engine.videoTrack().clone();
       const ms = new MediaStream([this.track, ...mixer.stream().getAudioTracks()]);
-      const vbps = this.kind === 'stream' ? clamp(o.bitrate * 3000, 10e6, 40e6) : clamp(o.recordBitrate * 1000, 1e6, 100e6);
+      // the picture handed to FFmpeg: when FFmpeg encodes it again (always for the stream; for the recording with a
+      // graphics-card encoder) it gets a clean, high-quality copy, so the final file is not compressed twice at a low rate
+      const reenc = this.kind === 'stream' || ['nvenc', 'qsv', 'amf'].includes(encoder);
+      const vbps = this.kind === 'stream' ? clamp(o.bitrate * 3000, 10e6, 40e6) : reenc ? clamp(o.recordBitrate * 3000, 10e6, 100e6) : clamp(o.recordBitrate * 1000, 1e6, 100e6);
       this.rec = new MediaRecorder(ms, { mimeType: mime, videoBitsPerSecond: vbps, audioBitsPerSecond: 510000 });
       const id = this.id;
       this.rec.ondataavailable = e => {
@@ -1084,6 +1112,7 @@
       return;
     }
     if (ev.type === 'exit') {
+      logEvent('ENCODER', `${ev.kind} encoder ${ev.expected ? 'finished' : 'stopped'}${ev.code !== undefined ? ` (code ${ev.code})` : ''}${ev.error ? ` — ${ev.error}` : ''}${ev.detail ? ` — ${String(ev.detail).slice(0, 400)}` : ''}`);
       if (ev.file) toast(`Recording saved: ${ev.file}`, 'ok', S.showFile ? { label: 'Show', fn: () => S.showFile(ev.file) } : null);
       if (ev.expected) return;
       // graphics-card encoder refused to start → step down by itself instead of failing over and over
@@ -1186,10 +1215,14 @@
   }
   function resetFrameStats() {
     engine.stats.frames = 0; engine.stats.missed = 0; engine.stats.recent = []; engine.stats.worst = 0; engine.stats.since = performance.now();
+    engine.stats.camRepeat = 0; engine.stats.camSkip = 0;
+    for (const so of engine.sources.values()) { so.late = 0; so.worstGap = 0; so.gapLog = []; }
+    logEvent('COUNTERS', 'frame counters reset');
     for (const c of show.cameras) { const src = engine.sources.get(c.id); if (src) { src.skipBase = src.skipped || 0; src.pfBase = src.pf || 0; src.fpsNow = 0; src.countAt = performance.now(); } }
     rt.dropSeen = 0;
   }
   function openPerf() {
+    if (S.logInfo && !rt.logFile) S.logInfo().then(i => { rt.logFile = i && i.file; }).catch(() => {});
     const body = el('div');
     const draw = () => {
       if (!body.isConnected && body.dataset.open) return clearInterval(timer);
@@ -1215,7 +1248,12 @@
           row(`Graphics (GPU)${rt.pc.gpuName ? ' — ' + rt.pc.gpuName : ''}`, rt.pc.gpu !== null ? `${rt.pc.gpu}%` : 'not available', rt.pc.gpu >= 95),
           row('GPU temperature', rt.pc.gpuTemp !== null ? `${rt.pc.gpuTemp} °C` : 'only available for NVIDIA cards', rt.pc.gpuTemp >= 85),
           row('Memory in use', `${rt.pc.mem}%`, rt.pc.mem >= 90)] : el('div', { class: 'muted' }, 'Reading…'),
+        el('h3', null, 'Camera on air'),
+        row('Timing', (() => { const cs = engine._clockSrc(); return cs && cs.sync ? `frame sync — every camera frame used once (queue ${cs.q ? cs.q.length : 0})` : st.locked ? 'following the camera' : cs ? 'following the screen refresh' : 'no live camera on air'; })()),
+        row('Camera picture shown twice', String(st.camRepeat || 0), (st.camRepeat || 0) > 0),
+        row('Camera frames skipped', String(st.camSkip || 0), (st.camSkip || 0) > 0),
         el('h3', null, 'Cameras'),
+        engine.cameraStats().map(cst => row(`${(show.cameras.find(x => x.id === cst.id) || {}).name || cst.id} — late frames (last minute) · longest gap`, `${cst.late} (${cst.lastMin}) · ${Math.round(cst.worst)} ms`, cst.lastMin > 0)),
         show.cameras.length ? show.cameras.map(c => {
           const src = engine.sources.get(c.id), now = performance.now();
           // counted from the card's own frame numbers, averaged over ~10 s, so a busy moment in this window can't fake a low reading
@@ -1230,6 +1268,10 @@
         rt.live && rt.liveStats ? [row('Frames sent', (rt.liveStats.frame || 0).toLocaleString()), row('Dropped by the encoder', String(rt.liveStats.drop || 0), rt.liveStats.drop > 0), row('Repeated to fill gaps', String(rt.liveStats.dup || 0), rt.liveStats.dup > engine.fps), row('Encoder speed', `${(rt.liveStats.speed || 0).toFixed(2)}×`, rt.liveStats.speed && rt.liveStats.speed < 0.97)] : el('div', { class: 'muted' }, 'Not live.'),
         rt.rec && rt.recStats ? [el('h3', null, 'Recording'), row('Frames written', (rt.recStats.frame || 0).toLocaleString()), row('Dropped', String(rt.recStats.drop || 0), rt.recStats.drop > 0)] : null,
         el('div', { class: 'muted', style: 'font-size:.85em;margin-top:12px' }, d.total ? 'If frames are being missed: close other programs, use a hardware encoder (Settings → Encoder), or lower the frame rate or resolution.' : 'No dropped frames. ✓'),
+        el('h3', null, 'Service log'),
+        el('div', { class: 'muted', style: 'font-size:.85em' }, 'Everything is written to a log file while Live Studio runs. Press F9 when you see a glitch — it marks the moment. After the service send the log file for checking.'),
+        rt.logFile ? el('div', { class: 'mono', style: 'font-size:.8em;margin:4px 0;word-break:break-all' }, rt.logFile) : null,
+        el('div', { class: 'row', style: 'gap:8px;margin-top:6px' }, el('button', { class: 'btn', onclick: () => { logFlush(); S.logShow && S.logShow(); } }, '📄 Show log file'), el('button', { class: 'btn', onclick: markGlitch }, '⚑ Mark a glitch (F9)')),
         el('div', { class: 'row', style: 'margin-top:14px' }, el('button', { class: 'btn', onclick: () => { resetFrameStats(); draw(); } }, 'Reset counters'), el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { clearInterval(timer); closeModal(); } }, 'Done')));
     };
     openModal('Frame counter & PC monitor', body);
@@ -3340,9 +3382,10 @@
       live ? el('div', { class: 'status-bad', style: 'margin-bottom:8px' }, 'Locked while live or recording.') : null,
       el('div', { class: 'grid2' },
         el('div', { class: 'field' }, el('span', null, 'Resolution'), select([['1920x1080', '1080p (1920×1080)'], ['1280x720', '720p (1280×720)']], `${o.width}x${o.height}`, v => { const [w, h] = v.split('x').map(Number); changeOut('width', w); changeOut('height', h); })),
-        el('div', { class: 'field' }, el('span', null, 'Frame rate'), select([[25, '25 fps'], [30, '30 fps (29.97 cameras)'], [50, '50 fps'], [60, '60 fps (59.94 cameras)']], o.fps, v => changeOut('fps', +v))),
+        el('div', { class: 'field' }, el('span', null, 'Frame rate'), select([[25, '25 fps'], [29.97, '29.97 fps (29.97 cameras)'], [30, '30 fps'], [50, '50 fps'], [59.94, '59.94 fps (59.94 cameras — Blackmagic)'], [60, '60 fps']], o.fps, v => changeOut('fps', +v))),
+        el('div', { class: 'field' }, el('span', null, 'Camera frame sync'), select([['on', 'On — every camera frame used once (smoothest)'], ['off', 'Off — older method']], settings.frameSync === false ? 'off' : 'on', v => { settings.frameSync = v === 'on'; saveSettings(); engine.frameSync = settings.frameSync; toast('Takes effect after restarting Live Studio.'); })),
         el('div', { class: 'field' }, el('span', null, 'Encoder'), select([['x264', 'Software (works on every PC)'], ['nvenc', 'NVIDIA graphics card (NVENC)'], ['qsv', 'Intel graphics (Quick Sync)'], ['amf', 'AMD graphics card (AMF)']], o.encoder, v => changeOut('encoder', v)))),
-      el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free.'),
+      el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free. Set the frame rate to exactly what the cameras send (Blackmagic at 59.94 → 59.94).'),
       rt.encFallback && rt.encFallback.for === o.encoder ? el('div', { class: 'status-bad', style: 'font-size:.9em;margin-top:6px' }, rt.encFallback.level >= 2 ? `This encoder would not start, so the software encoder is being used until the program is restarted. Updating the graphics card driver usually fixes it. Reported: ${rt.encFallback.detail || 'no details'}` : 'This encoder refused the tuned settings; plain settings are being used.') : null,
       el('h3', null, 'Live stream quality'),
       qualityBlock('live'),
@@ -3637,5 +3680,92 @@
   if (S.pcStats) { const poll = () => S.pcStats().then(p2 => { rt.pc = p2; }).catch(() => {}); poll(); setInterval(poll, 3000); }
   setTimeout(resetFrameStats, 4000); // don't count the start-up hiccups
   ytInit().catch(e => console.warn('youtube', e));
-  window.__live = { engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb };
+  /* ================= service log =================
+     A plain text file for every session in Documents\Live Studio\Logs, to send for troubleshooting:
+     a status line every second while live / recording / in a service (every 10 s otherwise), every event, and a
+     summary every 10 minutes. Lines starting with "!" had a problem in that second. F9 adds a mark ("I saw a glitch"). */
+  function startServiceLog() {
+    if (!LOG.on) return;
+    const o = settings.output, nameOf = id => { const sh = id && getShot(id); return sh ? sh.name : (id || '—'); };
+    const camName = id => { const c = show.cameras.find(x => x.id === id); return c ? c.name : id; };
+    S.version().then(v => S.ffmpegVersion().then(fv => logEvent('START', `Live Studio ${v} · FFmpeg ${fv || '?'} · output ${o.width}×${o.height} at ${o.fps} fps · encoder ${o.encoder} · stream ${o.bitrate} kbps / audio ${o.audioBitrate || 160} · recording ${o.recordBitrate} kbps · screen ${screen.width}×${screen.height} @${devicePixelRatio}×`)).catch(() => {})).catch(() => {});
+    for (const c of show.cameras) { const st = rt.camStatus.get(c.id) || {}; logEvent('CAMERA', `${c.name}: ${c.deviceLabel || 'device'} · wanted ${c.res || 1080}p ${c.fps || 'auto'} · ${st.text || ''} · ${engine.sources.get(c.id) && engine.sources.get(c.id).sync ? 'frame sync on' : 'frame sync off (screen-refresh timing)'}`); }
+    for (const a of show.audio.inputs) logEvent('AUDIO', `input ${a.name || a.id}: ${a.deviceLabel || a.label || ''}`);
+    logEvent('AUDIO', `headphones: ${settings.monitorOut && settings.monitorOut.label || 'Windows default'} · program playback: ${settings.playbackOut && settings.playbackOut.label || 'off'} · limiter ${show.audio.master.limiter ? 'on' : 'off'} · compressor ${show.audio.master.dyn && show.audio.master.dyn.comp && show.audio.master.dyn.comp.on ? 'on' : 'off'}`);
+    // the screen's refresh rate (the program used to follow it; it matters for smooth video)
+    { const ts = []; const f = t => { ts.push(t); if (ts.length < 121) requestAnimationFrame(f); else { const d = ts.slice(1).map((x, i) => x - ts[i]).sort((a, b) => a - b); logEvent('DISPLAY', `screen refresh about ${(1000 / d[60]).toFixed(2)} Hz`); } }; requestAnimationFrame(f); }
+    setTimeout(() => { if (rt.pc) logEvent('PC', `${(rt.pc.cpuName || '').trim()} · ${rt.pc.cores} threads · ${rt.pc.gpuName || 'GPU ?'}`); }, 4000);
+
+    // events: what changed, checked 10 times a second
+    const last = { prog: null, pv: null, live: false, rec: false, recon: false, service: null, black: 0, webs: new Map(), labels: new Map() };
+    setInterval(() => {
+      const prog = engine.trans ? engine.trans.to : engine.programId;
+      if (prog !== last.prog) { logEvent('PROGRAM', `${nameOf(prog)}${engine.trans ? ` (fade ${engine.trans.dur} ms)` : ' (cut)'}`); last.prog = prog; }
+      if (engine.previewId !== last.pv) { logEvent('PREVIEW', nameOf(engine.previewId)); last.pv = engine.previewId; }
+      if (!!rt.live !== last.live) { logEvent('LIVE', rt.live ? 'stream started' : 'stream ended'); last.live = !!rt.live; }
+      if (!!rt.reconnecting !== last.recon) { logEvent('LIVE', rt.reconnecting ? 'reconnecting…' : 'connected'); last.recon = !!rt.reconnecting; }
+      if (!!rt.rec !== last.rec) { logEvent('REC', rt.rec ? 'recording started' : 'recording stopped'); last.rec = !!rt.rec; }
+      if (rt.service !== last.service) { logEvent('SERVICE', String(rt.service)); last.service = rt.service; }
+      if (engine.black.to !== last.black) { logEvent('BLACK', engine.black.to ? 'fade to black' : 'back from black'); last.black = engine.black.to; }
+      for (const [id, w] of engine.webs) { const on = w.target > 0; if (last.webs.get(id) !== on) { if (last.webs.has(id) || on) { const x = show.webs.find(q => q.id === id) || show.pics.find(q => q.id === id); logEvent('GRAPHIC', `${x ? x.name || x.url || id : id} ${on ? 'on' : 'off'}`); } last.webs.set(id, on); } }
+      for (const [id, L] of engine.labels) { const on = L.target > 0; if (last.labels.get(id) !== on) { if (last.labels.has(id) || on) logEvent('CAPTION', `${(L.data && (L.data.title || L.data.text)) || id} ${on ? 'shown' : 'hidden'}`); last.labels.set(id, on); } }
+    }, 100);
+    document.addEventListener('visibilitychange', () => logEvent('WINDOW', document.hidden ? 'hidden / minimised' : 'visible'));
+    window.addEventListener('blur', () => logEvent('WINDOW', 'another program was clicked'));
+    window.addEventListener('focus', () => logEvent('WINDOW', 'Live Studio clicked again'));
+    window.addEventListener('error', e => logEvent('ERROR', `${e.message} @ ${(e.filename || '').split('/').pop()}:${e.lineno}`));
+    window.addEventListener('unhandledrejection', e => logEvent('ERROR', `unhandled: ${e.reason && (e.reason.message || e.reason)}`));
+    window.addEventListener('beforeunload', () => { logEvent('CLOSE', 'Live Studio closing'); logFlush(); });
+
+    // status line every second (every 10 s when nothing is running)
+    const prev = { missed: engine.stats.missed, rep: 0, skip: 0, ld: 0, lr: 0, rd: 0, rr: 0, late: new Map(), at: 0, liveId: null, recId: null };
+    const sum = { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0 };
+    let n = 0;
+    setInterval(() => {
+      n++;
+      const st = engine.stats, active = rt.live || rt.rec || (rt.service && rt.service !== 'hold');
+      const busy = rt.longWin || []; rt.longWin = [];
+      const cams = engine.cameraStats(true);
+      if (!active && n % 10) return;
+      const flags = [];
+      const missed = Math.max(0, st.missed - prev.missed); prev.missed = st.missed; // (counters can be reset in the frame monitor)
+      const rep = Math.max(0, (st.camRepeat || 0) - prev.rep), skip = Math.max(0, (st.camSkip || 0) - prev.skip); prev.rep = st.camRepeat || 0; prev.skip = st.camSkip || 0;
+      if (missed > 0) flags.push('miss'); if (rep > 0 || skip > 0) flags.push('cam');
+      const cs = engine._clockSrc(), mode = cs && cs.sync ? `sync q${cs.q ? cs.q.length : 0}` : st.locked ? 'cam-lock' : 'refresh';
+      let line = `out ${st.fps}fps miss ${missed} draw ${st.renderMs.toFixed(1)}ms ui ${(rt.uiMs || 0).toFixed(1)}ms` + (busy.length ? ` busy ${busy.length}×${Math.round(Math.max(...busy))}ms` : '');
+      line += ` | air "${nameOf(engine.trans ? engine.trans.to : engine.programId)}" ${mode} rep ${rep} skip ${skip}`;
+      for (const c of cams) {
+        const late = Math.max(0, c.late - (prev.late.get(c.id) || 0)); prev.late.set(c.id, c.late);
+        if (late > 0) flags.push('camlate');
+        line += ` | ${camName(c.id)} ${c.alive ? c.fps.toFixed(2) : 'NO SIGNAL'} gap ${Math.round(c.win)}${late ? ` late ${late}` : ''}`;
+        sum.camLate += Math.max(0, late); sum.worstGap = Math.max(sum.worstGap, c.win);
+      }
+      const L = rt.live && rt.liveStats, R = rt.rec && rt.recStats;
+      if (rt.live && rt.live.id !== prev.liveId) { prev.liveId = rt.live.id; prev.ld = 0; prev.lr = 0; }
+      if (rt.rec && rt.rec.id !== prev.recId) { prev.recId = rt.rec.id; prev.rd = 0; prev.rr = 0; }
+      if (L) {
+        const dd = (L.dup || 0) - prev.ld, dr = (L.drop || 0) - prev.lr; prev.ld = L.dup || 0; prev.lr = L.drop || 0;
+        if (dd > 0 || dr > 0) flags.push('yt'); if (L.speed && L.speed < 0.97) flags.push('slow');
+        sum.dup += Math.max(0, dd); sum.drop += Math.max(0, dr);
+        line += ` | yt ${Math.round(L.fps || 0)}fps ${((L.bitrate || 0) / 1000).toFixed(1)}Mb dup ${dd} drop ${dr} x${(L.speed || 0).toFixed(2)} buf ${Math.round((L.backlog || 0) / 1024)}K`;
+      } else if (rt.live) line += ' | yt starting';
+      if (R) { const dd = (R.dup || 0) - prev.rd, dr = (R.drop || 0) - prev.rr; prev.rd = R.dup || 0; prev.rr = R.drop || 0; if (dd > 0 || dr > 0) flags.push('rec'); line += ` | rec ${Math.round(R.fps || 0)}fps dup ${dd} drop ${dr} x${(R.speed || 0).toFixed(2)}`; }
+      const pc = rt.pc;
+      if (pc) { line += ` | cpu ${pc.cpu}%${pc.cpuTemp !== null ? ` ${pc.cpuTemp}°` : ''} gpu ${pc.gpu !== null ? pc.gpu + '%' : '?'}${pc.gpuTemp !== null ? ` ${pc.gpuTemp}°` : ''} mem ${pc.mem}%`; sum.cpu = Math.max(sum.cpu, pc.cpu || 0); sum.cpuT = Math.max(sum.cpuT, pc.cpuTemp || 0); sum.gpuT = Math.max(sum.gpuT, pc.gpuTemp || 0); }
+      if (performance.memory) line += ` heap ${Math.round(performance.memory.usedJSHeapSize / 1048576)}M`;
+      if (rt.MA) line += ` | ${rt.MA.lufsS <= -60 ? '—' : rt.MA.lufsS.toFixed(1)} LUFS`;
+      if (busy.length) flags.push('busy');
+      sum.missed += Math.max(0, missed); sum.rep += Math.max(0, rep); sum.skip += Math.max(0, skip); sum.busy += busy.length; sum.busyMax = Math.max(sum.busyMax, ...busy, 0); if (flags.length) sum.bad++;
+      if (LOG.on) LOG.buf.push(`${logTime()}${flags.length ? ' !' : '  '} ${(rt.live ? 'LIVE ' : '') + (rt.rec ? 'REC ' : '')}${line}${flags.length ? '  [' + flags.join(',') + ']' : ''}`);
+      if (Date.now() - sum.start >= 600000) {
+        logEvent('SUMMARY', `last 10 min: ${sum.bad} seconds with a problem · frames missed ${sum.missed} · camera repeated ${sum.rep} / skipped ${sum.skip} · camera late ${sum.camLate} (longest gap ${Math.round(sum.worstGap)} ms) · YouTube repeated ${sum.dup} / dropped ${sum.drop} · busy moments ${sum.busy} (longest ${Math.round(sum.busyMax)} ms) · max CPU ${sum.cpu}% ${sum.cpuT}° · max GPU ${sum.gpuT}°`);
+        Object.assign(sum, { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0 });
+      }
+    }, 1000);
+  }
+  // F9: “I just saw a glitch” — puts a mark in the log so that moment can be found
+  function markGlitch() { logEvent('MARK', '>>> F9 pressed: glitch seen on screen / YouTube <<<'); logFlush(); toast('Marked in the log ✓ (F9)', 'ok'); }
+  document.addEventListener('keydown', e => { if (e.key === 'F9') { e.preventDefault(); markGlitch(); } });
+  startServiceLog();
+  window.__live = { engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb, markGlitch, logFlush };
 })();

@@ -125,6 +125,25 @@ app.on('window-all-closed', () => app.quit());
 
 /* ---------- IPC ---------- */
 ipcMain.handle('app:version', () => app.getVersion());
+
+/* ---------- service log: one plain text file per session (Documents\Live Studio\Logs) to send for troubleshooting ---------- */
+const logDir = () => path.join(app.getPath('documents'), 'Live Studio', 'Logs');
+let logFile = null;
+function logOpen() {
+  if (logFile) return logFile;
+  const d = logDir();
+  fs.mkdirSync(d, { recursive: true });
+  const t = new Date(), z = n => String(n).padStart(2, '0');
+  logFile = path.join(d, `Live Studio ${t.getFullYear()}-${z(t.getMonth() + 1)}-${z(t.getDate())} ${z(t.getHours())}-${z(t.getMinutes())}-${z(t.getSeconds())}.log`);
+  try { // keep the newest 40
+    const old = fs.readdirSync(d).filter(f => /^Live Studio .*\.log$/.test(f)).sort();
+    for (const f of old.slice(0, Math.max(0, old.length - 40))) fs.unlinkSync(path.join(d, f));
+  } catch (e) { /* */ }
+  return logFile;
+}
+ipcMain.handle('log:write', async (e, text) => { try { await fs.promises.appendFile(logOpen(), String(text)); return true; } catch (err) { return false; } });
+ipcMain.handle('log:info', () => { try { return { file: logOpen(), dir: logDir() }; } catch (e) { return { file: '', dir: '' }; } });
+ipcMain.handle('log:show', () => { try { shell.showItemInFolder(logOpen()); } catch (e) { /* */ } });
 // which FFmpeg (the encoder engine) is installed, shown in Settings → About
 ipcMain.handle('app:ffmpeg', () => new Promise(resolve => {
   require('child_process').execFile(ffmpegPath(), ['-hide_banner', '-version'], { timeout: 5000, windowsHide: true }, (err, out) => {

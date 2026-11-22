@@ -108,7 +108,10 @@
       this.frameNo = 0;
       this.lastFrameAt = 0;
       this.lastThumbAt = 0;
-      this.thumbEvery = 250;
+      this.thumbEvery = 333;
+      this.cameraLock = true;   // inputs without the frame sync: follow the camera's frames
+      this.frameSync = true;    // live inputs read frame by frame with a small queue
+      this._used = new Map();
       this.stats = { fps: 0, renderMs: 0, frames: 0, missed: 0, since: performance.now() };
       this._fpsCount = 0; this._fpsAt = performance.now();
       this._stream = null;
@@ -165,7 +168,23 @@
       const s = { el, kind, tex: this._newTex(), w: 0, h: 0, ready: false, fresh: true, uploaded: false };
       if (kind === 'video' && el.requestVideoFrameCallback) {
         // only re-upload when the camera/video actually delivers a new frame
-        const cb = (t, meta) => { s.fresh = true; s.lastFresh = performance.now(); s.count = (s.count || 0) + 1; if (meta && meta.presentedFrames) { if (s.pf && meta.presentedFrames > s.pf + 1) s.skipped = (s.skipped || 0) + (meta.presentedFrames - s.pf - 1); s.pf = meta.presentedFrames; } if (this.sources.get(id) === s && s.rvfc) el.requestVideoFrameCallback(cb); };
+        const cb = (t, meta) => {
+          if (s.sync) { if (this.sources.get(id) === s && s.rvfc) el.requestVideoFrameCallback(cb); return; } // the frame sync below is in charge
+          const now = performance.now();
+          s.fresh = true; s.count = (s.count || 0) + 1;
+          if (meta && meta.presentedFrames) { if (s.pf && meta.presentedFrames > s.pf + 1) s.skipped = (s.skipped || 0) + (meta.presentedFrames - s.pf - 1); s.pf = meta.presentedFrames; }
+          // how fast frames really arrive (the camera's own clock when it tells us), and gaps where it was late
+          const ct = meta && meta.captureTime ? meta.captureTime : now;
+          if (s.lastCt) {
+            const d = ct - s.lastCt;
+            if (d > 2 && d < 250) {
+              s.iv = s.iv ? s.iv * 0.99 + d * 0.01 : d; s.win = Math.max(s.win || 0, d);
+              if (s.iv && d > s.iv * 1.6 && el.srcObject) { s.late = (s.late || 0) + 1; s.worstGap = Math.max(s.worstGap || 0, d); s.gapLog = s.gapLog || []; s.gapLog.push(now); while (s.gapLog.length && now - s.gapLog[0] > 60000) s.gapLog.shift(); }
+            }
+          }
+          s.lastCt = ct; s.lastFresh = now;
+          if (this.sources.get(id) === s && s.rvfc) el.requestVideoFrameCallback(cb);
+        };
         el.requestVideoFrameCallback(cb);
         s.rvfc = true;
         s.lastFresh = performance.now();
@@ -173,7 +192,45 @@
         el.addEventListener('loadeddata', () => { s.fresh = true; });
       }
       this.sources.set(id, s);
+      if (kind === 'video' && el.srcObject && this.frameSync) this._startSync(id, s);
       return s;
+    }
+    /* Frame sync for live inputs: every camera frame is taken straight from the capture card as it arrives (not on
+       the screen's refresh), kept in a small queue, and each program frame uses exactly the next one. Arrival jitter
+       is absorbed by the queue (1–3 frames), so a camera picture is never shown twice or skipped just because it
+       arrived a moment before or after the screen refresh. */
+    _startSync(id, s) {
+      if (typeof MediaStreamTrackProcessor !== 'function') return;
+      const track = s.el.srcObject.getVideoTracks()[0];
+      if (!track) return;
+      let reader;
+      try { reader = new MediaStreamTrackProcessor({ track, maxBufferSize: 4 }).readable.getReader(); } catch (e) { return; }
+      s.q = []; s.sync = true; s.reader = reader;
+      (async () => {
+        try {
+          for (;;) {
+            const r = await reader.read();
+            if (r.done) break;
+            const f = r.value;
+            if (this.sources.get(id) !== s || !s.sync) { f.close(); break; }
+            const now = performance.now(), ts = f.timestamp / 1000; // the capture card's own clock
+            s.count = (s.count || 0) + 1;
+            if (s.lastCt !== undefined) {
+              const d = ts - s.lastCt;
+              if (d > 2 && d < 250) {
+                s.iv = s.iv ? s.iv * 0.99 + d * 0.01 : d; s.win = Math.max(s.win || 0, d);
+                if (d > s.iv * 1.6) { s.late = (s.late || 0) + 1; s.worstGap = Math.max(s.worstGap || 0, d); s.gapLog = s.gapLog || []; s.gapLog.push(now); while (s.gapLog.length && now - s.gapLog[0] > 60000) s.gapLog.shift(); }
+              }
+            }
+            s.lastCt = ts; s.lastFresh = now;
+            s.q.push(f);
+            while (s.q.length > 4) { s.q.shift().close(); }
+          }
+        } catch (e) { /* the input went away */ }
+        s.sync = false;
+        for (const f of s.q || []) f.close();
+        s.q = [];
+      })();
     }
     /* a web page's picture: raw BGRA pixels sent in pieces (only what changed), uploaded straight to the graphics card */
     setRawSource(id) {
@@ -191,12 +248,15 @@
     }
     removeSource(id) {
       const s = this.sources.get(id);
-      if (s) { this.gl.deleteTexture(s.tex); this.sources.delete(id); }
+      if (s) {
+        if (s.reader) { s.sync = false; try { s.reader.cancel(); } catch (e) { /* */ } for (const f of s.q || []) f.close(); s.q = []; }
+        this.gl.deleteTexture(s.tex); this.sources.delete(id);
+      }
     }
     sourceSize(id) {
       const s = this.sources.get(id);
       if (!s) return null;
-      if (s.kind === 'raw') return s.w && s.h ? { w: s.w, h: s.h } : null;
+      if (s.kind === 'raw' || (s.sync && s.w && s.h)) return s.w && s.h ? { w: s.w, h: s.h } : null;
       const el = s.el;
       const w = el.videoWidth || el.naturalWidth || el.width || 0;
       const h = el.videoHeight || el.naturalHeight || el.height || 0;
@@ -221,7 +281,25 @@
             gl.texSubImage2D(gl.TEXTURE_2D, 0, f.x, f.y, f.rw, f.rh, gl.RGBA, gl.UNSIGNED_BYTE, f.data);
           }
         }
-        s.patches = [];
+        s.patches = []; s.ver = (s.ver || 0) + 1;
+        return s;
+      }
+      if (s.kind === 'video' && s.sync) {
+        // frame sync: take exactly one frame from the queue for this program frame
+        const q = s.q, cont = s.upFrame === this.frameNo - 1;
+        s.upFrame = this.frameNo; s.popped = 0; s.dropNow = 0;
+        if (!cont) while (q.length > 1) q.shift().close();            // just came into use: start from the newest
+        else while (q.length > 3) { q.shift().close(); s.dropNow++; } // fell behind (e.g. a slow frame): catch up
+        const f = q.shift();
+        if (!f) return s;                                              // nothing new yet: keep showing the last one
+        try {
+          gl.bindTexture(gl.TEXTURE_2D, s.tex);
+          const w = f.displayWidth, h = f.displayHeight;
+          if (w !== s.w || h !== s.h || !s.uploaded) { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, f); s.w = w; s.h = h; }
+          else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, f);
+          s.uploaded = true; s.ready = true; s.ver = (s.ver || 0) + 1; s.popped = 1;
+        } catch (e) { /* keep the last picture */ }
+        f.close();
         return s;
       }
       if (s.kind === 'video') {
@@ -245,7 +323,7 @@
         } else {
           gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, el);
         }
-        s.uploaded = true; s.ready = true; s.fresh = false; s.dirty = false;
+        s.uploaded = true; s.ready = true; s.fresh = false; s.dirty = false; s.ver = (s.ver || 0) + 1;
       } catch (e) { s.ready = false; }
       return s;
     }
@@ -494,10 +572,19 @@
       for (const [id, w] of this.webs) if (w.alpha > 0 || w.target > 0) need.add(w.data.src || id);
       if (this.previewCue && this.previewCue.webId) { const w = this.webs.get(this.previewCue.webId); if (w) need.add(w.data.src || this.previewCue.webId); }
       // thumbnails + small source views are refreshed a couple at a time, in turn, so no frame has to do them all
-      const views = [...this.thumbs.entries()].map(([id, cnv]) => ['shot', id, cnv]).concat([...this.sourceViews.entries()].map(([cnv, sid]) => ['src', sid, cnv])).filter(v => v[2].isConnected);
-      const per = views.length ? Math.max(1, Math.ceil(views.length * (1000 / this.fps) / this.thumbEvery)) : 0;
+      // Each one is refreshed about 3 times a second (still pictures every few seconds), only while it is on screen,
+      // and at most 2 in a frame, so they never compete with the program.
+      for (const id of need) this._used.set(id, now);
+      const views = [];
+      for (const [id, cnv] of this.thumbs) if (this._onScreen(cnv)) views.push(['shot', id, cnv]);
+      for (const [cnv, sid] of this.sourceViews) if (this._onScreen(cnv)) views.push(['src', sid, cnv]);
+      this._thumbAcc = Math.min(2, (this._thumbAcc || 0) + views.length * (1000 / this.fps) / this.thumbEvery);
       const due = [];
-      for (let k = 0; k < Math.min(per, views.length); k++) due.push(views[(this._thumbIdx = ((this._thumbIdx || 0) + 1) % views.length)]);
+      for (let k = 0, tries = 0; views.length && this._thumbAcc >= 1 && tries < views.length; tries++) {
+        const v = views[(this._thumbIdx = ((this._thumbIdx || 0) + 1) % views.length)];
+        if (v[0] === 'shot' && this._thumbStill(v[1], v[2], now)) continue; // unchanged still picture: skip it
+        due.push(v); this._thumbAcc -= 1; if (++k >= 2) break;
+      }
       for (const [kind, id, cnv] of due) { if (kind === 'shot') addShot(shot(id)); else need.add(id); }
       for (const id of need) this._upload(id);
       // thumbnails + source views (small, rendered into a corner then copied) — only the few due this frame
@@ -517,9 +604,10 @@
             }
           }
           this._copyTo(cnv.getContext('2d'), tw, th);
+          cnv._at = now;
         }
       }
-      for (const cnv of this.sourceViews.keys()) if (!cnv.isConnected) this.sourceViews.delete(cnv);
+      for (const cnv of this.sourceViews.keys()) if (!cnv.isConnected) { this.sourceViews.delete(cnv); this._unwatch(cnv); }
 
       // preview monitor
       if (this.previewCtx) {
@@ -527,9 +615,16 @@
         this._viewport(pw, ph);
         // with a caption cued, Preview shows the LIVE shot plus the caption: exactly what viewers will get
         const cued = (this.previewLabel && this.previewLabel.data) || this.previewCue;
-        const ps = shot(cued ? (this.trans ? this.trans.to : this.programId) : this.previewId);
-        if (ps) this._drawShot(ps, 1, true, this.zebra);
+        const psId = cued ? (this.trans ? this.trans.to : this.programId) : this.previewId;
+        const ps = shot(psId);
         const PL = this.previewLabel;
+        const cw0 = this.previewCue && this.previewCue.webId && this.webs.get(this.previewCue.webId);
+        // a still picture (holding slide, logo, colour bars…) is not redrawn 60 times a second: only when it changes
+        const pvKey = !ps || cw0 || (PL && PL.data && PL.dirty) || !this._still(ps) ? null
+          : [psId, cued ? 1 : 0, pw, this.zebra ? 1 : 0, PL && PL.data ? JSON.stringify(PL.data) : '', ...this._layers(ps, false).map(L => { const so = this.sources.get(L.source); return so ? so.ver || 0 : -1; }), JSON.stringify(ps.main), JSON.stringify(ps.pip || null)].join('|');
+        if (pvKey && pvKey === this._pvKey && now - this._pvAt < 2000) { /* unchanged */ } else {
+        this._pvKey = pvKey; this._pvAt = now; this.stats.pvDraws = (this.stats.pvDraws || 0) + 1;
+        if (ps) this._drawShot(ps, 1, true, this.zebra);
         if (PL && PL.data) { // a caption that is cued up (not on air yet) is shown on the Preview only
           const gl = this.gl;
           if (PL.dirty) { drawLabel(PL.ctx, this.W, this.H, PL.data); gl.bindTexture(gl.TEXTURE_2D, PL.tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, PL.canvas); PL.dirty = false; }
@@ -541,6 +636,7 @@
         const cw = this.previewCue && this.previewCue.webId && this.webs.get(this.previewCue.webId);
         if (cw) this._drawWebLayer(cw, this.previewCue.webId, 1);
         this._copyTo(this.previewCtx, pw, ph);
+        }
       }
 
       // program (full resolution) — drawn last so it is what the canvas shows and streams
@@ -567,17 +663,102 @@
       b.v = b.from + (b.to - b.from) * bp;
       if (b.v > 0.001) this._solid([0, 0, 1, 1], [0, 0, 0, 1], b.v);
       if (this._capTrack && this._capTrack.readyState === 'live' && this._capTrack.requestFrame) this._capTrack.requestFrame();
+      // did the camera on air move on by exactly one frame? (0 = the same picture twice, 2+ = camera frames skipped)
+      const cs = this._clockSrc();
+      if (cs && cs.sync) {
+        if (cs.upFrame === this.frameNo && cs._shownFrame === this.frameNo - 1) {
+          if (!cs.popped) this.stats.camRepeat = (this.stats.camRepeat || 0) + 1;
+          if (cs.dropNow) this.stats.camSkip = (this.stats.camSkip || 0) + cs.dropNow;
+        }
+        cs._shownFrame = this.frameNo;
+      } else if (cs) {
+        const n = (cs.count || 0) - (cs._shown || 0);
+        if (cs._shownFrame === this.frameNo - 1) {
+          if (n === 0) this.stats.camRepeat = (this.stats.camRepeat || 0) + 1;
+          else if (n > 1) this.stats.camSkip = (this.stats.camSkip || 0) + (n - 1);
+        }
+        cs._shown = cs.count || 0; cs._shownFrame = this.frameNo;
+      }
 
       this.stats.renderMs = performance.now() - t0;
       this._fpsCount++;
       if (now - this._fpsAt >= 1000) { this.stats.fps = Math.round(this._fpsCount * 1000 / (now - this._fpsAt)); this._fpsCount = 0; this._fpsAt = now; }
     }
 
+    // the live camera on air (the one the program follows), or null
+    _clockSrc() {
+      const id = this.trans ? this.trans.to : this.programId;
+      const sh = id ? this.getShot(id) : null;
+      if (!sh) return null;
+      for (const L of this._layers(sh, false)) {
+        const so = this.sources.get(L.source);
+        if (so && so.kind === 'video' && so.el && so.el.srcObject && so.rvfc) return so;
+      }
+      return null;
+    }
+    // locked when that camera delivers frames at the program's rate (59.94 → 59.94) and is running normally
+    _lockSrc(now, interval) {
+      const cs = this._clockSrc();
+      if (!cs || cs.sync || !cs.iv || !cs.ready || now - (cs.lastFresh || 0) > interval * 3) return null;
+      return Math.abs(cs.iv - interval) / interval < 0.03 ? cs : null;
+    }
+    _onScreen(cnv) {
+      if (!cnv.isConnected) { this._unwatch(cnv); return false; }
+      if (!this._io) {
+        this._vis = new WeakMap();
+        this._io = new IntersectionObserver(es => { for (const e of es) this._vis.set(e.target, e.isIntersecting); });
+      }
+      const v = this._vis.get(cnv);
+      if (v === undefined) { this._vis.set(cnv, true); this._io.observe(cnv); return true; }
+      return v;
+    }
+    _unwatch(cnv) { if (this._io && this._vis.has(cnv)) { this._io.unobserve(cnv); this._vis.delete(cnv); } }
+    // a shot made only of still pictures, not moving to a new framing
+    _still(sh) {
+      for (const L of this._layers(sh, false)) {
+        const so = this.sources.get(L.source);
+        if (!so || so.kind !== 'image' || so.dirty) return false;
+      }
+      for (const k of [':m', ':p']) { const c = this.frames.get(sh.id + k); if (c && c.seen >= this.frameNo - 1) { const t = k === ':m' ? sh.main.frame : sh.pip && sh.pip.frame; if (t && (Math.abs(c.x - t.x) > 1e-4 || Math.abs(c.y - t.y) > 1e-4 || Math.abs(c.zoom - t.zoom) > 1e-4)) return false; } }
+      return true;
+    }
+    _thumbStill(id, cnv, now) {
+      const sh = this.getShot(id);
+      if (!sh || !this._still(sh)) { cnv._key = null; return false; }
+      const key = JSON.stringify(sh.main) + JSON.stringify(sh.pip || null) + this._layers(sh, false).map(L => (this.sources.get(L.source) || {}).ver || 0).join(',');
+      if (cnv._key === key && now - (cnv._at || 0) < 5000) return true;
+      cnv._key = key; return false;
+    }
+    // was this source drawn on the program / Preview in the last `ms` milliseconds?
+    usedRecently(id, ms = 1500) { return performance.now() - (this._used.get(id) || -1e9) < ms; }
+    // live inputs: frame rate, late frames, longest gap
+    cameraStats(resetWin) {
+      const out = [];
+      for (const [id, so] of this.sources) if (so.kind === 'video' && so.el && so.el.srcObject) {
+        const now = performance.now(); if (so.gapLog) while (so.gapLog.length && now - so.gapLog[0] > 60000) so.gapLog.shift();
+        out.push({ id, fps: so.iv ? 1000 / so.iv : 0, late: so.late || 0, lastMin: so.gapLog ? so.gapLog.length : 0, worst: so.worstGap || 0, alive: now - (so.lastFresh || 0) < 1000, sync: !!so.sync, queue: so.q ? so.q.length : 0, win: so.win || 0 });
+        if (resetWin) so.win = 0;
+      }
+      return out;
+    }
     _tick(fromTimer) {
       const now = performance.now();
       const interval = 1000 / this.fps;
       // the timer is only a backup for when the window is minimised / covered and the screen refresh stops
       if (fromTimer && now - (this._lastRaf || 0) < interval * 2.5) return;
+      // Locked to the camera: a program frame is made for every new camera frame — never the same camera picture
+      // twice and never one skipped, even though the screen refreshes at 60.00 and the camera runs at 59.94.
+      // If the camera is ever late, a frame is still made on time so the stream never stalls.
+      const lock = this.cameraLock && !fromTimer ? this._lockSrc(now, interval) : null;
+      this.stats.locked = !!lock;
+      if (lock) {
+        const since = now - (this.lastFrameAt || 0);
+        if (!(lock.fresh && since > interval * 0.5) && !(since > interval * 1.6)) return;
+        if (since > interval * 2.5) { const late = Math.round(since / interval) - 1; this.stats.missed += late; const L = this.stats.recent || (this.stats.recent = []); L.push([now, late]); while (L.length && now - L[0][0] > 60000) L.shift(); this.stats.worst = Math.max(this.stats.worst || 0, since - interval); }
+        this._next = now + interval;
+        this._render(now);
+        return;
+      }
       // render on the refresh nearest to each frame's slot (half a frame early is fine): no skipped refreshes,
       // so every refresh carries a new frame and the encoder gets an even 60 a second
       if (this._next && now < this._next - interval * 0.5) return;

@@ -25,7 +25,7 @@ const ENCODERS = {
 
 function streamArgs(o) {
   const fps = o.fps || 30;
-  const g = String(fps * 2); // keyframe every 2 seconds (YouTube requirement)
+  const g = String(Math.round(fps * 2)); // keyframe every 2 seconds (YouTube requirement)
   const enc = ((o.safe && ENCODERS[o.encoder + '_safe']) || ENCODERS[o.encoder] || ENCODERS.x264)(o, g);
   const url = o.url;
   return [
@@ -34,12 +34,15 @@ function streamArgs(o) {
     '-f', 'matroska', '-i', 'pipe:0',
     '-map', '0:v:0', '-map', '0:a:0?',
     ...enc,
-    '-pix_fmt', 'yuv420p', '-r', String(fps), '-fps_mode', 'cfr',
+    '-pix_fmt', 'yuv420p', '-r', rate(fps), '-fps_mode', 'cfr',
     '-c:a', 'aac', '-b:a', `${o.audioBitrate || 160}k`, '-ar', '48000', '-ac', '2',
     '-flvflags', 'no_duration_filesize',
     '-f', 'flv', url
   ];
 }
+
+// FFmpeg rate: 59.94 / 29.97 are exactly 60000/1001 and 30000/1001
+const rate = fps => fps === 59.94 ? '60000/1001' : fps === 29.97 ? '30000/1001' : fps === 23.98 ? '24000/1001' : String(fps);
 
 function recordArgs(o, partFile) {
   // With a hardware encoder: re-encode to constant frame rate (best for editing in DaVinci Resolve etc.)
@@ -48,9 +51,9 @@ function recordArgs(o, partFile) {
   const hw = ['nvenc', 'qsv', 'amf'].includes(o.encoder);
   const kbps = o.bitrate || 20000;
   let v;
-  if (hw) v = [...(o.safe ? ENCODERS[o.encoder + '_safe'] : ENCODERS[o.encoder])({ bitrate: kbps }, String(fps)), '-pix_fmt', 'yuv420p', '-r', String(fps), '-fps_mode', 'cfr'];
+  if (hw) v = [...(o.safe ? ENCODERS[o.encoder + '_safe'] : ENCODERS[o.encoder])({ bitrate: kbps }, String(Math.round(fps))), '-pix_fmt', 'yuv420p', '-r', rate(fps), '-fps_mode', 'cfr'];
   else if (o.inputCodec === 'h264' || o.inputCodec === 'vp9') v = ['-c:v', 'copy'];
-  else v = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', String(fps), '-fps_mode', 'cfr'];
+  else v = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', rate(fps), '-fps_mode', 'cfr'];
   return [
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
     '-fflags', '+genpts',
