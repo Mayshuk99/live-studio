@@ -224,7 +224,7 @@
   let engine;
   try {
     engine = new Engine({ width: settings.output.width, height: settings.output.height, fps: settings.output.fps });
-    engine.frameSync = settings.frameSync !== false;
+    engine.frameSync = false; // see engine.js — the normal camera path is used
   } catch (e) {
     document.body.innerHTML = `<div style="padding:40px;font-size:18px">Live Studio could not start the video engine.<br><br>${e.message}<br><br>Update your graphics driver and restart.</div>`;
     return;
@@ -1041,7 +1041,7 @@
       // the picture handed to FFmpeg: when FFmpeg encodes it again (always for the stream; for the recording with a
       // graphics-card encoder) it gets a clean, high-quality copy, so the final file is not compressed twice at a low rate
       const reenc = this.kind === 'stream' || ['nvenc', 'qsv', 'amf'].includes(encoder);
-      const vbps = this.kind === 'stream' ? clamp(o.bitrate * 3000, 10e6, 40e6) : reenc ? clamp(o.recordBitrate * 3000, 10e6, 100e6) : clamp(o.recordBitrate * 1000, 1e6, 100e6);
+      const vbps = this.kind === 'stream' ? clamp(o.bitrate * 2000, 8e6, 30e6) : reenc ? clamp(o.recordBitrate * 3000, 10e6, 100e6) : clamp(o.recordBitrate * 1000, 1e6, 100e6);
       this.rec = new MediaRecorder(ms, { mimeType: mime, videoBitsPerSecond: vbps, audioBitsPerSecond: 510000 });
       const id = this.id;
       this.rec.ondataavailable = e => {
@@ -1933,7 +1933,7 @@
   setInterval(() => {
     for (const [id, b] of rt.webBuf) {
       const c = rt.webCanvas.get(id);
-      if (!c || !b.dirty) continue;
+      if (!c || !b.dirty || !b.w || !b.h || !b.px) continue;
       b.dirty = false;
       const tw = Math.min(480, b.w), th = Math.max(1, Math.round(tw * b.h / b.w));
       if (c.width !== tw || c.height !== th) { c.width = tw; c.height = th; }
@@ -2068,7 +2068,7 @@
     const reopen = debounce(() => { if (show.webs.includes(w)) openWeb(w); }, 700);
     const live = () => { engine.setWeb(engineWeb(w)); changed(); };
     let raf = 0;
-    const paint = () => { if (!view.isConnected) return; const c = rt.webCanvas.get(w.id), g = view.getContext('2d'); g.clearRect(0, 0, 480, 270); g.fillStyle = 'rgba(37,99,235,.25)'; const r = w.rect; g.fillRect(r[0] * 480, r[1] * 270, r[2] * 480, r[3] * 270); if (c) g.drawImage(c, r[0] * 480, r[1] * 270, r[2] * 480, r[3] * 270); raf = requestAnimationFrame(paint); };
+    const paint = () => { if (!view.isConnected) return; const c = rt.webCanvas.get(w.id), g = view.getContext('2d'); g.clearRect(0, 0, 480, 270); g.fillStyle = 'rgba(37,99,235,.25)'; const r = w.rect; g.fillRect(r[0] * 480, r[1] * 270, r[2] * 480, r[3] * 270); if (c && c.width && c.height) g.drawImage(c, r[0] * 480, r[1] * 270, r[2] * 480, r[3] * 270); raf = requestAnimationFrame(paint); };
     const draw = () => {
       body.innerHTML = '';
       const st = rt.webStatus.get(w.id) || { ok: false, text: w.url ? '' : 'Enter the web address of the page' };
@@ -3501,7 +3501,6 @@
       el('div', { class: 'grid2' },
         el('div', { class: 'field' }, el('span', null, 'Resolution'), select([['1920x1080', '1080p (1920×1080)'], ['1280x720', '720p (1280×720)']], `${o.width}x${o.height}`, v => { const [w, h] = v.split('x').map(Number); changeOut('width', w); changeOut('height', h); })),
         el('div', { class: 'field' }, el('span', null, 'Frame rate'), select([[25, '25 fps'], [29.97, '29.97 fps (29.97 cameras)'], [30, '30 fps'], [50, '50 fps'], [59.94, '59.94 fps (59.94 cameras — Blackmagic)'], [60, '60 fps']], o.fps, v => changeOut('fps', +v))),
-        el('div', { class: 'field' }, el('span', null, 'Camera frame sync'), select([['on', 'On — every camera frame used once (smoothest)'], ['off', 'Off — older method']], settings.frameSync === false ? 'off' : 'on', v => { settings.frameSync = v === 'on'; saveSettings(); engine.frameSync = settings.frameSync; toast('Takes effect after restarting Live Studio.'); })),
         el('div', { class: 'field' }, el('span', null, 'Encoder'), select([['x264', 'Software (works on every PC)'], ['nvenc', 'NVIDIA graphics card (NVENC)'], ['qsv', 'Intel graphics (Quick Sync)'], ['amf', 'AMD graphics card (AMF)']], o.encoder, v => changeOut('encoder', v)))),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free. Set the frame rate to exactly what the cameras send (Blackmagic at 59.94 → 59.94).'),
       rt.encFallback && rt.encFallback.for === o.encoder ? el('div', { class: 'status-bad', style: 'font-size:.9em;margin-top:6px' }, rt.encFallback.level >= 2 ? `This encoder would not start, so the software encoder is being used until the program is restarted. Updating the graphics card driver usually fixes it. Reported: ${rt.encFallback.detail || 'no details'}` : 'This encoder refused the tuned settings; plain settings are being used.') : null,
@@ -3811,7 +3810,12 @@
     for (const a of show.audio.inputs) logEvent('AUDIO', `input ${a.name || a.id}: ${a.deviceLabel || a.label || ''}`);
     logEvent('AUDIO', `headphones: ${settings.monitorOut && settings.monitorOut.label || 'Windows default'} · program playback: ${settings.playbackOut && settings.playbackOut.label || 'off'} · limiter ${show.audio.master.limiter ? 'on' : 'off'} · compressor ${show.audio.master.dyn && show.audio.master.dyn.comp && show.audio.master.dyn.comp.on ? 'on' : 'off'}`);
     // the screen's refresh rate (the program used to follow it; it matters for smooth video)
-    { const ts = []; const f = t => { ts.push(t); if (ts.length < 121) requestAnimationFrame(f); else { const d = ts.slice(1).map((x, i) => x - ts[i]).sort((a, b) => a - b); logEvent('DISPLAY', `screen refresh about ${(1000 / d[60]).toFixed(2)} Hz`); } }; requestAnimationFrame(f); }
+    { const ts = []; const f = t => { ts.push(t); if (ts.length < 301) requestAnimationFrame(f); else {
+        const d = ts.slice(1).map((x, i) => x - ts[i]), med = [...d].sort((a, b) => a - b)[150];
+        let n = 0, sumT = 0; for (const x of d) { const k = Math.round(x / med); if (k >= 1 && k <= 3) { n += k; sumT += x; } }
+        const hz = 1000 * n / sumT; rt.screenHz = hz;
+        logEvent('DISPLAY', `screen refresh ${hz.toFixed(3)} Hz${hz < engine.fps - 0.02 ? ` — LOWER than the output ${engine.fps} fps: set the screen to 60 Hz in Windows display settings` : ''}`);
+      } }; requestAnimationFrame(f); }
     setTimeout(() => { if (rt.pc) logEvent('PC', `${(rt.pc.cpuName || '').trim()} · ${rt.pc.cores} threads · ${rt.pc.gpuName || 'GPU ?'}`); }, 4000);
 
     // events: what changed, checked 10 times a second

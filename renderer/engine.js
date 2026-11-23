@@ -109,8 +109,10 @@
       this.lastFrameAt = 0;
       this.lastThumbAt = 0;
       this.thumbEvery = 333;
-      this.cameraLock = true;   // inputs without the frame sync: follow the camera's frames
-      this.frameSync = true;    // live inputs read frame by frame with a small queue
+      // Both off (1.28.3): on the real PC the frame sync held camera frames, starving the capture cards, and
+      // uploading them took 8–9 ms a frame — far worse than the normal video path. Kept only for testing.
+      this.cameraLock = false;
+      this.frameSync = false;
       this._used = new Map();
       this.stats = { fps: 0, renderMs: 0, frames: 0, missed: 0, since: performance.now() };
       this._fpsCount = 0; this._fpsAt = performance.now();

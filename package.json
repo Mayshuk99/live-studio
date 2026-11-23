@@ -1,7 +1,7 @@
 {
   "name": "live-studio",
   "productName": "Live Studio",
-  "version": "1.28.2",
+  "version": "1.28.3",
   "description": "Live video production and streaming for Blackmagic capture cards and YouTube",
   "main": "main.js",
   "author": "Konstantin",
