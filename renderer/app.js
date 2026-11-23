@@ -1021,6 +1021,81 @@
     if (y.server === 'custom') return (y.custom || '').trim().replace(/\/$/, '') + (y.key ? '/' + y.key.trim() : '');
     return y.server.replace(/\/$/, '') + '/' + (y.key || '').trim();
   }
+  /* ---------- one encoder for everything that goes out ----------
+     The stream and the recording each ran their own MediaRecorder: the program picture was captured and encoded
+     twice at the same time, which roughly doubled the load (the 22 Nov log: CPU 20% → 60–87% with both running).
+     Now one MediaRecorder runs while anything is going out and the stream and the recording both take its output.
+     Whoever starts later joins at the next keyframe (about once a second). */
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const concatU8 = (a, b) => { const n = new Uint8Array(a.length + b.length); n.set(a, 0); n.set(b, a.length); return n; };
+  const Feed = {
+    rec: null, subs: [],
+    bitrate() { const o = settings.output; return clamp(Math.max(o.bitrate * 2000, (o.recordBitrate || 0) * 3000), 10e6, 30e6); },
+    running() { return !!(this.rec && this.rec.state !== 'inactive'); },
+    start(mime) {
+      this.track = engine.videoTrack().clone();
+      const ms = new MediaStream([this.track, ...mixer.stream().getAudioTracks()]);
+      this.scan = new EbmlScanner(); this.offset = 0; this.pre = new Uint8Array(0); this.header = null; this.hist = []; this.chain = Promise.resolve();
+      this.mime = mime;
+      this.rec = new MediaRecorder(ms, { mimeType: mime, videoBitsPerSecond: this.bitrate(), audioBitsPerSecond: 510000, videoKeyFrameIntervalDuration: 1000 });
+      // each piece is read right away (in parallel) and handled in order, so nothing piles up
+      this.rec.ondataavailable = e => { if (!e.data || !e.data.size) return; const ab = e.data.arrayBuffer(); this.chain = this.chain.then(() => ab).then(b => this._data(new Uint8Array(b))).catch(() => {}); };
+      for (const sub of this.subs) sub.joined = true; // whoever is here at the start gets everything from the beginning
+      this.rec.start(250);
+      logEvent('ENCODER', `shared encoder started (${(this.bitrate() / 1e6).toFixed(0)} Mbps, keyframe about every second)`);
+    },
+    _send(sub, u8) { const id = sub.id; sub.chain = sub.chain.then(() => S.outWrite(id, u8.buffer.byteLength === u8.length ? u8.buffer : u8.slice().buffer)).catch(() => {}); },
+    _data(u8) {
+      const at = this.offset; this.offset += u8.length;
+      const evs = this.scan.push(u8);
+      if (!this.header) { this.pre = concatU8(this.pre, u8); if (this.scan.headerEnd >= 0) { this.header = this.pre.slice(0, this.scan.headerEnd); this.pre = null; } }
+      // keep the bytes since the last cluster start, so a newcomer can begin exactly there
+      this.hist.push({ at, u8 });
+      const lastCluster = evs.filter(e => e.type === 'cluster').pop();
+      if (lastCluster) while (this.hist.length > 1 && this.hist[1].at <= lastCluster.offset) this.hist.shift();
+      for (const sub of this.subs) if (sub.joined && !sub.justJoined) this._send(sub, u8);
+      for (const sub of this.subs) sub.justJoined = false;
+      const key = evs.filter(e => e.type === 'key').pop();
+      if (key && this.header) {
+        const waiting = this.subs.filter(sub => !sub.joined);
+        if (waiting.length) {
+          const parts = this.hist.filter(h => h.at + h.u8.length > key.offset);
+          let tail = new Uint8Array(0);
+          for (const h of parts) tail = concatU8(tail, h.at >= key.offset ? h.u8 : h.u8.subarray(key.offset - h.at));
+          for (const sub of waiting) { this._send(sub, concatU8(this.header, tail)); sub.joined = true; sub.justJoined = false; if (sub.onJoin) sub.onJoin(true); }
+        }
+      }
+    },
+    // add an output; resolves true once it is receiving data (false if no keyframe came in time)
+    join(id, mime) {
+      const sub = { id, joined: false, chain: Promise.resolve(), t0: performance.now() };
+      this.subs.push(sub);
+      if (!this.running()) { this.start(mime); return Promise.resolve(true); }
+      if (this.mime !== mime) { this.subs = this.subs.filter(x => x !== sub); return Promise.resolve(false); }
+      return new Promise(res => {
+        sub.onJoin = ok => { sub.onJoin = null; logEvent('ENCODER', `joined the shared encoder after ${Math.round(performance.now() - sub.t0)} ms`); res(ok); };
+        setTimeout(() => { if (!sub.joined && sub.onJoin) { sub.onJoin = null; this.subs = this.subs.filter(x => x !== sub); res(false); } }, 5000);
+      });
+    },
+    async leave(id) {
+      const sub = this.subs.find(x => x.id === id);
+      if (!sub) return;
+      if (this.subs.length === 1 && this.running()) {
+        // the last one out: stop the encoder so its final bytes are written
+        const rec = this.rec; this.rec = null;
+        await Promise.race([new Promise(res => { rec.addEventListener('stop', res, { once: true }); rec.stop(); }), wait(3000)]);
+        await Promise.race([this.chain, wait(3000)]);
+        if (this.track) this.track.stop();
+        logEvent('ENCODER', 'shared encoder stopped');
+      } else if (this.running()) {
+        // hand over what has been encoded so far before letting go
+        this.rec.requestData(); await wait(150); await Promise.race([this.chain, wait(1500)]);
+      }
+      this.subs = this.subs.filter(x => x !== sub);
+      await Promise.race([sub.chain, wait(3000)]);
+    }
+  };
+
   class Output {
     constructor(kind) { this.kind = kind; this.active = false; this.id = null; this.chain = Promise.resolve(); }
     async start() {
@@ -1036,6 +1111,14 @@
       const r = await S.outStart(opts);
       if (!r || r.error) throw new Error(r ? r.error : 'Encoder did not start');
       this.id = r.id;
+      // shared encoder: for everything FFmpeg encodes again (the stream; the recording with a graphics-card encoder)
+      const reencode = this.kind === 'stream' || ['nvenc', 'qsv', 'amf'].includes(encoder);
+      if (reencode && settings.sharedEncoder !== false && window.EbmlScanner && codecOf(mime) === 'h264') {
+        this.shared = true;
+        if (await Feed.join(this.id, mime)) { this.active = true; return; }
+        this.shared = false;
+        logEvent('ENCODER', `${this.kind}: could not join the shared encoder in time — using its own`);
+      }
       this.track = engine.videoTrack().clone();
       const ms = new MediaStream([this.track, ...mixer.stream().getAudioTracks()]);
       // the picture handed to FFmpeg: when FFmpeg encodes it again (always for the stream; for the recording with a
@@ -1046,13 +1129,14 @@
       const id = this.id;
       this.rec.ondataavailable = e => {
         if (!e.data || !e.data.size) return;
-        const blob = e.data;
-        this.chain = this.chain.then(() => blob.arrayBuffer()).then(b => S.outWrite(id, b)).catch(() => {});
+        const ab = e.data.arrayBuffer();
+        this.chain = this.chain.then(() => ab).then(b => S.outWrite(id, b)).catch(() => {});
       };
       this.rec.start(250);
       this.active = true;
     }
     async stopRecorder() {
+      if (this.shared) { this.shared = false; await Feed.leave(this.id); return; }
       if (this.rec && this.rec.state !== 'inactive') await new Promise(res => { this.rec.addEventListener('stop', res, { once: true }); this.rec.stop(); });
       await this.chain;
       if (this.track) this.track.stop();
@@ -3889,5 +3973,5 @@
   function markGlitch() { logEvent('MARK', '>>> F9 pressed: glitch seen on screen / YouTube <<<'); logFlush(); toast('Marked in the log ✓ (F9)', 'ok'); }
   document.addEventListener('keydown', e => { if (e.key === 'F9') { e.preventDefault(); markGlitch(); } });
   startServiceLog();
-  window.__live = { engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb, markGlitch, logFlush };
+  window.__live = { Feed, engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb, markGlitch, logFlush };
 })();
