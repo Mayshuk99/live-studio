@@ -1984,15 +1984,27 @@
 
   /* ---------- quick buttons: translation direction and logo style, one press each ---------- */
   // show.quick = { tr: [{label, id}], logo: [{label, id}] } — id = a web page (translation) or a picture (logo)
+  // only pictures that are clearly logos go on the logo buttons by themselves (never a donation slide etc.)
+  const LOGO_NAME = /logo|лого/i, XMAS_NAME = /christ|xmas|рожд/i;
   function ensureQuick() {
-    if (show.quick && show.quick.tr && show.quick.logo) return show.quick;
+    if (show.quick && show.quick.tr && show.quick.logo) {
+      if (show.quick.v !== 2) {
+        // 1.28.0 put the first picture on “Regular” even when it was not a logo (e.g. the donation slide) — undo that
+        const used = new Set();
+        for (const b of show.quick.logo) { const p2 = show.pics.find(x => x.id === b.id); if (p2 && !LOGO_NAME.test(p2.name || '') && !XMAS_NAME.test(p2.name || '') && !/easter|пасх/i.test(p2.name || '')) b.id = ''; if (b.id) used.add(b.id); }
+        const fill = (b, rx) => { if (b && !b.id) { const p2 = show.pics.find(x => !used.has(x.id) && rx.test(x.name || '')); if (p2) { b.id = p2.id; used.add(p2.id); } } };
+        fill(show.quick.logo[1], XMAS_NAME); fill(show.quick.logo[0], LOGO_NAME);
+        show.quick.v = 2;
+      }
+      return show.quick;
+    }
     const txt = w => `${w.name || ''} ${w.url || ''}`;
     const dir = (a, b) => new RegExp(`(^|[^a-z])${a}[^a-z]{0,5}(to[^a-z]{0,3})?${b}([^a-z]|$)`, 'i');
     const ruen = show.webs.find(w => dir('ru', 'en').test(txt(w)) || /рус.*англ/i.test(txt(w)));
     const enru = show.webs.find(w => w !== ruen && (dir('en', 'ru').test(txt(w)) || /англ.*рус/i.test(txt(w))));
-    const xmas = show.pics.find(p2 => /christ|xmas|рожд/i.test(p2.name || ''));
-    const reg = show.pics.find(p2 => p2 !== xmas);
-    show.quick = {
+    const xmas = show.pics.find(p2 => XMAS_NAME.test(p2.name || ''));
+    const reg = show.pics.find(p2 => p2 !== xmas && LOGO_NAME.test(p2.name || ''));
+    show.quick = { v: 2,
       tr: [{ label: 'RU → EN', id: ruen ? ruen.id : '' }, { label: 'EN → RU', id: enru ? enru.id : '' }],
       logo: [{ label: 'Regular', id: reg ? reg.id : '' }, { label: 'Christmas', id: xmas ? xmas.id : '' }]
     };
