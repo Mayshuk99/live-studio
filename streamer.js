@@ -41,6 +41,36 @@ function streamArgs(o) {
   ];
 }
 
+/* Native engine test: FFmpeg reads the capture card itself (DirectShow), encodes on the graphics card and streams /
+   records — the camera picture never goes through the Chrome engine. Shows whether an OBS-style engine runs smooth. */
+function nativeArgs(o, partFile) {
+  const fps = o.fps || 59.94;
+  const g = String(Math.round(fps * 2));
+  const enc = ((o.safe && ENCODERS[o.encoder + '_safe']) || ENCODERS[o.encoder] || ENCODERS.x264)(o, g);
+  const video = ['-f', 'dshow', '-rtbufsize', '1500M',
+    ...(o.videoNumber ? ['-video_device_number', String(o.videoNumber)] : []),
+    '-video_size', `${o.width || 1920}x${o.height || 1080}`, '-framerate', rate(capRate(o.captureFps || fps)),
+    ...(o.pixFmt ? ['-pixel_format', o.pixFmt] : []),
+    '-i', `video=${o.device}`];
+  const audio = o.audioDevice
+    ? ['-f', 'dshow', '-audio_buffer_size', '50', ...(o.audioNumber ? ['-audio_device_number', String(o.audioNumber)] : []), '-i', `audio=${o.audioDevice}`]
+    : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo'];
+  const out = o.url
+    ? ['-flvflags', 'no_duration_filesize', '-f', 'flv', o.url]
+    : ['-movflags', '+frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', partFile];
+  return [
+    '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
+    ...video, ...audio,
+    '-map', '0:v:0', '-map', '1:a:0',
+    ...enc,
+    '-pix_fmt', 'yuv420p', '-r', rate(fps), '-fps_mode', 'cfr', // repeats / drops here = the card did not deliver evenly
+    '-c:a', 'aac', '-b:a', `${o.audioBitrate || 160}k`, '-ar', '48000', '-ac', '2',
+    ...out
+  ];
+}
+
+// a card's reported rate like 59.9402 → 59.94
+const capRate = f => [59.94, 29.97, 23.98, 60, 50, 30, 25, 24].find(x => Math.abs(x - f) < 0.02) || +f.toFixed(3);
 // FFmpeg rate: 59.94 / 29.97 are exactly 60000/1001 and 30000/1001
 const rate = fps => fps === 59.94 ? '60000/1001' : fps === 29.97 ? '30000/1001' : fps === 23.98 ? '24000/1001' : String(fps);
 
@@ -107,6 +137,14 @@ class OutputManager extends EventEmitter {
     if (o.kind === 'stream') {
       if (!o.url) throw new Error('No stream address / key set.');
       args = streamArgs(o);
+    } else if (o.kind === 'native') {
+      if (!o.device) throw new Error('No capture card chosen.');
+      if (!o.url) {
+        ensureDir(o.dir);
+        const base = `Native engine test ${stamp()}`;
+        finalFile = path.join(o.dir, base + '.mp4'); partFile = path.join(o.dir, base + '.recording.mp4');
+      }
+      args = nativeArgs(o, partFile);
     } else {
       ensureDir(o.dir);
       const base = `${(o.name || 'Live Studio').replace(/[\\/:*?"<>|]/g, '_')} ${stamp()}`;
@@ -142,7 +180,7 @@ class OutputManager extends EventEmitter {
     proc.on('exit', async code => {
       this.outs.delete(id);
       let file = null;
-      if (out.kind === 'record' && fs.existsSync(partFile)) {
+      if ((out.kind === 'record' || out.kind === 'native') && partFile && fs.existsSync(partFile)) {
         file = await this._finalize(partFile, finalFile).catch(() => partFile);
       }
       this.emit('event', {
@@ -182,7 +220,8 @@ class OutputManager extends EventEmitter {
     return new Promise(resolve => {
       const t = setTimeout(() => { try { out.proc.kill('SIGKILL'); } catch (e) { /* gone */ } resolve(); }, 8000);
       out.proc.once('exit', () => { clearTimeout(t); resolve(); });
-      try { out.proc.stdin.end(); } catch (e) { out.proc.kill(); }
+      // the native test reads the card itself, so it is told to finish with “q”; the others finish when their input ends
+      try { if (out.kind === 'native') out.proc.stdin.write('q'); out.proc.stdin.end(); } catch (e) { out.proc.kill(); }
     });
   }
 
@@ -190,4 +229,38 @@ class OutputManager extends EventEmitter {
   get active() { return this.outs.size > 0; }
 }
 
-module.exports = { OutputManager, streamArgs, recordArgs, parseStats, ensureDir };
+/* capture cards and microphones FFmpeg can open (DirectShow), with the picture formats each card offers */
+function runFF(ffmpegPath, args, ms = 8000) {
+  return new Promise(resolve => {
+    let text = '';
+    let p; try { p = spawn(ffmpegPath, args, { windowsHide: true }); } catch (e) { return resolve(''); }
+    const t = setTimeout(() => { try { p.kill(); } catch (e) { /* */ } }, ms);
+    p.stderr.on('data', d => { text += d.toString(); });
+    p.on('error', () => { clearTimeout(t); resolve(text); });
+    p.on('exit', () => { clearTimeout(t); resolve(text); });
+  });
+}
+async function listCaptureDevices(ffmpegPath) {
+  if (process.platform !== 'win32') return { video: [], audio: [], note: 'Only on Windows' };
+  const text = await runFF(ffmpegPath, ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy']);
+  const video = [], audio = [], seen = {};
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/"([^"]+)"\s+\(([^)]*)\)/);
+    if (!m) continue;
+    const name = m[1], kinds = m[2];
+    const key = name + '|' + kinds; const n = seen[key] = (seen[key] === undefined ? 0 : seen[key] + 1);
+    if (/video/.test(kinds)) video.push({ name, n });
+    if (/audio/.test(kinds)) audio.push({ name, n });
+  }
+  for (const v of video) {
+    const t = await runFF(ffmpegPath, ['-hide_banner', '-list_options', 'true', '-f', 'dshow', ...(v.n ? ['-video_device_number', String(v.n)] : []), '-i', `video=${v.name}`], 6000);
+    v.modes = [];
+    for (const line of t.split(/\r?\n/)) {
+      const m = line.match(/(pixel_format|vcodec)=(\S+)\s+min s=(\d+)x(\d+) fps=([\d.]+)\s+max s=(\d+)x(\d+) fps=([\d.]+)/);
+      if (m) v.modes.push({ kind: m[1], fmt: m[2], w: +m[6], h: +m[7], minFps: +m[5], maxFps: +m[8] });
+    }
+  }
+  return { video, audio, raw: text.slice(0, 4000) };
+}
+
+module.exports = { OutputManager, streamArgs, recordArgs, nativeArgs, parseStats, ensureDir, listCaptureDevices };

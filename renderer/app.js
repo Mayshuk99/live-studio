@@ -335,7 +335,7 @@
     resolveDevices();
     applyOutput(true);
     applyPlayback(true);
-    for (const c of show.cameras) if (!rt.cams.has(c.id) && rt.devices.video.find(d => d.id === c.deviceId)) openCamera(c);
+    if (!rt.nativeTest) for (const c of show.cameras) if (!rt.cams.has(c.id) && rt.devices.video.find(d => d.id === c.deviceId)) openCamera(c);
     for (const a of show.audio.inputs) if (!mixer.strips.has(a.id) && rt.devices.audio.find(d => d.id === a.deviceId)) openAudioInput(a, true);
     refresh('inputs');
   });
@@ -380,7 +380,7 @@
       v.addEventListener('resize', update); v.addEventListener('loadedmetadata', update);
       tr.addEventListener('ended', () => {
         rt.camStatus.set(cam.id, { ok: false, text: 'Disconnected — retrying…' }); refreshInputStatus();
-        setTimeout(() => { if (camById(cam.id)) refreshDevices().then(() => openCamera(cam)); }, 3000);
+        setTimeout(() => { if (camById(cam.id) && !rt.nativeTest) refreshDevices().then(() => openCamera(cam)); }, 3000);
       });
     } catch (e) {
       rt.camStatus.set(cam.id, { ok: false, text: e.name === 'NotReadableError' ? 'Device busy (close other apps using it)' : `Not available: ${e.message || e.name}` });
@@ -1189,6 +1189,7 @@
   async function stopRec() { const o = rt.rec; rt.rec = null; if (o) await o.stop(); S.setLive(!!rt.live); renderHeader(); }
 
   S.onOutEvent(ev => {
+    if (rt.native && rt.native.id === ev.id) { rt.native.on(ev); return; }
     if (rt.test && rt.test.out.id === ev.id) { rt.test.on(ev); return; }
     if (ev.type === 'stats') {
       if (ev.kind === 'stream') { rt.liveStats = ev; if (rt.reconnPending && ev.frame > 30) { rt.reconnPending = false; rt.reconnects = 0; toast('Stream is running again.', 'ok'); } }
@@ -1276,6 +1277,90 @@
     })();
   }
 
+  /* ================= native engine test =================
+     FFmpeg reads one capture card itself and encodes on the graphics card — the picture never goes through the
+     Chrome engine. If this streams perfectly smooth, an OBS-style engine fixes the hitches. */
+  function openNativeTest() {
+    if (rt.live || rt.rec) { toast('Stop the stream and the recording first — the test uses the capture card on its own.', 'error'); return; }
+    const body = el('div');
+    let dev = null, pickV = 0, pickA = -1, dest = settings.youtube.key ? 'yt' : 'file', run = null, lastMsg = '';
+    const o = settings.output, target = o.fps || 59.94;
+    const modeFor = v => {
+      const ok = (v.modes || []).filter(m => m.kind === 'pixel_format' && m.w === (o.width || 1920) && m.h === (o.height || 1080) && target >= m.minFps - 0.1 && target <= m.maxFps + 0.1);
+      const best = list => ['uyvy422', 'yuyv422', 'nv12', 'yuv420p'].map(f => list.find(m => m.fmt === f)).find(Boolean) || list[0] || null;
+      // no format at the output rate: use the card's own rate for the size (Blackmagic only gives a picture at its signal's rate)
+      return best(ok) || best((v.modes || []).filter(m => m.kind === 'pixel_format' && m.w === (o.width || 1920) && m.h === (o.height || 1080)));
+    };
+    const vName = v => `${v.name}${dev.video.filter(x => x.name === v.name).length > 1 ? ` — card ${v.n + 1}` : ''}`;
+    // the numbers are updated in place (rebuilding the window every second could swallow a click on Stop)
+    const statsEl = el('div', { class: 'native-stats mono' });
+    const updStats = () => { const L = run && run.last; statsEl.textContent = run ? `${L ? `${(L.fps || 0).toFixed(1)} fps · repeated ${run.dup} · dropped ${run.drop} · speed ${(L.speed || 0).toFixed(2)}× · ${((L.bitrate || 0) / 1000).toFixed(1)} Mb/s` : 'starting…'} · ${fmt((Date.now() - run.t0) / 1000)}` : (lastMsg || 'Not running'); };
+    const fmtMode = m => m ? `${m.w}×${m.h} at ${target >= m.minFps - 0.1 && target <= m.maxFps + 0.1 ? target : (+m.maxFps.toFixed(2)) + ' (the card’s signal)'} fps (${m.fmt})` : 'card’s own format';
+    const finish = (msg) => {
+      const r = run; run = null; rt.native = null; rt.nativeTest = false;
+      if (r) {
+        const secs = Math.round((Date.now() - r.t0) / 1000);
+        lastMsg = `${msg ? msg + ' · ' : ''}${secs} s · ${r.frames} frames · repeated ${r.dup} · dropped ${r.drop}${r.minSpeed < 9 ? ` · slowest ${r.minSpeed.toFixed(2)}×` : ''}`;
+        logEvent('NATIVE', `test ended: ${lastMsg}`);
+      }
+      for (const c of show.cameras) openCamera(c); // Live Studio takes the cameras back
+      if (body.isConnected) draw();
+    };
+    const start = async () => {
+      const v = dev.video[pickV], a = pickA >= 0 ? dev.audio[pickA] : null, m = modeFor(v);
+      if (dest === 'yt' && !settings.youtube.key && settings.youtube.server !== 'custom') { toast('Add your YouTube stream key first (Settings → YouTube).', 'error'); return; }
+      rt.nativeTest = true;
+      for (const c of show.cameras) closeCamera(c.id);  // a capture card can only be used by one program at a time
+      await wait(900);
+      const capFps = m && !(target >= m.minFps - 0.1 && target <= m.maxFps + 0.1) ? m.maxFps : target;
+      const opts = { kind: 'native', device: v.name, videoNumber: v.n, pixFmt: m ? m.fmt : null, width: o.width || 1920, height: o.height || 1080, fps: target, captureFps: capFps,
+        encoder: o.encoder, bitrate: o.bitrate, audioBitrate: o.audioBitrate, audioDevice: a ? a.name : null, audioNumber: a ? a.n : 0,
+        url: dest === 'yt' ? streamURL() : null, dir: settings.recordDir };
+      const r = await S.outStart(opts);
+      if (!r || r.error) { rt.nativeTest = false; toast(`Test could not start: ${r ? r.error : 'no answer'}`, 'error'); finish('could not start'); return; }
+      run = { id: r.id, t0: Date.now(), frames: 0, dup: 0, drop: 0, last: null, minSpeed: 9, err: '' };
+      logEvent('NATIVE', `test started: ${vName(v)} · ${fmtMode(m)} · sound ${a ? a.name : 'silence'} · ${dest === 'yt' ? 'to YouTube' : 'to a test file'} · ${o.encoder} ${o.bitrate} kbps`);
+      rt.native = { id: r.id, on: ev => {
+        if (!run) return;
+        if (ev.type === 'stats') {
+          const dd = Math.max(0, (ev.dup || 0) - run.dup), dr = Math.max(0, (ev.drop || 0) - run.drop);
+          run.dup = ev.dup || 0; run.drop = ev.drop || 0; run.frames = ev.frame || run.frames; run.last = ev;
+          if (ev.speed && Date.now() - run.t0 > 5000) run.minSpeed = Math.min(run.minSpeed, ev.speed);
+          const pc = rt.pc;
+          logEvent('NATIVE', `${(ev.fps || 0).toFixed(0)}fps repeated +${dd} dropped +${dr} x${(ev.speed || 0).toFixed(2)} ${((ev.bitrate || 0) / 1000).toFixed(1)}Mb${pc ? ` | cpu ${pc.cpu}% gpu ${pc.gpu}%` : ''}${dd || dr ? '  [!]' : ''}`);
+          updStats();
+        } else if (ev.type === 'log') { run.err = ev.line; logEvent('NATIVE', `ffmpeg: ${ev.line}`); }
+        else if (ev.type === 'exit') {
+          if (ev.file) toast(`Test file saved: ${ev.file}`, 'ok', S.showFile ? { label: 'Show', fn: () => S.showFile(ev.file) } : null);
+          finish(ev.expected ? 'stopped' : `the test stopped by itself: ${ev.error || run.err || 'code ' + ev.code}`);
+        }
+      } };
+      draw();
+    };
+    const stop = async () => { if (run) { const id = run.id; await S.outStop(id); } };
+    const draw = () => {
+      body.innerHTML = '';
+      const intro = el('div', { class: 'muted', style: 'margin-bottom:10px' }, 'Streams one camera straight from the capture card through FFmpeg and the graphics card — without the Chrome engine — to see if an OBS-style engine runs perfectly smooth on this PC. Live Studio lets go of the cameras while the test runs and takes them back afterwards. Use an unlisted / private YouTube event.');
+      if (!dev) { put(body, intro, el('div', null, 'Looking for capture cards…')); return; }
+      if (!dev.video.length) { put(body, intro, el('div', { class: 'status-bad' }, dev.note === 'Only on Windows' ? 'This test only works on the Windows PC.' : 'No capture cards found.')); return; }
+      const v = dev.video[pickV], m = modeFor(v);
+      updStats();
+      put(body, intro,
+        el('div', { class: 'field' }, el('span', null, 'Camera card'), select(dev.video.map((x, i) => [String(i), vName(x)]), String(pickV), x => { pickV = +x; draw(); })),
+        el('div', { class: 'muted', style: 'font-size:.85em;margin:-4px 0 8px' }, `Picture: ${fmtMode(m)}`),
+        el('div', { class: 'field' }, el('span', null, 'Sound'), select([['-1', 'Silence'], ...dev.audio.map((x, i) => [String(i), x.name])], String(pickA), x => { pickA = +x; })),
+        el('div', { class: 'field' }, el('span', null, 'Send to'), select([['yt', 'YouTube (your stream key)'], ['file', 'A test file (recordings folder)']], dest, x => { dest = x; })),
+        statsEl,
+        el('div', { class: 'muted', style: 'font-size:.85em;margin-top:6px' }, '“Repeated” or “dropped” going up means the card did not deliver frames evenly. Watch the stream on YouTube for hitches. Everything is written to the log.'),
+        el('div', { class: 'row', style: 'margin-top:14px;gap:8px' },
+          run ? el('button', { class: 'btn danger', onclick: stop }, '■ Stop test') : el('button', { class: 'btn primary', onclick: start }, '▶ Start test'),
+          el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => { if (run) { toast('Stop the test first.'); return; } closeModal(); } }, 'Close')));
+    };
+    draw();
+    openModal('Native engine test (OBS-style)', body);
+    S.nativeDevices ? S.nativeDevices().then(r => { dev = r || { video: [], audio: [] }; const ssl = dev.audio.findIndex(a => /ssl/i.test(a.name)); if (ssl >= 0) pickA = ssl; if (dev.raw) logEvent('NATIVE', 'devices: ' + dev.video.map(x => `${x.name} #${x.n + 1} (${(x.modes || []).length} modes)`).join(', ')); draw(); }) : (dev = { video: [], audio: [] }, draw());
+  }
+
   /* ================= header ================= */
   let liveConfirm = 0;
   $('#btnLive').addEventListener('click', () => {
@@ -1355,7 +1440,7 @@
         el('h3', null, 'Service log'),
         el('div', { class: 'muted', style: 'font-size:.85em' }, 'Everything is written to a log file while Live Studio runs. Press F9 when you see a glitch — it marks the moment. After the service send the log file for checking.'),
         rt.logFile ? el('div', { class: 'mono', style: 'font-size:.8em;margin:4px 0;word-break:break-all' }, rt.logFile) : null,
-        el('div', { class: 'row', style: 'gap:8px;margin-top:6px' }, el('button', { class: 'btn', onclick: () => { logFlush(); S.logShow && S.logShow(); } }, '📄 Show log file'), el('button', { class: 'btn', onclick: markGlitch }, '⚑ Mark a glitch (F9)')),
+        el('div', { class: 'row', style: 'gap:8px;margin-top:6px' }, el('button', { class: 'btn', onclick: () => { logFlush(); S.logShow && S.logShow(); } }, '📄 Show log file'), el('button', { class: 'btn', onclick: markGlitch }, '⚑ Mark a glitch (F9)'), el('button', { class: 'btn', onclick: () => { clearInterval(timer); openNativeTest(); } }, '🧪 Native engine test')),
         el('div', { class: 'row', style: 'margin-top:14px' }, el('button', { class: 'btn', onclick: () => { resetFrameStats(); draw(); } }, 'Reset counters'), el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { clearInterval(timer); closeModal(); } }, 'Done')));
     };
     openModal('Frame counter & PC monitor', body);

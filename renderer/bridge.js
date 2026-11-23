@@ -20,6 +20,7 @@
   window.studio = {
     isApp: false,
     platform: 'browser',
+    nativeDevices: async () => ({ video: [{ name: 'Blackmagic WDM Capture', n: 0, modes: [{ kind: 'pixel_format', fmt: 'uyvy422', w: 1920, h: 1080, minFps: 59.9402, maxFps: 59.9402 }] }, { name: 'Blackmagic WDM Capture', n: 1, modes: [] }], audio: [{ name: 'Input (SSL 2 USB Audio Device)', n: 0 }], raw: 'test' }),
     logWrite: async t => { (window.__log = window.__log || []).push(t); return true; },
     logInfo: async () => ({ file: 'C:\\Users\\you\\Documents\\Live Studio\\Logs\\Live Studio test.log', dir: '' }),
     logShow: async () => {},
@@ -71,7 +72,7 @@
     outWrite: (id, buf) => { const o = outs.get(id); if (o) o.bytes += buf.byteLength; },
     outStop: async id => {
       const o = outs.get(id);
-      if (o) { clearInterval(o.timer); outs.delete(id); emit({ id, type: 'exit', kind: o.opts.kind, code: 0, file: null }); }
+      if (o) { clearInterval(o.timer); outs.delete(id); emit({ id, type: 'exit', kind: o.opts.kind, code: 0, expected: true, file: null }); }
     },
     onOutEvent: cb => outListeners.push(cb),
     openFolder: async () => {},

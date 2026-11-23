@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('studio', {
   platform: process.platform,
   version: () => ipcRenderer.invoke('app:version'),
   logWrite: text => ipcRenderer.invoke('log:write', text),
+  nativeDevices: () => ipcRenderer.invoke('native:devices'),
   logInfo: () => ipcRenderer.invoke('log:info'),
   logShow: () => ipcRenderer.invoke('log:show'),
   ffmpegVersion: () => ipcRenderer.invoke('app:ffmpeg'),

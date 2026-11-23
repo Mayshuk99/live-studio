@@ -242,6 +242,7 @@ ipcMain.handle('out:start', (e, opts) => {
   try { return { id: outputs.start(opts) }; } catch (err) { return { error: err.message }; }
 });
 ipcMain.on('out:data', (e, id, data) => outputs.write(id, data));
+ipcMain.handle('native:devices', async () => { try { return await require('./streamer').listCaptureDevices(outputs.ffmpegPath); } catch (e) { return { video: [], audio: [], error: e.message }; } });
 ipcMain.handle('out:stop', (e, id) => outputs.stop(id));
 ipcMain.on('app:live', (e, live) => { isLive = !!live; });
 // unsaved changes: the window tells us when there are some, and we ask before closing
