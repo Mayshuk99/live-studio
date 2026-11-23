@@ -651,3 +651,17 @@ textarea { width: 100%; box-sizing: border-box; }
 .gtile.chip .edit { top: 50%; transform: translateY(-50%); }
 .gtile.chip.armed { border-color: #38bdf8; border-left-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,.3); }
 .gfx-body .tile-row .gtile.add { height: calc(44px * var(--scale)); min-height: 0; flex: 0 0 auto; padding: 0 14px; }
+/* name buttons with a small picture of the graphic */
+.gtile.chip { height: calc(58px * var(--scale)); padding: 0 34px 0 5px; max-width: calc(300px * var(--scale)); }
+.gtile.chip .g-cap { gap: 9px; }
+.chip-thumb { flex: 0 0 auto; width: calc(84px * var(--scale)); height: calc(47px * var(--scale)); border-radius: 5px; background: #000; display: block; box-shadow: 0 0 0 1px rgba(255,255,255,.08); }
+.gtile.chip.on .chip-thumb { box-shadow: 0 0 0 2px var(--red); }
+.gfx-body .tile-row .gtile.add { height: calc(58px * var(--scale)); }
+/* one row: each button as tall as the panel allows, its picture filling that height */
+.gfx-body .tile-row { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; align-items: stretch; }
+.gfx-body .tile-row .gtile.chip { height: auto; min-height: calc(52px * var(--scale)); max-height: calc(110px * var(--scale)); padding: 5px 32px 5px 5px; justify-content: flex-start; flex-direction: row; align-items: stretch; }
+.gfx-body .tile-row .gtile.chip .g-cap { height: 100%; align-items: center; }
+.gfx-body .tile-row .gtile.chip .chip-thumb { height: 100%; width: auto; aspect-ratio: 16 / 9; }
+.gfx-body .tile-row .gtile.chip .edit { top: 6px; transform: none; }
+.gfx-body .tile-row .gtile.chip .spk-air { top: auto; bottom: 4px; right: 8px; }
+.gfx-body .tile-row .gtile.add { height: auto; flex: 0 0 calc(44px * var(--scale)); padding: 0; font-size: 1.4em; }

@@ -2315,8 +2315,9 @@
       ...show.webs.map(w => ({ id: w.id, kind: 'web', o: w, name: w.name || 'Web page', toggle: () => toggleWeb(w.id), edit: () => editWeb(w), on: () => engine.webVisible(w.id), key: 'web:' + w.id }))
     ];
     const ord = show.gfxOrder || [];
-    const rank = id => { const i = ord.indexOf(id); return i < 0 ? 1e6 : i; };
-    return items.map((it, i) => [rank(it.id), i, it]).sort((x, y) => x[0] - y[0] || x[1] - y[1]).map(x => x[2]);
+    const KIND = { pic: 0, web: 1, label: 2 }; // slides / pictures first: they are what is put up mid-service
+    const rank = it => { const i = ord.indexOf(it.id); return i < 0 ? 1e6 + KIND[it.kind] * 1e4 : i; };
+    return items.map((it, i) => [rank(it), i, it]).sort((x, y) => x[0] - y[0] || x[1] - y[1]).map(x => x[2]);
   }
   function drawGfxThumb(c, it) {
     const g = c.getContext('2d'), W = c.width, H = c.height;
@@ -2345,16 +2346,17 @@
     const row = el('div', { class: 'tile-row' });
     const inQuick = quickIds();
     const items = gfxItems().filter(it => !inQuick.has(it.id)); // translation & logos are on the quick buttons
-    row.append(el('div', { class: 'gtile add', title: 'Add a title, picture or web page', onclick: addGfx }, '＋ Add'));
     for (const it of items) {
       const on = it.on();
       const ds = { gid: it.id }; ds[it.kind === 'label' ? 'label' : it.kind] = it.id;
-      // a clean name button (the Preview shows the graphic itself when it is cued)
+      // a button with a small picture of the graphic and its name (the Preview shows it full size when cued)
+      const thumb = el('canvas', { width: 192, height: 108, class: 'chip-thumb' });
+      drawGfxThumb(thumb, it);
       const tile = el('div', { class: `gtile chip ${it.kind}` + (on ? ' on' : '') + (rt.armedGfx === it.id ? ' armed' : ''), dataset: ds, draggable: 'true',
         title: on ? 'On air · click to cue hiding it, then TAKE (Ctrl+G) · double-click to hide right away · drag to reorder' : 'Click to put it in Preview, then TAKE (Ctrl+G) · double-click to show right away · drag to reorder',
         onclick: () => armGfx(rt.armedGfx === it.id ? null : it.id),
         ondblclick: () => { armGfx(null); it.toggle(); refresh('labels'); } },
-        el('div', { class: 'g-cap' }, el('span', { class: 'g-ico' }, it.kind === 'label' ? 'T' : it.kind === 'pic' ? '🖼' : '🌐'), el('span', { class: 'g-title' }, it.name), keyChip(it.key)),
+        el('div', { class: 'g-cap' }, thumb, el('span', { class: 'g-title' }, it.name), keyChip(it.key)),
         el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''),
         el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); it.edit(); } }, '✎'));
       tile._gfx = it;
@@ -2369,9 +2371,12 @@
       });
       row.append(tile);
     }
+    row.append(el('div', { class: 'gtile add', title: 'Add a title, picture or web page', onclick: addGfx }, '＋'));
+    // mouse wheel scrolls the row sideways when it is longer than the panel
+    row.addEventListener('wheel', e => { if (row.scrollWidth > row.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { row.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
     put(body, quickStrip(), row);
   };
-  setInterval(() => { document.querySelectorAll('.gtile.big.web').forEach(t => { if (t._gfx) drawGfxThumb(t.querySelector('canvas'), t._gfx); }); }, 2000);
+  setInterval(() => { document.querySelectorAll('.gtile.web, .gtile.pic').forEach(t => { const c = t.querySelector('canvas'); if (t._gfx && c && c.isConnected) drawGfxThumb(c, t._gfx); }); }, 2000);
   function editLabel(L) {
     const upd = () => { engine.setLabel(L); changed(); };
     openModal('Edit title / graphic', el('div', null,
