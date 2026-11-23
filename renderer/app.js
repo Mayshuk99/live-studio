@@ -1502,7 +1502,7 @@
   const METER_TICKS = [0, -3, -6, -9, -12, -15, -18, -24, -30, -40, -60];
   /* level meter beside a monitor: dB scale from 0 down to −60 (green / yellow above −18 / red above −6),
      peak-hold line, and the loudest recent peak as a number underneath. scaleSide = which side the numbers go */
-  function drawMonMeter(A, cv = monMeterMain, scaleSide = 'left') {
+  function drawMonMeter(A, cv = monMeterMain, scaleSide = 'left', gr = null) {
     if (!cv.isConnected) return;
     const r = cssSize(cv), k = devicePixelRatio;
     const w = Math.max(10, Math.round(r.width * k)), h = Math.max(10, Math.round(r.height * k));
@@ -1514,7 +1514,8 @@
     const y = db => top + mh * (1 - meterFrac(db));
     const labW = Math.round(fs * 2.1), gap = 4 * k;
     const bx = scaleSide === 'left' ? labW + gap : 0, bwAll = w - labW - gap;
-    const bw = Math.max(3 * k, (bwAll - 3 * k) / 2);
+    // with the limiter on, a third, thin bar shows how much it is turning the sound down (grows from the top)
+    const bw = gr === null ? Math.max(3 * k, (bwAll - 3 * k) / 2) : Math.max(3 * k, (bwAll - 6 * k) / 2.45);
     // scale: stretched towards the top (−20 … 0 is over half the height); numbers that would overlap are left out
     g.font = `600 ${fs}px Consolas, ui-monospace, monospace`; g.textBaseline = 'middle';
     g.textAlign = scaleSide === 'left' ? 'right' : 'left';
@@ -1541,8 +1542,17 @@
       if (hd > -60) { g.fillStyle = '#fff'; g.fillRect(x, y(hd) - k, bw, 2 * k); }
       g.fillStyle = clip ? '#ef4444' : '#27272a'; g.fillRect(x, 0, bw, 4 * k);
     });
+    if (gr !== null) {
+      const x = bx + 2 * (bw + 3 * k), gw = bwAll - 2 * (bw + 3 * k);
+      g.fillStyle = '#09090b'; g.fillRect(x, top, gw, mh);
+      g.fillStyle = 'rgba(255,255,255,.14)'; for (const d of [3, 6, 9]) g.fillRect(x, top + mh * d / 12, gw, Math.max(1, k * 0.6));
+      if (gr > 0.1) { g.fillStyle = gr > 6 ? '#ef4444' : '#f59e0b'; g.fillRect(x, top, gw, mh * Math.min(1, gr / 12)); }
+      g.font = `700 ${Math.round(fs * 0.75)}px Consolas, ui-monospace, monospace`; g.textAlign = 'right';
+      g.fillStyle = gr > 0.1 ? '#fbbf24' : '#71717a';
+      g.fillText('LIM', w - k, top + mh + fs * 2.1);
+    }
     // readout: loudest recent peak, and L / R under the bars
-    const peak = Math.max(A.holdL, A.holdR), cx = bx + bwAll / 2;
+    const peak = Math.max(A.holdL, A.holdR), cx = bx + (gr === null ? bwAll : 2 * bw + 3 * k) / 2;
     g.textAlign = 'center'; g.font = `700 ${fs}px Consolas, ui-monospace, monospace`;
     g.fillStyle = A.silent || peak <= -60 ? '#71717a' : peak > -1.2 ? '#f87171' : peak > -6 ? '#facc15' : '#e4e4e7';
     g.fillText(A.silent || peak <= -60 ? '−∞' : peak.toFixed(1).replace('-', '−'), cx, top + mh + fs * 0.95);
@@ -1563,7 +1573,7 @@
         el('div', { class: 'mon-meter-wrap pv', title: 'Preview sound — what the Preview shot will sound like on air. Numbers are dB (0 = maximum); number underneath = loudest recent peak' }, pvMeter),
         el('div', { class: 'monitor preview' }, el('div', { class: 'screen' }, previewCanvas), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot green' }), el('span', { class: 'tagtxt' }, 'Preview'), pvName, el('span', { class: 'grow' }), pvListen)),
         el('div', { class: 'monitor program' }, el('div', { class: 'screen' }, engine.canvas, progInfo, progBar), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot red' }), el('span', { class: 'tagtxt' }, 'Live'), pgName)),
-        el('div', { class: 'mon-meter-wrap', title: 'Program sound — what the stream hears. Numbers are dB (0 = maximum); the stream never goes above −1. Number underneath = loudest recent peak. Dot = phase (green good, red out of phase)' }, monMeter)),
+        el('div', { class: 'mon-meter-wrap pgm', title: 'Program sound — what the stream hears. Numbers are dB (0 = maximum). Number underneath = loudest recent peak. Dot = phase (green good, red out of phase). LIM bar = how much the limiter is turning the sound down right now (orange; red above 6 dB)' }, monMeter)),
       timeline,
       el('div', { class: 'trans-bar' },
         el('button', { class: 'btn cut-btn', onclick: () => take('cut') }, 'CUT', keyChip('cut')),
@@ -1955,6 +1965,7 @@
     if (engine.webVisible(id)) { rt.webManual.delete(id); rt.webSuppress.add(id); }
     else {
       rt.webManual.add(id); rt.webSuppress.delete(id);
+      for (const b of quickRowOf(id)) if (b.id && b.id !== id && (engine.webVisible(b.id) || rt.webManual.has(b.id))) { rt.webManual.delete(b.id); rt.webSuppress.add(b.id); const pp = show.pics.find(x => x.id === b.id); if (pp) pp.on = false; }
       if (cfg && cfg.autoHide > 0) {
         rt.hideAt.set(id, { at: Date.now() + cfg.autoHide * 1000, total: cfg.autoHide * 1000 });
         rt.labelTimers.set(id, setTimeout(() => { if (engine.webVisible(id)) (show.pics.some(x => x.id === id) ? togglePic : toggleWeb)(id); }, cfg.autoHide * 1000));
@@ -1968,6 +1979,76 @@
       t.classList.toggle('on', on);
       t.querySelector('.spk-air').textContent = on ? 'ON AIR' : '';
     });
+    syncQuick();
+  }
+
+  /* ---------- quick buttons: translation direction and logo style, one press each ---------- */
+  // show.quick = { tr: [{label, id}], logo: [{label, id}] } — id = a web page (translation) or a picture (logo)
+  function ensureQuick() {
+    if (show.quick && show.quick.tr && show.quick.logo) return show.quick;
+    const txt = w => `${w.name || ''} ${w.url || ''}`;
+    const dir = (a, b) => new RegExp(`(^|[^a-z])${a}[^a-z]{0,5}(to[^a-z]{0,3})?${b}([^a-z]|$)`, 'i');
+    const ruen = show.webs.find(w => dir('ru', 'en').test(txt(w)) || /рус.*англ/i.test(txt(w)));
+    const enru = show.webs.find(w => w !== ruen && (dir('en', 'ru').test(txt(w)) || /англ.*рус/i.test(txt(w))));
+    const xmas = show.pics.find(p2 => /christ|xmas|рожд/i.test(p2.name || ''));
+    const reg = show.pics.find(p2 => p2 !== xmas);
+    show.quick = {
+      tr: [{ label: 'RU → EN', id: ruen ? ruen.id : '' }, { label: 'EN → RU', id: enru ? enru.id : '' }],
+      logo: [{ label: 'Regular', id: reg ? reg.id : '' }, { label: 'Christmas', id: xmas ? xmas.id : '' }]
+    };
+    return show.quick;
+  }
+  const quickExists = b => !!(b && b.id && (show.webs.some(w => w.id === b.id) || show.pics.some(p2 => p2.id === b.id)));
+  function quickRowOf(id) { const q = ensureQuick(); return [q.tr, q.logo].find(r => r.some(b => b.id === id)) || []; }
+  const quickIds = () => { const q = ensureQuick(); return new Set([...q.tr, ...q.logo].filter(quickExists).map(b => b.id)); };
+  function syncQuick() {
+    document.querySelectorAll('.qbtn[data-gid]').forEach(b => {
+      const id = b.dataset.gid, on = engine.webVisible(id), armed = rt.armedGfx === id;
+      b.classList.toggle('on', on); b.classList.toggle('armed', armed);
+      const st = b.querySelector('.q-state'); if (st) st.textContent = armed ? (on ? 'TAKE HIDES' : 'IN PREVIEW') : on ? 'ON AIR' : '';
+    });
+  }
+  function quickStrip() {
+    const q = ensureQuick();
+    const btn = b => {
+      if (!quickExists(b)) return el('button', { class: 'qbtn unset', title: 'Choose what this button shows', onclick: openQuickSetup }, el('span', { class: 'q-name' }, b.label || '—'), el('span', { class: 'q-state' }, 'set up'));
+      const it = () => gfxItems().find(x => x.id === b.id);
+      return el('button', { class: 'qbtn', dataset: { gid: b.id },
+        title: 'Click = Preview, then TAKE (Ctrl+G) · double-click = on air now (or off)',
+        onclick: () => armGfx(rt.armedGfx === b.id ? null : b.id),
+        ondblclick: () => { armGfx(null); const x = it(); if (x) { x.toggle(); refresh('labels'); } } },
+        el('span', { class: 'q-name' }, b.label || '—'), el('span', { class: 'q-state' }));
+    };
+    const strip = el('div', { class: 'quick' },
+      el('div', { class: 'q-group' }, el('span', { class: 'q-label' }, 'Translation'), el('div', { class: 'q-btns' }, ...q.tr.map(btn))),
+      el('div', { class: 'q-group' }, el('span', { class: 'q-label' }, 'Logo'), el('div', { class: 'q-btns' }, ...q.logo.map(btn))),
+      el('span', { class: 'grow' }),
+      el('button', { class: 'btn small q-gear', title: 'Choose which web page / picture each button shows', onclick: openQuickSetup }, '⚙'));
+    requestAnimationFrame(syncQuick);
+    return strip;
+  }
+  function openQuickSetup() {
+    const q = ensureQuick(), body = el('div');
+    const row = (b, kind, list, removable) => el('div', { class: 'q-setrow' },
+      el('input', { type: 'text', class: 'q-lbl', value: b.label, placeholder: 'Button name', oninput: e => { b.label = e.target.value; changed(); refresh('labels'); } }),
+      select([['', kind === 'web' ? '— choose the translation page —' : '— choose the logo picture —'], ...list.map(x => [x.id, x.name || (kind === 'web' ? 'Web page' : 'Picture')])], quickExists(b) ? b.id : '', v => { b.id = v; changed(); refresh('labels'); draw(); }, { class: 'grow' }),
+      quickExists(b) ? el('button', { class: 'btn small', title: 'Edit', onclick: () => (kind === 'web' ? editWeb(show.webs.find(w => w.id === b.id)) : editPic(show.pics.find(p2 => p2.id === b.id))) }, '✎ Edit') : null,
+      el('button', { class: 'btn small', onclick: () => { if (kind === 'web') { const w = newWeb(); w.name = `Translation ${b.label}`; b.id = w.id; changed(); editWeb(w, true); } else { const p2 = newPic(); p2.name = `Logo — ${b.label}`; b.id = p2.id; changed(); editPic(p2, true); } } }, '+ New'),
+      removable ? el('button', { class: 'btn small danger', title: 'Remove this button', onclick: () => { q.logo = q.logo.filter(x => x !== b); changed(); refresh('labels'); draw(); } }, '✕') : null);
+    const draw = () => {
+      body.innerHTML = '';
+      put(body,
+        el('h3', null, '🌐 Translation'),
+        el('div', { class: 'muted', style: 'font-size:.85em;margin-bottom:6px' }, 'Each button shows one web page (the live translation captions). Only one is on at a time — pressing the other switches over.'),
+        q.tr.map(b => row(b, 'web', show.webs, false)),
+        el('h3', null, '🖼 Logo'),
+        el('div', { class: 'muted', style: 'font-size:.85em;margin-bottom:6px' }, 'Each button shows one logo picture — e.g. the regular logo and a Christmas one. Only one is on at a time.'),
+        q.logo.map((b, i) => row(b, 'pic', show.pics, i >= 2)),
+        q.logo.length < 3 ? el('button', { class: 'btn small', onclick: () => { q.logo.push({ label: 'Easter', id: '' }); changed(); refresh('labels'); draw(); } }, '+ Add a third logo button') : null,
+        el('div', { class: 'row', style: 'margin-top:16px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('labels'); } }, 'Done')));
+    };
+    draw();
+    openModal('Quick buttons — translation & logo', body);
   }
   function editWeb(w, isNew) {
     const body = el('div');
@@ -2234,28 +2315,33 @@
     else { const wc = rt.webCanvas.get(it.id), r = it.o.rect; if (wc && wc.width) g.drawImage(wc, r[0] * W, r[1] * H, r[2] * W, r[3] * H); }
   }
   let gfxDrag = null;
+  function addGfx() {
+    const newTitle = () => {
+      const last = show.labels[show.labels.length - 1] || show.speakerStyle;
+      const L = { id: uid('lbl'), title: 'New title', subtitle: '', style: last.style || 'lower', color: last.color || settings.ui.accent, design: clone(last.design || {}), autoHide: 0 };
+      show.labels.push(L); engine.setLabel(L, false); changed(); refresh('labels'); editLabel(L);
+    };
+    openModal('Add to Titles & Graphics', el('div', { class: 'add-choices' },
+      el('button', { class: 'btn big', onclick: () => { closeModal(); newTitle(); } }, 'T  Title / caption'),
+      el('button', { class: 'btn big', onclick: () => { closeModal(); editPic(newPic(), true); } }, '🖼  Picture (logo)'),
+      el('button', { class: 'btn big', onclick: () => { closeModal(); editWeb(newWeb(), true); } }, '🌐  Web page (translation…)'),
+      el('button', { class: 'btn big', onclick: () => { closeModal(); openQuickSetup(); } }, '⚙  Quick buttons (translation & logo)')));
+  }
   RENDER.labels = body => {
     body.innerHTML = '';
+    body.classList.add('gfx-body');
     const row = el('div', { class: 'tile-row' });
-    const items = gfxItems();
-    row.append(el('div', { class: 'gtile-adds' },
-      el('div', { class: 'gtile add', onclick: () => {
-        const last = show.labels[show.labels.length - 1] || show.speakerStyle;
-        const L = { id: uid('lbl'), title: 'New title', subtitle: '', style: last.style || 'lower', color: last.color || settings.ui.accent, design: clone(last.design || {}), autoHide: 0 };
-        show.labels.push(L); engine.setLabel(L, false); changed(); refresh('labels'); editLabel(L);
-      } }, '+ Title'),
-      el('div', { class: 'gtile add pic-add', onclick: () => editPic(newPic(), true) }, '+ Picture'),
-      el('div', { class: 'gtile add web-add', onclick: () => editWeb(newWeb(), true) }, '+ Web page')));
+    const inQuick = quickIds();
+    const items = gfxItems().filter(it => !inQuick.has(it.id)); // translation & logos are on the quick buttons
+    row.append(el('div', { class: 'gtile add', title: 'Add a title, picture or web page', onclick: addGfx }, '＋ Add'));
     for (const it of items) {
       const on = it.on();
-      const thumb = el('canvas', { width: 320, height: 180, class: 'g-thumb' });
-      drawGfxThumb(thumb, it);
       const ds = { gid: it.id }; ds[it.kind === 'label' ? 'label' : it.kind] = it.id;
-      const tile = el('div', { class: `gtile big ${it.kind}` + (on ? ' on' : '') + (rt.armedGfx === it.id ? ' armed' : ''), dataset: ds, draggable: 'true',
+      // a clean name button (the Preview shows the graphic itself when it is cued)
+      const tile = el('div', { class: `gtile chip ${it.kind}` + (on ? ' on' : '') + (rt.armedGfx === it.id ? ' armed' : ''), dataset: ds, draggable: 'true',
         title: on ? 'On air · click to cue hiding it, then TAKE (Ctrl+G) · double-click to hide right away · drag to reorder' : 'Click to put it in Preview, then TAKE (Ctrl+G) · double-click to show right away · drag to reorder',
         onclick: () => armGfx(rt.armedGfx === it.id ? null : it.id),
         ondblclick: () => { armGfx(null); it.toggle(); refresh('labels'); } },
-        thumb,
         el('div', { class: 'g-cap' }, el('span', { class: 'g-ico' }, it.kind === 'label' ? 'T' : it.kind === 'pic' ? '🖼' : '🌐'), el('span', { class: 'g-title' }, it.name), keyChip(it.key)),
         el('span', { class: 'spk-air' }, on ? 'ON AIR' : ''),
         el('button', { class: 'edit', title: 'Edit', onclick: e => { e.stopPropagation(); it.edit(); } }, '✎'));
@@ -2271,7 +2357,7 @@
       });
       row.append(tile);
     }
-    put(body, row);
+    put(body, quickStrip(), row);
   };
   setInterval(() => { document.querySelectorAll('.gtile.big.web').forEach(t => { if (t._gfx) drawGfxThumb(t.querySelector('canvas'), t._gfx); }); }, 2000);
   function editLabel(L) {
@@ -2674,6 +2760,7 @@
       else { engine.setPreviewLabel(null); engine.setPreviewCue(on ? { hide: id } : { webId: id }); }
     }
     document.querySelectorAll('.gtile[data-gid]').forEach(t => t.classList.toggle('armed', t.dataset.gid === rt.armedGfx));
+    syncQuick();
     const tb = document.querySelector('.take-btn'); if (tb) tb.classList.toggle('armed', !!(rt.armedSpk || rt.armedGfx));
     renderTally();
   }
@@ -2733,7 +2820,7 @@
     return [
       tog('🎧', 'monitor', 'Listen on this computer (headphones / speakers)', () => mixer.setMaster(m)),
       tog('MONO', 'mono', 'Listen in mono to check phase — only your headphones, not the stream', () => mixer.setMono(!!m.mono)),
-      tog('LIMIT', 'limiter', 'YouTube-safe limiter: keeps peaks at or below the Out ceiling (set in DYN) so the stream never clips', () => mixer.setMaster(m)),
+      tog('LIMIT', 'limiter', 'YouTube-safe limiter: keeps peaks at or below the Out ceiling (set in DYN). Turns orange and shows how many dB it is turning the sound down while it works (red above 6 dB = too much — lower the level)', () => mixer.setMaster(m)),
       el('button', { class: 'tbtn' + (dynCfg().comp.on ? ' on' : ''), dataset: { akey: 'dyn' }, title: 'Compressor & limiter: threshold, ratio, attack, release, knee, out gain, ceiling', onclick: openDynamics }, 'DYN'),
       tog('AUTO −14', 'auto', 'Auto level: slowly turns the overall volume up or down to sit at YouTube’s −14 LUFS', () => {}),
       el('button', { class: 'tbtn', title: 'Sound card, volumes, mute, sync test, output', onclick: openMixer }, names ? '🎚 Mixer' : '🔌 Connect sound card')];
@@ -3224,7 +3311,21 @@
     rt.uiAt = tNow;
     const lv = mixer.levels();
     const MA = mixer.masterAnalysis(); rt.MA = MA;
-    drawMaster(MA); drawMonMeter(MA, monMeterMain, 'left');
+    // how hard the limiter / compressor are working, held for a moment so it can be read
+    const gm = mixer.grNow(), m0 = show.audio.master;
+    const hold = (key, v) => { const H = rt.grHold || (rt.grHold = {}), o = H[key] || (H[key] = { v: 0, at: 0, t: tNow }); const dt = (tNow - o.t) / 1000; o.t = tNow; if (v >= o.v) { o.v = v; o.at = tNow; } else if (tNow - o.at > 900) o.v = Math.max(v, o.v - 12 * dt); return o.v; }; // peak held ~1 s, then falls 12 dB/s
+    const lim = m0.limiter ? hold('lim', Math.max(0, -gm.lim)) : 0, cmp = dynCfg().comp.on ? hold('comp', Math.max(0, -gm.comp)) : 0;
+    drawMaster(MA); drawMonMeter(MA, monMeterMain, 'left', m0.limiter ? lim : null);
+    for (const b of document.querySelectorAll('.tbtn[data-akey="limiter"]')) {
+      const t = m0.limiter && lim >= 0.3 ? `LIMIT −${lim.toFixed(1)}` : 'LIMIT';
+      if (b.textContent !== t) b.textContent = t;
+      b.classList.toggle('working', m0.limiter && lim >= 0.3); b.classList.toggle('hard', m0.limiter && lim > 6);
+    }
+    for (const b of document.querySelectorAll('.tbtn[data-akey="dyn"]')) {
+      const t = cmp >= 0.3 ? `DYN −${cmp.toFixed(1)}` : 'DYN';
+      if (b.textContent !== t) b.textContent = t;
+      b.classList.toggle('working', cmp >= 0.3);
+    }
     if (miniLufs.isConnected) { const v = MA.lufsS, d = v + 14; setText(miniLufs, v <= -60 ? '— LUFS' : `${v.toFixed(1)} LUFS`); const cls = 'mini-lufs mono' + (v <= -60 ? '' : d > 2 ? ' bad' : d < -4 ? ' low' : ' ok'); if (miniLufs.className !== cls) miniLufs.className = cls; } drawMonMeter(mixer.previewAnalysis(), pvMeter, 'right');
     for (const [id, m] of rt.meters) {
       const db = lv[id];

@@ -608,3 +608,46 @@ textarea { width: 100%; box-sizing: border-box; }
 .l2-sub { font-size: calc(12px * var(--scale)); font-weight: 700; color: #9fb0c2; text-transform: uppercase; letter-spacing: .05em; text-align: center; margin-bottom: 2px; }
 .l2-opt { background: #1b222b; border-color: #4b5869; color: #cbd5e1; }
 .l2-opt.sel { background: #0369a1; border-color: #38bdf8; color: #fff; }
+
+/* Titles & Graphics: quick buttons (translation direction, logo style) on top, tiles underneath */
+.gfx-body { display: flex; flex-direction: column; gap: 8px; }
+.gfx-body .tile-row { flex: 1; min-height: 0; height: auto; }
+.quick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.q-group { display: flex; align-items: center; gap: 6px; }
+.q-label { font-size: calc(12px * var(--scale)); font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-right: 2px; white-space: nowrap; }
+.qbtn { position: relative; min-width: calc(108px * var(--scale)); padding: 8px 14px 7px; border-radius: 10px; border: 2px solid #3f3f46; background: #1f1f23; color: #f4f4f5; cursor: pointer; display: flex; flex-direction: column; align-items: center; line-height: 1.1; font: inherit; }
+.qbtn:hover { border-color: #52525b; background: #26262b; }
+.qbtn .q-name { font-weight: 800; font-size: calc(16px * var(--scale)); white-space: nowrap; }
+.qbtn .q-state { font-size: calc(10px * var(--scale)); font-weight: 800; letter-spacing: .06em; min-height: 1.1em; color: var(--muted); margin-top: 2px; }
+.qbtn.on { border-color: var(--red); background: #3a1418; }
+.qbtn.on .q-state { color: #fca5a5; }
+.qbtn.armed { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,.35); }
+.qbtn.armed .q-state { color: #7dd3fc; }
+.qbtn.unset { border-style: dashed; color: var(--muted); background: transparent; }
+.q-gear { align-self: center; }
+.q-setrow { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.q-setrow .q-lbl { width: 130px; font-weight: 700; }
+.add-choices { display: grid; gap: 10px; }
+.add-choices .btn.big { justify-content: flex-start; text-align: left; padding: 14px 16px; font-size: 1.05em; }
+.tile-row .gtile.add { flex: 0 0 calc(90px * var(--scale)); }
+.q-group { flex-direction: column; align-items: flex-start; gap: 3px; }
+.q-btns { display: flex; gap: 6px; }
+.q-label { font-size: calc(11px * var(--scale)); }
+.qbtn { padding: 6px 12px 5px; min-width: calc(96px * var(--scale)); }
+.gfx-body .tile-row .gtile.big { min-height: 56px; }
+/* limiter / compressor working: orange with the amount, red when it is working too hard */
+.tbtn.working { background: #f59e0b; border-color: #f59e0b; color: #111; }
+.tbtn.working.hard { background: #ef4444; border-color: #ef4444; color: #fff; }
+.tbtn[data-akey="limiter"], .tbtn[data-akey="dyn"] { min-width: 7.4em; text-align: center; font-variant-numeric: tabular-nums; }
+.mon-meter-wrap.pgm { width: calc(78px * var(--scale)); }
+/* Titles & Graphics: titles / pictures / pages as clean name buttons */
+.gfx-body .tile-row { flex-wrap: wrap; align-content: flex-start; overflow-y: auto; overflow-x: hidden; }
+.gtile.chip { flex: 0 0 auto; min-width: calc(130px * var(--scale)); max-width: calc(260px * var(--scale)); min-height: 0; max-height: none; height: calc(44px * var(--scale)); padding: 0 34px 0 10px; border-top-width: 2px; border-left: 5px solid #a855f7; justify-content: center; }
+.gtile.chip.pic { border-left-color: #f59e0b; } .gtile.chip.web { border-left-color: #0ea5e9; }
+.gtile.chip .g-cap { display: flex; align-items: center; gap: 7px; }
+.gtile.chip .g-title { padding: 0; font-size: calc(15px * var(--scale)); }
+.gtile.chip .g-ico { font-size: .8em; font-weight: 800; color: var(--muted); }
+.gtile.chip .spk-air { position: absolute; right: 32px; top: 2px; font-size: 9px; font-weight: 800; color: #fca5a5; letter-spacing: .05em; }
+.gtile.chip .edit { top: 50%; transform: translateY(-50%); }
+.gtile.chip.armed { border-color: #38bdf8; border-left-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,.3); }
+.gfx-body .tile-row .gtile.add { height: calc(44px * var(--scale)); min-height: 0; flex: 0 0 auto; padding: 0 14px; }

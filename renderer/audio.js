@@ -63,7 +63,7 @@
       // browser's own limiter above is used
       this.l2Ready = ctx.audioWorklet ? ctx.audioWorklet.addModule('l2-worklet.js').then(() => {
         const n = new AudioWorkletNode(ctx, 'l2-limiter', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers', processorOptions: this._l2p || {} });
-        n.port.onmessage = e => { this._l2gr = e.data.gr; this._l2at = performance.now(); };
+        n.port.onmessage = e => { this._l2gr = e.data.gr; this._l2pk = Math.max(this._l2pk || 0, e.data.gr); this._l2at = performance.now(); };
         n.connect(this.masterOut);
         this.l2 = n;
         if (this._l2p) n.port.postMessage(this._l2p);
@@ -206,6 +206,13 @@
       const out = [];
       for (const an of [this.lInL, this.lInR]) { an.getFloatTimeDomainData(this._db); let p = 0; for (let i = 0; i < this._db.length; i++) { const v = Math.abs(this._db[i]); if (v > p) p = v; } out.push(p > 1e-6 ? 20 * Math.log10(p) : -90); }
       return out;
+    }
+    // how much the compressor / limiter are turning the sound down right now (negative dB), cheap enough for every screen update
+    grNow() {
+      // the deepest reduction since the last call, so short peaks between screen updates are not missed
+      const lim = !this.limiterOn ? 0 : this.l2 ? (performance.now() - (this._l2at || 0) < 200 ? -(this._l2pk || 0) : 0) : this.limiter.reduction;
+      this._l2pk = 0;
+      return { comp: this.compOn ? this.comp.reduction : 0, lim };
     }
     // for the dynamics window: level going in (peak dB) and how much each stage is turning it down
     dynMeters() {
