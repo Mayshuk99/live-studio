@@ -78,6 +78,17 @@
       if (o) { clearInterval(o.timer); outs.delete(id); emit({ id, type: 'exit', kind: o.opts.kind, code: 0, expected: true, file: null }); }
     },
     onOutEvent: cb => outListeners.push(cb),
+    // native engine stand-in for tests: remembers every command, answers ready, sends small camera pictures
+    nativeStart: async opts => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.opts = opts; setTimeout(() => L.cbs.forEach(cb => cb({ ev: 'ready', w: opts.w, h: opts.h })), 50); clearInterval(L.timer);
+      L.timer = setInterval(() => { for (const c of L.sent.filter(m => m.cmd === 'camera' && !m.closed)) { const w = 64, h = 36, px = new Uint8Array(w * h * 4); for (let i = 0; i < w * h; i++) { px[i * 4] = (L.n || 0) * 7 % 255; px[i * 4 + 1] = 120; px[i * 4 + 2] = c.id.length * 30; px[i * 4 + 3] = 255; } L.cbs.forEach(cb => cb({ ev: 'cam-frame', id: c.id, w, h }, px)); } L.n = (L.n || 0) + 1;
+        L.cbs.forEach(cb => cb({ ev: 'stats', ticks: 60, late: 0, repeat: 0, skip: 0, clock: '', phaseMs: 0, renderMs: 0.4, renderMaxMs: 1, cams: {}, videos: {}, outputs: {}, audioMs: 60, audioUnder: 0, audioOver: 0, audioPpm: 12 })); }, 1000);
+      return { ok: true }; },
+    nativeStop: async () => { const L = window.__nat; if (L) clearInterval(L.timer); return true; },
+    nativeSend: (h, payload) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push(Object.assign({}, h, payload ? { bytes: payload.byteLength } : {})); if (h.cmd === 'camera-close') L.sent.filter(m => m.cmd === 'camera' && m.id === h.id).forEach(m => { m.closed = true; }); },
+    nativeCamera: (id, dev) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push({ cmd: 'camera', id, dev }); setTimeout(() => L.cbs.forEach(cb => cb({ ev: 'cam-status', id, ok: true, text: 'Running' })), 100); },
+    nativeAudio: (rate, pcm) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.audio = (L.audio || 0) + pcm.length; },
+    nativeWeb: (id, cfg) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push({ cmd: 'web', id, cfg }); },
+    onNative: cb => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.cbs.push(cb); },
     openFolder: async () => {},
     setLive: () => {},
     onUpdate: fn => { window.__upd = fn; },

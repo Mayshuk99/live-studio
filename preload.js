@@ -1,6 +1,7 @@
 /* Live Studio — safe bridge between the interface and the desktop app */
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
+window.addEventListener('message', e => { if (e.source === window && e.data === 'ls-native-audio-port' && e.ports && e.ports[0]) ipcRenderer.postMessage('native:audio-port', null, [e.ports[0]]); });
 
 contextBridge.exposeInMainWorld('studio', {
   isApp: true,
@@ -8,6 +9,14 @@ contextBridge.exposeInMainWorld('studio', {
   version: () => ipcRenderer.invoke('app:version'),
   logWrite: text => ipcRenderer.invoke('log:write', text),
   nativeDevices: () => ipcRenderer.invoke('native:devices'),
+  // native engine (OBS-style)
+  nativeStart: opts => ipcRenderer.invoke('native:start', opts),
+  nativeStop: () => ipcRenderer.invoke('native:stop'),
+  nativeSend: (h, payload) => ipcRenderer.send('native:send', h, payload || null),
+  nativeCamera: (id, dev) => ipcRenderer.send('native:camera', id, dev),
+  nativeAudio: (rate, pcm) => ipcRenderer.send('native:audio', rate, pcm),
+  nativeWeb: (id, cfg) => ipcRenderer.send('native:web', id, cfg),
+  onNative: cb => ipcRenderer.on('native:ev', (e, h, payload) => cb(h, payload)),
   logInfo: () => ipcRenderer.invoke('log:info'),
   logShow: () => ipcRenderer.invoke('log:show'),
   ffmpegVersion: () => ipcRenderer.invoke('app:ffmpeg'),

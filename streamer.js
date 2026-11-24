@@ -32,9 +32,9 @@ const ENCODERS = {
 let decodeMode = 'auto';
 const getDecodeMode = () => decodeMode;
 const setDecodeMode = m => { decodeMode = m; };
-const zeroCopy = o => !o.safe && o.hwDecode !== false && decodeMode === 'cuda-zc' && o.encoder === 'nvenc';
+const zeroCopy = o => !o.engine && !o.safe && o.hwDecode !== false && decodeMode === 'cuda-zc' && o.encoder === 'nvenc';
 const hwDecode = o => {
-  if (o.safe || o.hwDecode === false || decodeMode === 'none') return [];
+  if (o.engine || o.safe || o.hwDecode === false || decodeMode === 'none') return [];
   if (zeroCopy(o)) return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-extra_hw_frames', '8'];
   if (decodeMode === 'cuda-zc' || decodeMode === 'cuda') return ['-hwaccel', 'cuda'];
   if (decodeMode === 'd3d11va' || decodeMode === 'dxva2') return ['-hwaccel', decodeMode];
@@ -42,6 +42,12 @@ const hwDecode = o => {
 };
 // the picture is already in the encoder's format on the card — converting it would bring it back to the processor
 const pixFmt = o => zeroCopy(o) ? [] : ['-pix_fmt', 'yuv420p'];
+/* where the picture comes from: Live Studio's window (Matroska from the browser's encoder), or the native engine
+   (raw frames on the pipe + sound from a local connection) */
+const { engineInput } = require('./native-engine');
+// the engine already delivers exactly one frame per frame time: nothing to repeat or drop
+const cfr = (o, fps) => o.engine ? [] : ['-r', rate(fps), '-fps_mode', 'cfr'];
+const inputOf = o => o.engine ? [...engineInput(o), '-map', '1:v:0', '-map', '0:a:0'] : [...hwDecode(o), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?'];
 
 function streamArgs(o) {
   const fps = o.fps || 30;
@@ -51,11 +57,9 @@ function streamArgs(o) {
   return [
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
     '-fflags', '+genpts',
-    ...hwDecode(o),
-    '-f', 'matroska', '-i', 'pipe:0',
-    '-map', '0:v:0', '-map', '0:a:0?',
+    ...inputOf(o),
     ...enc,
-    ...pixFmt(o), '-r', rate(fps), '-fps_mode', 'cfr',
+    ...pixFmt(o), ...cfr(o, fps),
     '-c:a', 'aac', '-b:a', `${o.audioBitrate || 160}k`, '-ar', '48000', '-ac', '2',
     '-flvflags', 'no_duration_filesize',
     '-f', 'flv', url
@@ -91,6 +95,15 @@ function nativeArgs(o, partFile) {
   ];
 }
 
+/* a capture card for the native engine: { name, n, w, h, fps, pixFmt | vcodec } */
+function captureArgs(d) {
+  return ['-f', 'dshow', '-rtbufsize', '1500M',
+    ...(d.n ? ['-video_device_number', String(d.n)] : []),
+    '-video_size', `${d.w || 1920}x${d.h || 1080}`, '-framerate', rate(capRate(d.fps || 59.94)),
+    ...(d.vcodec ? ['-vcodec', d.vcodec] : d.pixFmt ? ['-pixel_format', d.pixFmt] : []),
+    '-i', `video=${d.name}`];
+}
+
 // a card's reported rate like 59.9402 → 59.94
 const capRate = f => [59.94, 29.97, 23.98, 60, 50, 30, 25, 24].find(x => Math.abs(x - f) < 0.02) || +f.toFixed(3);
 // FFmpeg rate: 59.94 / 29.97 are exactly 60000/1001 and 30000/1001
@@ -103,15 +116,13 @@ function recordArgs(o, partFile) {
   const hw = ['nvenc', 'qsv', 'amf'].includes(o.encoder);
   const kbps = o.bitrate || 20000;
   let v;
-  if (hw) v = [...(o.safe ? ENCODERS[o.encoder + '_safe'] : ENCODERS[o.encoder])({ bitrate: kbps }, String(Math.round(fps))), ...pixFmt(o), '-r', rate(fps), '-fps_mode', 'cfr'];
-  else if (o.inputCodec === 'h264' || o.inputCodec === 'vp9') v = ['-c:v', 'copy'];
+  if (hw) v = [...(o.safe ? ENCODERS[o.encoder + '_safe'] : ENCODERS[o.encoder])({ bitrate: kbps }, String(Math.round(fps))), ...pixFmt(o), ...cfr(o, fps)];
+  else if (!o.engine && (o.inputCodec === 'h264' || o.inputCodec === 'vp9')) v = ['-c:v', 'copy'];
   else v = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', rate(fps), '-fps_mode', 'cfr'];
   return [
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
     '-fflags', '+genpts',
-    ...(hw ? hwDecode(o) : []),
-    '-f', 'matroska', '-i', 'pipe:0',
-    '-map', '0:v:0', '-map', '0:a:0?',
+    ...(o.engine ? inputOf(o) : [...(hw ? hwDecode(o) : []), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?']),
     ...v,
     '-c:a', 'aac', '-b:a', `${o.audioBitrate || 256}k`, '-ar', '48000',
     '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
@@ -175,10 +186,13 @@ class OutputManager extends EventEmitter {
       partFile = path.join(o.dir, base + '.recording.mp4');
       args = recordArgs(o, partFile);
     }
-    const proc = spawn(this.ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+    // fed by the native engine: the engine runs this FFmpeg itself; here it looks like any other output
+    const viaEngine = !!o.engine && o.kind !== 'native';
+    if (viaEngine && !(this.engine && this.engine.ready)) throw new Error('The native engine is not running.');
+    const proc = viaEngine ? this._engineProc(id, args) : spawn(this.ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
     // the encoder has time to spare (speed stays above 1×); the program's picture does not — it goes first
     try { if (proc.pid) require('os').setPriority(proc.pid, require('os').constants.priority.PRIORITY_BELOW_NORMAL); } catch (e) { /* not allowed */ }
-    const out = { id, kind: o.kind, proc, finalFile, partFile, stopping: false, err: [], first: [], frames: 0, bytes: 0 };
+    const out = { id, kind: o.kind, proc, finalFile, partFile, stopping: false, err: [], first: [], frames: 0, bytes: 0, viaEngine };
     this.outs.set(id, out);
     proc.stdin.on('error', () => { /* handled by exit */ });
     let buf = '';
@@ -240,7 +254,7 @@ class OutputManager extends EventEmitter {
 
   write(id, data) {
     const out = this.outs.get(id);
-    if (!out || out.stopping || !out.proc.stdin.writable) return;
+    if (!out || out.viaEngine || out.stopping || !out.proc.stdin.writable) return;
     out.proc.stdin.write(Buffer.from(data));
   }
 
@@ -252,9 +266,36 @@ class OutputManager extends EventEmitter {
       const t = setTimeout(() => { try { out.proc.kill('SIGKILL'); } catch (e) { /* gone */ } resolve(); }, 8000);
       out.proc.once('exit', () => { clearTimeout(t); resolve(); });
       // the native test reads the card itself, so it is told to finish with “q”; the others finish when their input ends
+      if (out.viaEngine) { this.engine.send({ cmd: 'output-stop', id }); return; }
       try { if (out.kind === 'native') out.proc.stdin.write('q'); out.proc.stdin.end(); } catch (e) { out.proc.kill(); }
     });
   }
+
+  /* an encoder inside the engine, made to look like a child process (its messages arrive as engine events) */
+  _engineProc(id, args) {
+    const p = new EventEmitter();
+    p.pid = 0; p.stderr = new EventEmitter();
+    p.stdin = { writable: false, writableLength: 0, on() {}, write() {}, end() {} };
+    p.kill = () => { if (this.engine) this.engine.send({ cmd: 'output-kill', id }); setTimeout(() => this._engineExit(id, -9), 3000); };
+    this.engine.send({ cmd: 'output-start', id, args });
+    return p;
+  }
+  engineEvent(h) {
+    const out = this.outs.get(h.id);
+    if (!out || !out.viaEngine) return;
+    if (h.ev === 'out-started') out.proc.pid = h.pid;
+    else if (h.ev === 'out-log') out.proc.stderr.emit('data', Buffer.from(h.line + '\n'));
+    else if (h.ev === 'out-exit') this._engineExit(h.id, h.code, h.error);
+  }
+  _engineExit(id, code, error) {
+    const out = this.outs.get(id);
+    if (!out || !out.viaEngine || out.exited) return;
+    out.exited = true;
+    if (error) out.proc.stderr.emit('data', Buffer.from(error + '\n'));
+    setTimeout(() => out.proc.emit('exit', code), 20); // after the last messages
+  }
+  // the engine stopped: so did every encoder it was running
+  engineGone() { for (const [id, out] of this.outs) if (out.viaEngine) this._engineExit(id, -1, 'the native engine stopped'); }
 
   stopAll() { return Promise.all([...this.outs.keys()].map(id => this.stop(id))); }
   get active() { return this.outs.size > 0; }
@@ -333,4 +374,4 @@ async function probeDecode(ffmpegPath) {
   } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* */ } }
 }
 
-module.exports = { OutputManager, streamArgs, recordArgs, nativeArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode };
+module.exports = { OutputManager, streamArgs, recordArgs, nativeArgs, captureArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode };

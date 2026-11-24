@@ -136,6 +136,19 @@
     resume() { if (this.ctx.state !== 'running') return this.ctx.resume(); }
     get suspended() { return this.ctx.state !== 'running'; }
     stream() { return this.dest.stream; }
+    /* the program sound, piece by piece, for the native engine (after the limiter, before the headphones) */
+    async enablePcmTap(cb) {
+      if (this._tap) { this._tapCb = cb; return; }
+      this._tapCb = cb;
+      await this.ctx.audioWorklet.addModule('pcm-tap.js');
+      this._tap = new AudioWorkletNode(this.ctx, 'pcm-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
+      this._tapSink = this.ctx.createGain(); this._tapSink.gain.value = 0; // keeps it running; adds nothing
+      this.masterOut.connect(this._tap); this._tap.connect(this._tapSink); this._tapSink.connect(this.ctx.destination);
+      this._tap.port.onmessage = e => { if (this._tapCb) this._tapCb(e.data, this.ctx.sampleRate); };
+    }
+    // a direct line from the sound thread to the main process (null: back to going through the window)
+    pcmTapPort(port) { if (this._tap) this._tap.port.postMessage({ port }, port ? [port] : []); }
+    disablePcmTap() { this._tapCb = null; }
 
     setLimiter(on) {
       if (this.limiterOn === !!on && this._wired) return;

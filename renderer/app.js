@@ -340,12 +340,14 @@
     refresh('inputs');
   });
   function closeCamera(id) {
+    if (NAT.on) { natCloseCamera(id); engine.removeSource(id); return; }
     const c = rt.cams.get(id);
     if (c) { c.stream.getTracks().forEach(t => t.stop()); c.v.remove(); rt.cams.delete(id); }
     engine.removeSource(id);
   }
   rt.camNote = new Map();
   async function openCamera(cam) {
+    if (NAT.on) { natOpenCamera(cam); return; }
     rt.camNote.delete(cam.id);
     closeCamera(cam.id);
     if (!cam.deviceId) { rt.camStatus.set(cam.id, { ok: false, text: 'Choose a device' }); refresh('inputs'); return; }
@@ -386,6 +388,238 @@
       rt.camStatus.set(cam.id, { ok: false, text: e.name === 'NotReadableError' ? 'Device busy (close other apps using it)' : `Not available: ${e.message || e.name}` });
     }
     refreshInputStatus();
+  }
+
+  /* ================= native engine (OBS-style) =================
+     A separate program captures the cameras itself, mixes the program on its own steady clock (locked to the camera
+     on air) and feeds YouTube and the recording. This window still does everything you see and touch: it tells the
+     engine what is on air and sends it the graphics, captions and sound; the engine sends back small camera pictures. */
+  const NAT = { on: false, ready: false, devices: null, cams: new Map(), M: null };
+  rt.eng = null; // NAT while the native engine is in use
+  const natW = () => settings.output.width || 1920, natH = () => settings.output.height || 1080;
+  const fpsND = fps => fps === 59.94 ? [60000, 1001] : fps === 29.97 ? [30000, 1001] : fps === 23.98 ? [24000, 1001] : [Math.round(fps * 1000), 1000];
+  const hexRGB = h => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
+  // a card's formats at exactly the output size and rate (as in the native test), best first
+  function natExact(v) {
+    const W = natW(), H = natH(), t = settings.output.fps || 59.94, near = f => Math.abs(f - t) < 0.05;
+    const FMT = ['uyvy422', 'yuyv422', 'nv12', 'yuv420p', 'v210'], r = m => (FMT.indexOf(m.fmt) + 10) % 10;
+    return (v.modes || []).filter(m => m.w === W && m.h === H && (near(m.maxFps) || near(m.minFps) || (t > m.minFps && t < m.maxFps))).sort((a, b) => r(a) - r(b));
+  }
+  /* the card a camera uses: the one chosen in Inputs, or the same card the classic engine used (same name and place
+     in the list — e.g. “Blackmagic WDM Capture” 2 and 3), or the next free card that has the right format */
+  function natCard(cam) {
+    const list = (NAT.devices && NAT.devices.video) || [];
+    let v = null;
+    if (cam.native && cam.native.name) v = list.find(x => x.name === cam.native.name && x.n === (cam.native.n || 0)) || null;
+    if (!v) {
+      const taken = new Set([...NAT.cams].filter(([id]) => id !== cam.id).map(([, c]) => c.key)), free = x => natExact(x).length && !taken.has(x.name + '#' + x.n);
+      const same = list.filter(x => x.name === cam.deviceLabel);
+      v = (cam.deviceIdx !== undefined && same.find(x => x.n === cam.deviceIdx && free(x))) || same.find(free) || list.find(free) || null;
+    }
+    if (!v) return null;
+    const m = natExact(v)[0];
+    return { name: v.name, n: v.n, w: natW(), h: natH(), fps: settings.output.fps || 59.94, pixFmt: m && m.kind === 'pixel_format' ? m.fmt : null, vcodec: m && m.kind === 'vcodec' ? m.fmt : null, exact: !!m, key: v.name + '#' + v.n };
+  }
+  function natPreviewCams() { S.nativeSend({ cmd: 'preview', cam: { w: 384, h: 216, every: 3 }, cams: [...NAT.cams.keys()], pgm: { w: 0, h: 0, every: 0 } }); }
+  function natOpenCamera(cam) {
+    if (!engine.sources.has(cam.id) || engine.sources.get(cam.id).kind !== 'raw') engine.setRawSource(cam.id);
+    if (!NAT.ready || !NAT.devices) { rt.camStatus.set(cam.id, { ok: false, text: 'Starting the native engine…' }); refreshInputStatus(); return; }
+    const d = natCard(cam);
+    if (!d) { rt.camStatus.set(cam.id, { ok: false, text: `No free capture card with ${natW()}×${natH()} at ${settings.output.fps} fps — choose one below` }); refreshInputStatus(); return; }
+    const prev = NAT.cams.get(cam.id);
+    if (prev && prev.key === d.key && prev.fmt === (d.pixFmt || d.vcodec)) return; // already capturing it
+    NAT.cams.set(cam.id, { key: d.key, fmt: d.pixFmt || d.vcodec, dev: d });
+    rt.camStatus.set(cam.id, { ok: false, text: `Connecting to ${d.name} ${d.n + 1}…` });
+    S.nativeCamera(cam.id, d);
+    if (cam.color) S.nativeSend(Object.assign({ cmd: 'color', id: cam.id }, cam.color));
+    natPreviewCams();
+    logEvent('NATIVE', `camera ${cam.name}: ${d.name} #${d.n + 1} · ${d.w}×${d.h} at ${d.fps} · ${d.pixFmt || d.vcodec || 'the card’s own format'}`);
+    refreshInputStatus();
+  }
+  function natCloseCamera(id) { if (NAT.cams.delete(id) && NAT.ready) { S.nativeSend({ cmd: 'camera-close', id }); natPreviewCams(); } }
+  if (S.onNative) S.onNative((h, payload) => {
+    switch (h.ev) {
+      case 'ready': NAT.ready = true; logEvent('ENGINE', `ready · ${h.w}×${h.h} · ${h.threads} threads`); natResync(); break;
+      case 'cam-status': {
+        const cam = camById(h.id), d = NAT.cams.get(h.id);
+        rt.camStatus.set(h.id, { ok: h.ok, text: h.ok ? `${natW()}×${natH()} · ${settings.output.fps} fps · native${d ? ` (${d.dev.name} ${d.dev.n + 1})` : ''}` : h.text });
+        refreshInputStatus();
+        if (cam) logEvent('NATIVE', `camera ${cam.name}: ${h.ok ? 'picture is coming in' : h.text}`);
+        break;
+      }
+      case 'cam-frame': if (payload && NAT.cams.has(h.id)) engine.rawPatch(h.id, { full: true, w: h.w, h: h.h, data: payload }); break;
+      case 'stats': rt.engStats = h; break;
+      case 'audio-port-ok': NAT.portOK = true; logEvent('ENGINE', 'sound goes straight from the sound thread to the engine'); break;
+      case 'log': logEvent('ENGINE', h.line); break;
+      case 'exit':
+        if (NAT.on) { NAT.ready = false; NAT.cams.clear(); logEvent('ENGINE', `stopped (${h.error || 'code ' + h.code}) — restarting`); toast('The native engine stopped — restarting it…', 'error'); }
+        break;
+    }
+  });
+  async function natStart() {
+    if (!S.nativeStart) return false;
+    const [num, den] = fpsND(settings.output.fps || 59.94);
+    const r = await S.nativeStart({ w: natW(), h: natH(), fpsNum: num, fpsDen: den, moveSpeed: settings.moveSpeed ?? 0.12 });
+    if (!r || r.error) { toast(`Native engine: ${r ? r.error : 'no answer'} — using the classic engine.`, 'error'); logEvent('ENGINE', `could not start: ${r ? r.error : 'no answer'}`); return false; }
+    NAT.on = true; rt.eng = NAT;
+    mixer.enablePcmTap((pcm, rate) => { if (NAT.ready) S.nativeAudio(rate, pcm); }).then(() => {
+      // the sound goes straight from the sound thread to the engine; if that line does not work, through the window
+      if (!S.isApp || NAT.portOK) return;
+      const ch = new MessageChannel();
+      window.postMessage('ls-native-audio-port', '*', [ch.port2]);
+      mixer.pcmTapPort(ch.port1);
+      setTimeout(() => { if (NAT.on && !NAT.portOK) { mixer.pcmTapPort(null); logEvent('ENGINE', 'sound goes to the engine through the window (the direct line did not answer)'); } }, 4000);
+    }).catch(e => logEvent('ENGINE', 'sound could not be connected: ' + e.message));
+    if (!NAT.devices) S.nativeDevices().then(d => {
+      NAT.devices = d || { video: [] };
+      for (const v of NAT.devices.video) logEvent('NATIVE', `card ${v.name} #${v.n + 1}: ${(v.modes || []).length} formats${natExact(v).length ? ` · has ${natW()}×${natH()} at ${settings.output.fps} ✓` : ''}`);
+      natResync(); refresh('inputs');
+    }).catch(() => { NAT.devices = { video: [] }; });
+    engine.onFrame = natFrame;
+    logEvent('ENGINE', 'native engine (OBS-style) started');
+    return true;
+  }
+  async function natStop() {
+    NAT.on = false; NAT.ready = false; rt.eng = null; engine.onFrame = null; NAT.M = null;
+    mixer.disablePcmTap();
+    for (const id of [...NAT.cams.keys()]) { NAT.cams.delete(id); engine.removeSource(id); }
+    if (S.nativeStop) await S.nativeStop();
+    logEvent('ENGINE', 'native engine stopped — classic engine');
+  }
+  async function switchEngine(v) {
+    for (const c of show.cameras) closeCamera(c.id);
+    if (v === 'native') { if (NAT.on) await natStop(); if (!(await natStart())) { settings.output.engine = 'classic'; saveSettings(); } }
+    else if (NAT.on) await natStop();
+    await wait(800); // the cards need a moment before another program can open them
+    for (const c of show.cameras) openCamera(c);
+    refreshAll();
+  }
+  // everything is sent again (after a start or restart of the engine)
+  function natResync() {
+    if (!NAT.ready) return;
+    NAT.M = { pid: undefined, sig: '', trans: null, black: null, webs: new Map(), labels: new Map(), stills: new Map(), videos: new Map(), bands: new Map(), noted: new Set() };
+    for (const w of show.webs) S.nativeWeb(w.id, null);
+    if (!NAT.devices) return; // the cameras once the cards are known
+    NAT.cams.clear();
+    for (const c of show.cameras) natOpenCamera(c);
+    natPreviewCams();
+  }
+  function natNote(M, key, text) { if (!M.noted.has(key)) { M.noted.add(key); logEvent('NATIVE', text); } }
+  const natCanvas = (() => { let c = null; return (w, h) => { if (!c) { const cv = document.createElement('canvas'); c = { cv, ctx: cv.getContext('2d', { willReadFrequently: true }) }; } if (c.cv.width !== w || c.cv.height !== h) { c.cv.width = w; c.cv.height = h; } return c; }; })();
+  // the pixels of a picture (straight alpha RGBA), at most 3840 wide
+  function natPixels(el2) {
+    const nw = el2.naturalWidth || el2.videoWidth || el2.width, nh = el2.naturalHeight || el2.videoHeight || el2.height;
+    if (!nw || !nh) return null;
+    const s = Math.min(1, 3840 / Math.max(nw, nh)), w = Math.max(2, Math.round(nw * s)), h = Math.max(2, Math.round(nh * s));
+    const c = natCanvas(w, h); c.ctx.clearRect(0, 0, w, h); c.ctx.drawImage(el2, 0, 0, w, h);
+    return { w, h, px: new Uint8Array(c.ctx.getImageData(0, 0, w, h).data.buffer) };
+  }
+  function natStill(M, id, so) {
+    const ver = so.ver || 0, prev = M.stills.get(id);
+    if (prev && prev.el === so.el && (prev.ver === ver || performance.now() - prev.at < 1000)) return; // a slide that redraws itself: at most once a second
+    const p = natPixels(so.el);
+    if (!p) return;
+    S.nativeSend({ cmd: 'still', id, w: p.w, h: p.h }, p.px);
+    M.stills.set(id, { el: so.el, ver, at: performance.now() });
+  }
+  // the engine's name for one of this window's sources (sent to it the first time)
+  function natSource(M, src) {
+    if (!src) return null;
+    if (camById(src)) return src;
+    const f = fileById(src), m = f && rt.files.get(src);
+    if (f && f.kind === 'video') {
+      if (!m || !m.el) return null;
+      if (M.videos.get(src) !== m.el) {
+        M.videos.set(src, m.el);
+        S.nativeSend({ cmd: 'video', id: src, path: f.path, loop: !!f.loop });
+        if (f.color) S.nativeSend(Object.assign({ cmd: 'color', id: src }, f.color));
+        const v = m.el, st = () => { if (NAT.M === M && M.videos.get(src) === v) S.nativeSend({ cmd: 'video-state', id: src, playing: !v.paused && !v.ended, t: v.currentTime }); };
+        for (const ev of ['play', 'playing', 'pause', 'seeked', 'ended']) v.addEventListener(ev, st);
+        st();
+      }
+      return src;
+    }
+    const so = engine.sources.get(src);
+    if (so && so.el && so.kind === 'image') { natStill(M, src, so); return src; }
+    return null;
+  }
+  function natBase(M, id) {
+    const sh = id ? getShot(id) : null;
+    if (!sh || !sh.main || !sh.main.source) return null;
+    if (sh.pip && sh.pip.enabled) natNote(M, 'pip' + sh.id, `“${sh.name}”: picture-in-picture is not in the native engine yet — only the main picture goes out`);
+    const src = natSource(M, sh.main.source);
+    if (!src) { natNote(M, 'src' + sh.id, `“${sh.name}”: its picture is not in the native engine yet`); return null; }
+    const fr = sh.main.frame || {};
+    return { key: sh.id, src, zoom: fr.zoom || 1, x: fr.x ?? 0.5, y: fr.y ?? 0.5 };
+  }
+  // the rows a caption covers (worked out once per caption, from its final look)
+  function natBand(M, L) {
+    const key = L.key || '';
+    if (M.bands.has(key)) return M.bands.get(key);
+    const W = natW(), H = natH(), c = natCanvas(W, H);
+    c.ctx.setTransform(1, 0, 0, 1, 0, 0); c.ctx.clearRect(0, 0, W, H);
+    window.LiveEngine.drawLabel(c.ctx, W, H, L.data, 1, false);
+    const a = c.ctx.getImageData(0, 0, W, H).data;
+    let y0 = -1, y1 = -1;
+    for (let y = 0; y < H; y++) { const row = y * W * 4; for (let x = 3; x < W * 4; x += 8) if (a[row + x]) { if (y0 < 0) y0 = y; y1 = y; break; } }
+    let band = null;
+    if (y0 >= 0) { const m = Math.round(H * 0.03) + 16, t = Math.max(0, y0 - m) & ~1, b = Math.min(H, y1 + 1 + m); band = { y: t, h: Math.min(H - t, b - t + 1) & ~1 }; }
+    M.bands.set(key, band);
+    return band;
+  }
+  // every frame of this window: tell the engine what changed
+  function natFrame(now) {
+    const M = NAT.M;
+    if (!NAT.ready || !M) return;
+    const W = natW(), H = natH();
+    // program
+    const tr = engine.trans;
+    if (tr && tr !== M.trans) {
+      M.trans = tr;
+      const b = natBase(M, tr.to);
+      S.nativeSend({ cmd: 'program', base: b, ms: Math.max(1, tr.dur - (now - tr.start)) });
+      M.pid = tr.to; M.sig = JSON.stringify(b);
+    } else if (!tr) {
+      M.trans = null;
+      const b = natBase(M, engine.programId), sig = JSON.stringify(b);
+      if (engine.programId !== M.pid || sig !== M.sig) { S.nativeSend({ cmd: 'program', base: b, ms: 0 }); M.pid = engine.programId; M.sig = sig; }
+    }
+    if (engine.black !== M.black) { M.black = engine.black; S.nativeSend({ cmd: 'black', on: engine.black.to === 1, ms: engine.black.dur }); }
+    // graphics: web pages (pictures come from the page itself) and pictures (sent once)
+    let k = 0; const seen = new Set();
+    for (const [id, w] of engine.webs) {
+      k++; seen.add(id);
+      const d = w.data || {}, r = d.rect || [0, 0, 1, 1], kc = d.key && d.key.on ? hexRGB(d.key.color) : null;
+      const cfg = { x: Math.round(r[0] * W), y: Math.round(r[1] * H), w: Math.round(r[2] * W), h: Math.round(r[3] * H), z: 10 + k, opacity: d.opacity ?? 1, fadeMs: d.fadeMs ?? 400,
+        key: kc ? { on: true, r: kc[0] / 255, g: kc[1] / 255, b: kc[2] / 255, tol: d.key.tol ?? 0.15 } : { on: false }, visible: w.target > 0 };
+      const sig = JSON.stringify(cfg), prev = M.webs.get(id) || {};
+      const so = engine.sources.get(d.src || id);
+      if (so && so.kind === 'raw') { if (prev.sig !== sig) { S.nativeWeb(id, cfg); M.webs.set(id, { sig, raw: true }); } continue; }
+      if (!so || !so.el || !so.ready) continue; // not loaded yet
+      const pver = (d.src || id) + ':' + (so.ver || 0);
+      if (prev.pver !== pver) {
+        const p = natPixels(so.el);
+        if (!p) continue;
+        S.nativeSend(Object.assign({ cmd: 'overlay', id: 'pic:' + id, sw: p.w, sh: p.h, premult: false }, cfg), p.px);
+        M.webs.set(id, { sig, pver });
+      } else if (prev.sig !== sig) { S.nativeSend(Object.assign({ cmd: 'overlay-set', id: 'pic:' + id }, cfg)); M.webs.set(id, { sig, pver }); }
+    }
+    for (const [id, v] of M.webs) if (!seen.has(id)) { M.webs.delete(id); if (v.raw) S.nativeWeb(id, null); else S.nativeSend({ cmd: 'overlay-remove', id: 'pic:' + id }); }
+    // captions: every step of their animation (about 30 a second), then nothing while they stay up
+    let li = 0;
+    for (const [id, L] of engine.labels) {
+      li++;
+      const state = L.alpha > 0 && L.data && L.shown ? L.shown + '|' + L.key : null, prev = M.labels.get(id);
+      if (state === (prev ? prev.state : null)) continue;
+      if (!state) { S.nativeSend({ cmd: 'overlay-remove', id: 'lbl:' + id }); M.labels.delete(id); continue; }
+      if (!L.shown.startsWith('full') && prev && now - prev.at < 30) continue;
+      const band = natBand(M, L);
+      if (!band || band.h < 2) continue;
+      const px = L.ctx.getImageData(0, band.y, W, band.h).data;
+      S.nativeSend({ cmd: 'overlay', id: 'lbl:' + id, z: 1000 + li, sw: W, sh: band.h, x: 0, y: band.y, w: W, h: band.h, premult: false, alpha: 1, fadeMs: 0 }, new Uint8Array(px.buffer));
+      M.labels.set(id, { state, at: now });
+    }
+    for (const [id] of M.labels) if (!engine.labels.has(id)) { S.nativeSend({ cmd: 'overlay-remove', id: 'lbl:' + id }); M.labels.delete(id); }
   }
 
   /* ================= files (intro / ending / clips / images) ================= */
@@ -1100,6 +1334,20 @@
     constructor(kind) { this.kind = kind; this.active = false; this.id = null; this.chain = Promise.resolve(); }
     async start() {
       const o = settings.output;
+      if (rt.eng) { // native engine: it already has the finished picture and sound; FFmpeg is started next to it
+        if (!rt.eng.ready) throw new Error('The native engine is still starting — try again in a moment.');
+        const fb = rt.encFallback && rt.encFallback.for === o.encoder ? rt.encFallback.level : 0;
+        const encoder = fb >= 2 ? 'x264' : o.encoder, safe = fb === 1;
+        const base = { engine: true, width: o.width, height: o.height, videoDelayMs: o.videoDelayMs ?? 60, fps: o.fps, encoder, safe };
+        const opts = this.kind === 'stream'
+          ? Object.assign({ kind: 'stream', url: streamURL(), bitrate: o.bitrate, audioBitrate: o.audioBitrate }, base)
+          : Object.assign({ kind: 'record', dir: settings.recordDir, name: show.showName, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256 }, base);
+        const r = await S.outStart(opts);
+        if (!r || r.error) throw new Error(r ? r.error : 'Encoder did not start');
+        this.id = r.id; this.viaEngine = true; this.active = true;
+        logEvent('ENCODER', `${this.kind}: fed by the native engine (${encoder})`);
+        return;
+      }
       const mime = pickMime();
       if (!mime) throw new Error('This computer cannot encode video in the app.');
       // if the graphics-card encoder refused to start: 1 = plain settings, 2 = software encoder (for this session)
@@ -1136,6 +1384,7 @@
       this.active = true;
     }
     async stopRecorder() {
+      if (this.viaEngine) return;
       if (this.shared) { this.shared = false; await Feed.leave(this.id); return; }
       if (this.rec && this.rec.state !== 'inactive') await new Promise(res => { this.rec.addEventListener('stop', res, { once: true }); this.rec.stop(); });
       await this.chain;
@@ -1285,7 +1534,7 @@
   /* processor share of each part (from the main process, % of the whole PC) — short names for the log, plain ones for the window */
   const CPU_PARTS = [['page', 'page', 'Picture engine (the program window)'], ['gpu', 'gpu', 'Graphics process'], ['capture', 'cam', 'Camera capture'], ['audio', 'aud', 'Sound'],
     ['overlays', 'web', 'Web graphics'], ['yt', 'yt-enc', 'YouTube encoder (FFmpeg)'], ['rec', 'rec-enc', 'Recording encoder (FFmpeg)'], ['native', 'native', 'Native test (FFmpeg)'],
-    ['ffmpeg', 'ff', 'Other FFmpeg'], ['main', 'main', 'Live Studio main process'], ['helpers', 'help', 'Other Live Studio helpers'], ['monitor', 'mon', 'PC monitor'], ['otherPrograms', 'other', 'Other programs and Windows']];
+    ['ffmpeg', 'ff', 'Cameras + other FFmpeg'], ['engine', 'engine', 'Native engine'], ['main', 'main', 'Live Studio main process'], ['helpers', 'help', 'Other Live Studio helpers'], ['monitor', 'mon', 'PC monitor'], ['otherPrograms', 'other', 'Other programs and Windows']];
   const cpuPartsShort = P => CPU_PARTS.filter(([k]) => (P[k] || 0) >= 0.5).map(([k, n]) => `${n} ${Math.round(P[k])}`).join(' ');
   const DECODE_WORDS = { 'cuda-zc': 'graphics card — the picture stays on the card (lowest processor load)', cuda: 'graphics card (NVIDIA), copied back', d3d11va: 'graphics card (Windows D3D11)', dxva2: 'graphics card (Windows DXVA2)', none: 'processor — graphics-card decoding does not work on this PC', auto: 'automatic' };
 
@@ -1536,7 +1785,12 @@
       yp.querySelector('.yt-dot').className = 'yt-dot ' + cls;
       yp.querySelector('.txt').textContent = txt + (rt.yt && rt.yt.viewers ? ` · 👁 ${rt.yt.viewers}` : '');
     }
-    parts.push(`engine ${engine.stats.fps} fps`);
+    const E = rt.eng && rt.engStats;
+    if (rt.eng) {
+      // native engine: its own frame rate, and how often a camera picture was shown twice / skipped (since it started)
+      if (E && E !== rt.engSeen) { rt.engSeen = E; rt.engTot = rt.engTot || { rep: 0 }; rt.engTot.rep += (E.repeat || 0) + (E.skip || 0) + (E.audioUnder || 0); }
+      parts.push(rt.eng.ready && E ? `native engine ${E.ticks} fps` : '<span class="bad">native engine starting…</span>');
+    } else parts.push(`engine ${engine.stats.fps} fps`);
     const P = rt.pc;
     if (P && P.cpu !== null) {
       const hot = v => v !== null && v !== undefined && v >= 85, t = v => v !== null && v !== undefined ? ` ${v}°C` : '';
@@ -1544,12 +1798,15 @@
       if (P.gpu !== null) parts.push(`<span class="${P.gpu >= 95 || hot(P.gpuTemp) ? 'bad' : ''}">GPU ${P.gpu}%${t(P.gpuTemp)}</span>`);
     }
     const drops = frameDrops();
-    parts.push(`frame ${engine.stats.frames.toLocaleString()}`);
-    parts.push(drops.total ? `<span class="bad">⚠ ${drops.total} dropped</span>` : '<span class="good">0 dropped</span>');
+    if (rt.eng) { const n = (rt.engTot && rt.engTot.rep) || 0; parts.push(n ? `<span class="bad">⚠ ${n} hitches</span>` : '<span class="good">0 hitches</span>'); }
+    else {
+      parts.push(`frame ${engine.stats.frames.toLocaleString()}`);
+      parts.push(drops.total ? `<span class="bad">⚠ ${drops.total} dropped</span>` : '<span class="good">0 dropped</span>');
+    }
     hl.innerHTML = parts.join(' · ');
     hl.title = 'Click for frame statistics';
     // warn once when frames start dropping while live or recording
-    if ((rt.live || rt.rec) && drops.total - (rt.dropSeen || 0) >= Math.max(5, engine.fps / 2) && Date.now() - (rt.dropWarnAt || 0) > 60000) { rt.dropWarnAt = Date.now(); toast(`Frames are being dropped (${drops.total} so far). Click the frame counter at the top for details.`, 'error'); }
+    if (!rt.eng && (rt.live || rt.rec) && drops.total - (rt.dropSeen || 0) >= Math.max(5, engine.fps / 2) && Date.now() - (rt.dropWarnAt || 0) > 60000) { rt.dropWarnAt = Date.now(); toast(`Frames are being dropped (${drops.total} so far). Click the frame counter at the top for details.`, 'error'); }
     if (Date.now() - (rt.dropSeenAt || 0) > 10000) { rt.dropSeenAt = Date.now(); rt.dropSeen = drops.total; }
   }
   setInterval(tickHeader, 500);
@@ -3594,6 +3851,9 @@
             select(devOpts, cam.deviceId, v => { cam.deviceId = v; delete cam.fps; rememberDevice(cam, 'video'); changed(); openCamera(cam); }, { class: 'grow' }),
             select([['720', '720p'], ['1080', '1080p'], ['2160', '4K']], cam.res || '1080', v => { cam.res = v; changed(); openCamera(cam); }),
             select([['', 'Auto fps'], ['23.98', '23.98'], ['24', '24'], ['25', '25'], ['29.97', '29.97'], ['30', '30'], ['50', '50'], ['59.94', '59.94'], ['60', '60']], cam.fps || '', v => { cam.fps = v; changed(); openCamera(cam); }, { title: 'Must match the signal your camera sends' })),
+          NAT.on && NAT.devices ? el('div', { class: 'row', style: 'margin-top:6px' }, el('span', { class: 'muted', style: 'font-size:.85em;white-space:nowrap' }, 'Card (native engine)'),
+            select([['', 'Automatic'], ...NAT.devices.video.map(v => [`${v.name}|${v.n}`, `${v.name} — card ${v.n + 1}${natExact(v).length ? '' : ` (no ${settings.output.fps} fps)`}`])],
+              cam.native ? `${cam.native.name}|${cam.native.n}` : '', v => { const i = v.lastIndexOf('|'); cam.native = v ? { name: v.slice(0, i), n: +v.slice(i + 1) } : null; changed(); NAT.cams.delete(cam.id); natOpenCamera(cam); }, { class: 'grow' })) : null,
           el('div', { style: 'font-size:.85em;margin-top:5px' }, el('span', { dataset: { camStatus: cam.id } })))));
     }
     put(body, el('div', { class: 'row', style: 'margin-bottom:14px' },
@@ -3658,6 +3918,7 @@
         engine.setSize(o.width, o.height); engine.setFps(o.fps);
         engine.setSource('bars', makeBars(o.width, o.height), 'image');
         previewCanvas.height = Math.round(previewCanvas.width * o.height / o.width);
+        if (NAT.on) { clearTimeout(rt.natRestart); rt.natRestart = setTimeout(() => switchEngine('native'), 600); }
       }
     };
     /* picture + sound bitrate with ready-made and your own presets, separately for live and recording */
@@ -3703,7 +3964,14 @@
       el('div', { class: 'grid2' },
         el('div', { class: 'field' }, el('span', null, 'Resolution'), select([['1920x1080', '1080p (1920×1080)'], ['1280x720', '720p (1280×720)']], `${o.width}x${o.height}`, v => { const [w, h] = v.split('x').map(Number); changeOut('width', w); changeOut('height', h); })),
         el('div', { class: 'field' }, el('span', null, 'Frame rate'), select([[25, '25 fps'], [29.97, '29.97 fps (29.97 cameras)'], [30, '30 fps'], [50, '50 fps'], [59.94, '59.94 fps (59.94 cameras — Blackmagic)'], [60, '60 fps']], o.fps, v => changeOut('fps', +v))),
-        el('div', { class: 'field' }, el('span', null, 'Encoder'), select([['x264', 'Software (works on every PC)'], ['nvenc', 'NVIDIA graphics card (NVENC)'], ['qsv', 'Intel graphics (Quick Sync)'], ['amf', 'AMD graphics card (AMF)']], o.encoder, v => changeOut('encoder', v)))),
+        el('div', { class: 'field' }, el('span', null, 'Encoder'), select([['x264', 'Software (works on every PC)'], ['nvenc', 'NVIDIA graphics card (NVENC)'], ['qsv', 'Intel graphics (Quick Sync)'], ['amf', 'AMD graphics card (AMF)']], o.encoder, v => changeOut('encoder', v))),
+        el('div', { class: 'field' }, el('span', null, 'Picture engine'), select([['classic', 'Classic (inside the window)'], ['native', 'Native — OBS-style (test)']], o.engine || 'classic', v => {
+          if (live) { toast('Stop streaming/recording before switching the picture engine.', 'error'); return; }
+          o.engine = v; saveSettings(); switchEngine(v); toast(v === 'native' ? 'Native engine: the cameras now go straight to it (a few seconds)…' : 'Classic engine', 'ok');
+        })),
+        (o.engine || 'classic') === 'native' ? el('div', { class: 'field' }, el('span', null, 'Sound/picture sync (native)'), el('div', { class: 'row' },
+          el('input', { type: 'number', min: 0, max: 500, step: 10, value: o.videoDelayMs ?? 60, style: 'width:90px', onchange: e => { o.videoDelayMs = Math.max(0, Math.min(500, Math.round(+e.target.value || 0))); saveSettings(); } }),
+          el('span', { class: 'muted' }, 'ms the picture waits for the sound (if lips move before you hear the words, raise it; starts with the next stream/recording)'))) : null),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free. Set the frame rate to exactly what the cameras send (Blackmagic at 59.94 → 59.94).'),
       rt.encFallback && rt.encFallback.for === o.encoder ? el('div', { class: 'status-bad', style: 'font-size:.9em;margin-top:6px' }, rt.encFallback.level >= 2 ? `This encoder would not start, so the software encoder is being used until the program is restarted. Updating the graphics card driver usually fixes it. Reported: ${rt.encFallback.detail || 'no details'}` : 'This encoder refused the tuned settings; plain settings are being used.') : null,
       el('h3', null, 'Live stream quality'),
@@ -3971,6 +4239,7 @@
     rt.editingId = prev ? prev.id : null;
     renderGrid();
     resolveDevices();
+    if (settings.output.engine === 'native') await natStart();
     await Promise.all([
       ...show.cameras.map(c => openCamera(c)),
       ...show.files.map(f => loadFile(f)),
@@ -4007,7 +4276,7 @@
     if (!LOG.on) return;
     const o = settings.output, nameOf = id => { const sh = id && getShot(id); return sh ? sh.name : (id || '—'); };
     const camName = id => { const c = show.cameras.find(x => x.id === id); return c ? c.name : id; };
-    S.version().then(v => S.ffmpegVersion().then(fv => logEvent('START', `Live Studio ${v} · FFmpeg ${fv || '?'} · output ${o.width}×${o.height} at ${o.fps} fps · encoder ${o.encoder} · stream ${o.bitrate} kbps / audio ${o.audioBitrate || 160} · recording ${o.recordBitrate} kbps · screen ${screen.width}×${screen.height} @${devicePixelRatio}×`)).catch(() => {})).catch(() => {});
+    S.version().then(v => S.ffmpegVersion().then(fv => logEvent('START', `Live Studio ${v} · FFmpeg ${fv || '?'} · output ${o.width}×${o.height} at ${o.fps} fps · encoder ${o.encoder} · stream ${o.bitrate} kbps / audio ${o.audioBitrate || 160} · recording ${o.recordBitrate} kbps · picture engine ${o.engine === 'native' ? 'NATIVE (OBS-style)' : 'classic'} · screen ${screen.width}×${screen.height} @${devicePixelRatio}×`)).catch(() => {})).catch(() => {});
     for (const c of show.cameras) { const st = rt.camStatus.get(c.id) || {}; logEvent('CAMERA', `${c.name}: ${c.deviceLabel || 'device'} · wanted ${c.res || 1080}p ${c.fps || 'auto'} · ${st.text || ''} · ${engine.sources.get(c.id) && engine.sources.get(c.id).sync ? 'frame sync on' : 'frame sync off (screen-refresh timing)'}`); }
     for (const a of show.audio.inputs) logEvent('AUDIO', `input ${a.name || a.id}: ${a.deviceLabel || a.label || ''}`);
     logEvent('AUDIO', `headphones: ${settings.monitorOut && settings.monitorOut.label || 'Windows default'} · program playback: ${settings.playbackOut && settings.playbackOut.label || 'off'} · limiter ${show.audio.master.limiter ? 'on' : 'off'} · compressor ${show.audio.master.dyn && show.audio.master.dyn.comp && show.audio.master.dyn.comp.on ? 'on' : 'off'}`);
@@ -4043,7 +4312,7 @@
 
     // status line every second (every 10 s when nothing is running)
     const prev = { missed: engine.stats.missed, rep: 0, skip: 0, ld: 0, lr: 0, rd: 0, rr: 0, late: new Map(), at: 0, liveId: null, recId: null };
-    const sum = { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0, cpuSum: 0, cpuN: 0, parts: {} };
+    const sum = { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0, cpuSum: 0, cpuN: 0, parts: {}, natRep: 0, natSkip: 0, natLate: 0, natGap: 0, natMix: 0 };
     let n = 0, decodeSeen = null;
     setInterval(() => {
       n++;
@@ -4076,6 +4345,18 @@
         line += ` | yt ${Math.round(L.fps || 0)}fps ${((L.bitrate || 0) / 1000).toFixed(1)}Mb dup ${dd} drop ${dr} x${(L.speed || 0).toFixed(2)} buf ${Math.round((L.backlog || 0) / 1024)}K`;
       } else if (rt.live) line += ' | yt starting';
       if (R) { const dd = (R.dup || 0) - prev.rd, dr = (R.drop || 0) - prev.rr; prev.rd = R.dup || 0; prev.rr = R.drop || 0; if (dd > 0 || dr > 0) flags.push('rec'); line += ` | rec ${Math.round(R.fps || 0)}fps dup ${dd} drop ${dr} x${(R.speed || 0).toFixed(2)}`; }
+      // native engine: what IT did this second (frames made, camera frame shown twice / skipped, sound waiting)
+      const E = rt.eng && rt.engStats;
+      if (rt.eng && !rt.eng.ready) line += ' | native STARTING';
+      else if (E && !E.used) {
+        E.used = true;
+        const drops = Object.values(E.outputs || {}).reduce((a, o2) => a + (o2.dropped || 0), 0), dropNew = drops - (prev.natDrops || 0); prev.natDrops = drops;
+        line += ` | native ${E.ticks}f rep ${E.repeat} skip ${E.skip}${E.late ? ` late ${E.late} (${E.maxLateMs}ms)` : ''}${E.resync ? ' STALL' : ''} mix ${E.renderMs}/${E.renderMaxMs}ms sound ${E.audioMs}ms ${E.audioPpm}ppm${E.audioUnder ? ` GAP ${E.audioUnder}` : ''}${dropNew > 0 ? ` enc-drop ${dropNew}` : ''}`;
+        for (const [id, c] of Object.entries(E.cams || {})) line += ` ${camName(id)} ${c.ok ? c.fps : 'NO SIGNAL'}`;
+        for (const [id, v] of Object.entries(E.videos || {})) if (v.playing && v.repeats) line += ` video-rep ${v.repeats}`;
+        if (E.repeat || E.skip) flags.push('native'); if (E.late || E.resync) flags.push('late'); if (E.audioUnder) flags.push('sound'); if (dropNew > 0) flags.push('enc');
+        sum.natRep += E.repeat; sum.natSkip += E.skip; sum.natLate += E.late; sum.natGap += E.audioUnder || 0; sum.natMix = Math.max(sum.natMix, E.renderMaxMs || 0);
+      } else if (rt.eng) line += ' | native (no news)';
       const pc = rt.pc;
       if (pc) {
         line += ` | cpu ${pc.cpu}%${pc.parts ? ` (${cpuPartsShort(pc.parts)})` : ''}${pc.cpuTemp !== null ? ` ${pc.cpuTemp}°` : ''} gpu ${pc.gpu !== null ? pc.gpu + '%' : '?'}${pc.gpuTemp !== null ? ` ${pc.gpuTemp}°` : ''} mem ${pc.mem}%`;
@@ -4090,7 +4371,8 @@
       if (Date.now() - sum.start >= 600000) {
         logEvent('SUMMARY', `last 10 min: ${sum.bad} seconds with a problem · frames missed ${sum.missed} · camera repeated ${sum.rep} / skipped ${sum.skip} · camera late ${sum.camLate} (longest gap ${Math.round(sum.worstGap)} ms) · YouTube repeated ${sum.dup} / dropped ${sum.drop} · busy moments ${sum.busy} (longest ${Math.round(sum.busyMax)} ms) · max CPU ${sum.cpu}% ${sum.cpuT}° · max GPU ${sum.gpuT}°`);
         if (sum.cpuN) { const avg = {}; for (const [k, v] of Object.entries(sum.parts)) avg[k] = v / sum.cpuN; logEvent('SUMMARY', `average CPU ${Math.round(sum.cpuSum / sum.cpuN)}% = ${cpuPartsShort(avg) || '?'}`); }
-        Object.assign(sum, { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0, cpuSum: 0, cpuN: 0, parts: {} });
+        if (rt.eng) logEvent('SUMMARY', `native engine: camera frame shown twice ${sum.natRep} / skipped ${sum.natSkip} · late frames ${sum.natLate} · sound gaps ${sum.natGap} · slowest mix ${sum.natMix} ms`);
+        Object.assign(sum, { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0, cpuSum: 0, cpuN: 0, parts: {}, natRep: 0, natSkip: 0, natLate: 0, natGap: 0, natMix: 0 });
       }
     }, 1000);
   }
@@ -4098,5 +4380,5 @@
   function markGlitch() { logEvent('MARK', '>>> F9 pressed: glitch seen on screen / YouTube <<<'); logFlush(); toast('Marked in the log ✓ (F9)', 'ok'); }
   document.addEventListener('keydown', e => { if (e.key === 'F9') { e.preventDefault(); markGlitch(); } });
   startServiceLog();
-  window.__live = { Feed, engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb, markGlitch, logFlush };
+  window.__live = { Feed, engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb, markGlitch, logFlush, switchEngine, NAT, goLive, togglePic };
 })();

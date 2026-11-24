@@ -682,6 +682,7 @@
         cs._shown = cs.count || 0; cs._shownFrame = this.frameNo;
       }
 
+      if (this.onFrame) { try { this.onFrame(now); } catch (e) { console.warn(e); } }
       this.stats.renderMs = performance.now() - t0;
       this._fpsCount++;
       if (now - this._fpsAt >= 1000) { this.stats.fps = Math.round(this._fpsCount * 1000 / (now - this._fpsAt)); this._fpsCount = 0; this._fpsAt = now; }

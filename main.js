@@ -52,6 +52,69 @@ let blocker = null;
 const outputs = new OutputManager(ffmpegPath());
 outputs.on('event', ev => { if (win && !win.isDestroyed()) win.webContents.send('out:event', ev); updateBlocker(); });
 
+/* ---------- native engine (OBS-style): captures the cameras itself, mixes the program and feeds the encoders ---------- */
+const { NativeEngine, enginePath } = require('./native-engine');
+const nat = new NativeEngine();
+outputs.engine = nat;
+let natWanted = null; // the settings it was started with (restarted with them if it stops by itself)
+const natWebs = new Map(); // web-page graphic id -> { cfg, sent, w, h }
+function natSendEv(h, payload) { if (win && !win.isDestroyed()) win.webContents.send('native:ev', h, payload ? new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength) : null); }
+nat.on('msg', (h, payload) => {
+  if (h.ev === 'out-log' || h.ev === 'out-exit' || h.ev === 'out-started') { outputs.engineEvent(h); return; }
+  if (h.ev === 'ready') { for (const st of natWebs.values()) st.sent = false; for (const [id] of natWebs) webRepaint(id); }
+  if (h.ev === 'exit') {
+    outputs.engineGone();
+    if (natWanted) setTimeout(() => { if (natWanted && !nat.proc) { const exe = enginePath(app); if (exe) nat.start(exe, natWanted); } }, 1500);
+  }
+  natSendEv(h, payload);
+});
+ipcMain.handle('native:start', (e, opts) => {
+  const exe = enginePath(app);
+  if (!exe) return { error: 'The native engine is missing from this installation — update Live Studio.' };
+  natWanted = Object.assign({}, opts, { ffmpeg: outputs.ffmpegPath });
+  if (nat.proc) { nat.send(Object.assign({ cmd: 'hello' }, natWanted)); return { ok: true, restarted: true }; }
+  return nat.start(exe, natWanted) ? { ok: true } : { error: 'The native engine could not start.' };
+});
+ipcMain.handle('native:stop', async () => { natWanted = null; natWebs.clear(); await nat.stop(); return true; });
+ipcMain.on('native:send', (e, h, payload) => { nat.send(h, payload || undefined); });
+ipcMain.on('native:camera', (e, id, dev) => { nat.send({ cmd: 'camera', id, args: require('./streamer').captureArgs(dev) }); });
+ipcMain.on('native:audio', (e, rate, pcm) => { if (nat.backlog < 64 << 20) nat.send({ cmd: 'audio', rate, ch: 2 }, pcm); });
+// the direct line from the window's sound thread (does not wait for the window when it is busy)
+ipcMain.on('native:audio-port', e => {
+  const port = e.ports && e.ports[0];
+  if (!port) return;
+  let first = true;
+  port.on('message', ev => {
+    const d = ev.data;
+    if (!d || !d.pcm) return;
+    if (first) { first = false; natSendEv({ ev: 'audio-port-ok' }); }
+    if (nat.backlog < 64 << 20) nat.send({ cmd: 'audio', rate: d.rate, ch: 2 }, d.pcm);
+  });
+  port.start();
+});
+// where and how a web-page graphic is shown (the pictures come straight from the page, below)
+ipcMain.on('native:web', (e, id, cfg) => {
+  if (!cfg) { natWebs.delete(id); nat.send({ cmd: 'overlay-remove', id: 'web:' + id }); return; }
+  const st = natWebs.get(id) || { sent: false };
+  const moved = !st.cfg || ['x', 'y', 'w', 'h'].some(k => st.cfg[k] !== cfg[k]) || JSON.stringify(st.cfg.key) !== JSON.stringify(cfg.key);
+  st.cfg = cfg; natWebs.set(id, st);
+  if (!st.sent) { webRepaint(id); return; }
+  nat.send(Object.assign({ cmd: 'overlay-set', id: 'web:' + id, visible: cfg.visible, opacity: cfg.opacity, fadeMs: cfg.fadeMs, z: cfg.z }, moved ? { x: cfg.x, y: cfg.y, w: cfg.w, h: cfg.h, key: cfg.key } : {}));
+});
+function natWebFrame(f) {
+  const st = natWebs.get(f.id);
+  if (!st || !st.cfg || !nat.ready) return;
+  const c = st.cfg;
+  if (f.full) {
+    st.w = f.w; st.h = f.h; st.sent = true;
+    nat.send({ cmd: 'overlay', id: 'web:' + f.id, sw: f.w, sh: f.h, bgra: true, premult: true, x: c.x, y: c.y, w: c.w, h: c.h, z: c.z, opacity: c.opacity, fadeMs: c.fadeMs, key: c.key, visible: c.visible }, f.data);
+  } else if (st.sent && st.w === f.w && st.h === f.h) {
+    nat.send({ cmd: 'overlay-patch', id: 'web:' + f.id, px: f.x, py: f.y, pw: f.rw, ph: f.rh }, f.data);
+  }
+}
+function webRepaint(id) { const w = webPages.get(id); if (w) { w.needFull = true; try { w.win.webContents.invalidate(); } catch (e) { /* */ } } }
+app.on('before-quit', () => { natWanted = null; });
+
 function updateBlocker() {
   const need = outputs.active;
   if (need && blocker === null) blocker = powerSaveBlocker.start('prevent-display-sleep');
@@ -329,7 +392,7 @@ function pcStart() {
   if (process.platform === 'win32') {
     // (the GPU counters are only read when there is no NVIDIA tool — reading them costs processor time itself)
     // FF| lists each FFmpeg's processor time in ms, and PS| this loop's own, so the log can show what each one costs
-    const script = "$ErrorActionPreference='SilentlyContinue'; $nv=[bool](Get-Command nvidia-smi); while($true){ $g=''; $t=''; $s=$null; if(-not $nv){ $s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples }; if($s){ $m=0; $s | Group-Object { if($_.InstanceName -match 'engtype_(\\w+)'){$matches[1]} } | ForEach-Object { $v=($_.Group | Measure-Object CookedValue -Sum).Sum; if($v -gt $m){$m=$v} }; $g=[math]::Min(100,[math]::Round($m)) }; $z=Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature; if($z){ $t=[math]::Round((($z | Measure-Object CurrentTemperature -Maximum).Maximum/10)-273.15) }; Write-Output ('PC|{0}|{1}' -f $g,$t); $f=(Get-Process -Name ffmpeg | ForEach-Object { '{0}:{1}' -f $_.Id,[long]$_.TotalProcessorTime.TotalMilliseconds }) -join ','; Write-Output ('FF|' + $f); Write-Output ('PS|' + [long](Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds); Start-Sleep -Seconds 3 }";
+    const script = "$ErrorActionPreference='SilentlyContinue'; $nv=[bool](Get-Command nvidia-smi); while($true){ $g=''; $t=''; $s=$null; if(-not $nv){ $s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples }; if($s){ $m=0; $s | Group-Object { if($_.InstanceName -match 'engtype_(\\w+)'){$matches[1]} } | ForEach-Object { $v=($_.Group | Measure-Object CookedValue -Sum).Sum; if($v -gt $m){$m=$v} }; $g=[math]::Min(100,[math]::Round($m)) }; $z=Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature; if($z){ $t=[math]::Round((($z | Measure-Object CurrentTemperature -Maximum).Maximum/10)-273.15) }; Write-Output ('PC|{0}|{1}' -f $g,$t); $f=(Get-Process -Name ffmpeg,ls-engine | ForEach-Object { '{0}:{1}' -f $_.Id,[long]$_.TotalProcessorTime.TotalMilliseconds }) -join ','; Write-Output ('FF|' + $f); Write-Output ('PS|' + [long](Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds); Start-Sleep -Seconds 3 }";
     try {
       const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
       const ffPrev = new Map(); let psPrev = null;
@@ -337,9 +400,10 @@ function pcStart() {
         const now = Date.now(), cores = os.cpus().length || 1;
         if (line.startsWith('FF|')) { // processor share of each FFmpeg, named by what it does
           const by = {}, kindOf = new Map([...outputs.outs.values()].map(o => [o.proc.pid, o.kind]));
+          if (nat.proc && nat.proc.pid) kindOf.set(nat.proc.pid, 'engine');
           for (const it of line.slice(3).split(',')) { const [pid, ms] = it.split(':').map(Number); if (!pid) continue;
             const p = ffPrev.get(pid); ffPrev.set(pid, { t: now, ms });
-            if (p && now > p.t) { const k = { stream: 'yt', record: 'rec', native: 'native' }[kindOf.get(pid)] || 'ffmpeg'; by[k] = (by[k] || 0) + Math.max(0, 100 * (ms - p.ms) / (now - p.t) / cores); } }
+            if (p && now > p.t) { const k = { stream: 'yt', record: 'rec', native: 'native', engine: 'engine' }[kindOf.get(pid)] || 'ffmpeg'; by[k] = (by[k] || 0) + Math.max(0, 100 * (ms - p.ms) / (now - p.t) / cores); } }
           pc.ff = by; continue;
         }
         if (line.startsWith('PS|')) { const ms = +line.slice(3); if (psPrev && now > psPrev.t) pc.ps = Math.max(0, 100 * (ms - psPrev.ms) / (now - psPrev.t) / cores); psPrev = { t: now, ms }; continue; }
@@ -367,7 +431,7 @@ ipcMain.handle('pc:stats', () => {
 
 /* ---------- web page overlays: pages rendered off-screen (like a browser source) ---------- */
 const webPages = new Map(); // id -> { win, cfg }
-function webSend(ch, payload) { if (win && !win.isDestroyed()) win.webContents.send(ch, payload); }
+function webSend(ch, payload) { if (ch === 'web:frame') natWebFrame(payload); if (win && !win.isDestroyed()) win.webContents.send(ch, payload); }
 function webClose(id) {
   const w = webPages.get(id);
   if (w) { try { w.win.destroy(); } catch (e) { /* */ } webPages.delete(id); }
