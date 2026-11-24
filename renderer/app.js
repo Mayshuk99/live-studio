@@ -1191,6 +1191,8 @@
   S.onOutEvent(ev => {
     if (rt.native && rt.native.id === ev.id) { rt.native.on(ev); return; }
     if (rt.test && rt.test.out.id === ev.id) { rt.test.on(ev); return; }
+    // FFmpeg's own messages go to the log (the first 25 of each output — enough to see what went wrong)
+    if (ev.type === 'log') { rt.ffLines = rt.ffLines || {}; const n = rt.ffLines[ev.id] = (rt.ffLines[ev.id] || 0) + 1; if (n <= 25) logEvent('ENCODER', `${ev.kind}: ${String(ev.line).slice(0, 300)}`); }
     if (ev.type === 'stats') {
       if (ev.kind === 'stream') { rt.liveStats = ev; if (rt.reconnPending && ev.frame > 30) { rt.reconnPending = false; rt.reconnects = 0; toast('Stream is running again.', 'ok'); } }
       else rt.recStats = ev;

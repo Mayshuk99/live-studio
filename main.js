@@ -242,6 +242,18 @@ ipcMain.handle('out:start', (e, opts) => {
   try { return { id: outputs.start(opts) }; } catch (err) { return { error: err.message }; }
 });
 ipcMain.on('out:data', (e, id, data) => outputs.write(id, data));
+// Live Studio's own picture, camera and graphics processes run above normal priority (like OBS can), so other
+// programs and the encoders never make the program miss a frame. Checked every 10 s for new helper processes.
+function raisePriority() {
+  try {
+    const os = require('os');
+    for (const m of app.getAppMetrics()) {
+      if (!['GPU', 'Tab', 'Utility', 'Browser'].includes(m.type)) continue;
+      try { if (os.getPriority(m.pid) > os.constants.priority.PRIORITY_ABOVE_NORMAL) os.setPriority(m.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL); } catch (e) { /* not allowed */ }
+    }
+  } catch (e) { /* */ }
+}
+app.whenReady().then(() => { setTimeout(raisePriority, 3000); setInterval(raisePriority, 10000); });
 ipcMain.handle('native:devices', async () => { try { return await require('./streamer').listCaptureDevices(outputs.ffmpegPath); } catch (e) { return { video: [], audio: [], error: e.message }; } });
 ipcMain.handle('out:stop', (e, id) => outputs.stop(id));
 ipcMain.on('app:live', (e, live) => { isLive = !!live; });

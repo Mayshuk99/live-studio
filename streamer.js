@@ -23,6 +23,10 @@ const ENCODERS = {
     '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-bufsize', `${o.bitrate * 2}k`, '-g', g]
 };
 
+/* Decode the picture coming from Live Studio on the graphics card when it can (“auto” falls back to the processor by
+   itself). The 24 Nov log: stream alone CPU 33%, stream + recording 54–60% — mostly FFmpeg decoding the picture twice. */
+const hwDecode = o => (o.safe || o.hwDecode === false) ? [] : ['-hwaccel', 'auto'];
+
 function streamArgs(o) {
   const fps = o.fps || 30;
   const g = String(Math.round(fps * 2)); // keyframe every 2 seconds (YouTube requirement)
@@ -31,6 +35,7 @@ function streamArgs(o) {
   return [
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
     '-fflags', '+genpts',
+    ...hwDecode(o),
     '-f', 'matroska', '-i', 'pipe:0',
     '-map', '0:v:0', '-map', '0:a:0?',
     ...enc,
@@ -87,6 +92,7 @@ function recordArgs(o, partFile) {
   return [
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
     '-fflags', '+genpts',
+    ...(hw ? hwDecode(o) : []),
     '-f', 'matroska', '-i', 'pipe:0',
     '-map', '0:v:0', '-map', '0:a:0?',
     ...v,
@@ -153,6 +159,8 @@ class OutputManager extends EventEmitter {
       args = recordArgs(o, partFile);
     }
     const proc = spawn(this.ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+    // the encoder has time to spare (speed stays above 1×); the program's picture does not — it goes first
+    try { if (proc.pid) require('os').setPriority(proc.pid, require('os').constants.priority.PRIORITY_BELOW_NORMAL); } catch (e) { /* not allowed */ }
     const out = { id, kind: o.kind, proc, finalFile, partFile, stopping: false, err: [], first: [], frames: 0, bytes: 0 };
     this.outs.set(id, out);
     proc.stdin.on('error', () => { /* handled by exit */ });
@@ -187,7 +195,7 @@ class OutputManager extends EventEmitter {
         id, kind: o.kind, type: 'exit', code, expected: out.stopping, file,
         error: (code !== 0 && !out.stopping) ? (out.err.slice(-3).join(' | ') || `Encoder stopped (code ${code})`) : null,
         // the picture encoder itself refused to start (graphics card / driver), as opposed to an internet problem
-        encoderFailed: code !== 0 && !out.stopping && out.frames === 0 && /nvenc|qsv|amf|vost#|opening encoder|No capable devices|driver/i.test(out.err.join(' ')),
+        encoderFailed: code !== 0 && !out.stopping && out.frames === 0 && /nvenc|qsv|amf|vost#|opening encoder|No capable devices|driver|hwaccel|cuda|d3d11|dxva/i.test(out.err.join(' ')),
         detail: out.first.slice(0, 3).join(' | ').replace(/\[[^\]]*@ (0x)?[0-9a-f]+\]\s*/gi, '')
       });
     });
