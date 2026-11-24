@@ -244,16 +244,41 @@ ipcMain.handle('out:start', (e, opts) => {
 ipcMain.on('out:data', (e, id, data) => outputs.write(id, data));
 // Live Studio's own picture, camera and graphics processes run above normal priority (like OBS can), so other
 // programs and the encoders never make the program miss a frame. Checked every 10 s for new helper processes.
-function raisePriority() {
-  try {
-    const os = require('os');
-    for (const m of app.getAppMetrics()) {
-      if (!['GPU', 'Tab', 'Utility', 'Browser'].includes(m.type)) continue;
-      try { if (os.getPriority(m.pid) > os.constants.priority.PRIORITY_ABOVE_NORMAL) os.setPriority(m.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL); } catch (e) { /* not allowed */ }
-    }
-  } catch (e) { /* */ }
+// The same reading also shows which part of Live Studio uses the processor (in the service log, every second).
+const procCpu = { prev: new Map(), parts: null, tick: 0 };
+function procSample() {
+  const os = require('os');
+  let metrics; try { metrics = app.getAppMetrics(); } catch (e) { return; }
+  const now = Date.now(), cores = os.cpus().length || 1;
+  if (procCpu.tick++ % 5 === 0) for (const m of metrics) {
+    if (!['GPU', 'Tab', 'Utility', 'Browser'].includes(m.type)) continue;
+    try { if (os.getPriority(m.pid) > os.constants.priority.PRIORITY_ABOVE_NORMAL) os.setPriority(m.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL); } catch (e) { /* not allowed */ }
+  }
+  let pagePid = -1; try { if (win && !win.isDestroyed()) pagePid = win.webContents.getOSProcessId(); } catch (e) { /* */ }
+  const overlay = new Set(); for (const w of webPages.values()) { try { if (w.win && !w.win.isDestroyed()) overlay.add(w.win.webContents.getOSProcessId()); } catch (e) { /* */ } }
+  const parts = { page: 0, gpu: 0, capture: 0, audio: 0, overlays: 0, main: 0, helpers: 0 }, seen = new Set();
+  for (const m of metrics) {
+    const c = m.cpu || {}; let pct = 0; seen.add(m.pid);
+    if (typeof c.cumulativeCPUUsage === 'number') { // seconds of processor time since the process started
+      const p = procCpu.prev.get(m.pid); procCpu.prev.set(m.pid, { t: now, s: c.cumulativeCPUUsage });
+      pct = p && now > p.t ? 100 * (c.cumulativeCPUUsage - p.s) / ((now - p.t) / 1000) / cores : 0;
+    } else pct = c.percentCPUUsage || 0; // already a share of the whole PC
+    const svc = `${m.serviceName || ''} ${m.name || ''}`;
+    const k = m.pid === pagePid ? 'page' : m.type === 'GPU' ? 'gpu' : overlay.has(m.pid) ? 'overlays'
+      : /video_capture|video capture/i.test(svc) ? 'capture' : /audio/i.test(svc) ? 'audio' : m.type === 'Browser' ? 'main' : 'helpers';
+    parts[k] += Math.max(0, pct);
+  }
+  for (const pid of procCpu.prev.keys()) if (!seen.has(pid)) procCpu.prev.delete(pid);
+  procCpu.parts = parts;
 }
-app.whenReady().then(() => { setTimeout(raisePriority, 3000); setInterval(raisePriority, 10000); });
+app.whenReady().then(() => { setTimeout(procSample, 3000); setInterval(procSample, 2000); });
+// which way of decoding on the graphics card works here (the encoders use it from then on)
+let decodeInfo = { mode: 'checking' };
+app.whenReady().then(() => setTimeout(() => {
+  const st = require('./streamer');
+  st.probeDecode(outputs.ffmpegPath).then(r => { decodeInfo = r || { mode: 'auto' }; st.setDecodeMode(decodeInfo.mode); })
+    .catch(e => { decodeInfo = { mode: 'auto', note: e.message }; });
+}, 6000));
 ipcMain.handle('native:devices', async () => { try { return await require('./streamer').listCaptureDevices(outputs.ffmpegPath); } catch (e) { return { video: [], audio: [], error: e.message }; } });
 ipcMain.handle('out:stop', (e, id) => outputs.stop(id));
 ipcMain.on('app:live', (e, live) => { isLive = !!live; });
@@ -302,17 +327,43 @@ function pcStart() {
   nv(); setInterval(nv, 3000);
   // Windows: GPU usage for any card, and CPU temperature where the PC reports it
   if (process.platform === 'win32') {
-    const script = "$ErrorActionPreference='SilentlyContinue'; while($true){ $g=''; $t=''; $s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples; if($s){ $m=0; $s | Group-Object { if($_.InstanceName -match 'engtype_(\\w+)'){$matches[1]} } | ForEach-Object { $v=($_.Group | Measure-Object CookedValue -Sum).Sum; if($v -gt $m){$m=$v} }; $g=[math]::Min(100,[math]::Round($m)) }; $z=Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature; if($z){ $t=[math]::Round((($z | Measure-Object CurrentTemperature -Maximum).Maximum/10)-273.15) }; Write-Output ('PC|{0}|{1}' -f $g,$t); Start-Sleep -Seconds 4 }";
+    // (the GPU counters are only read when there is no NVIDIA tool — reading them costs processor time itself)
+    // FF| lists each FFmpeg's processor time in ms, and PS| this loop's own, so the log can show what each one costs
+    const script = "$ErrorActionPreference='SilentlyContinue'; $nv=[bool](Get-Command nvidia-smi); while($true){ $g=''; $t=''; $s=$null; if(-not $nv){ $s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples }; if($s){ $m=0; $s | Group-Object { if($_.InstanceName -match 'engtype_(\\w+)'){$matches[1]} } | ForEach-Object { $v=($_.Group | Measure-Object CookedValue -Sum).Sum; if($v -gt $m){$m=$v} }; $g=[math]::Min(100,[math]::Round($m)) }; $z=Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature; if($z){ $t=[math]::Round((($z | Measure-Object CurrentTemperature -Maximum).Maximum/10)-273.15) }; Write-Output ('PC|{0}|{1}' -f $g,$t); $f=(Get-Process -Name ffmpeg | ForEach-Object { '{0}:{1}' -f $_.Id,[long]$_.TotalProcessorTime.TotalMilliseconds }) -join ','; Write-Output ('FF|' + $f); Write-Output ('PS|' + [long](Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds); Start-Sleep -Seconds 3 }";
     try {
       const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-      ps.stdout.on('data', d => { for (const line of String(d).split(/\r?\n/)) { const m = line.match(/^PC\|(\d*)\|(-?\d*)/); if (!m) continue; if (!pc.nv && m[1] !== '') pc.gpu = +m[1]; if (m[2] !== '' && +m[2] > 0 && +m[2] < 120) pc.cpuTemp = +m[2]; } });
+      const ffPrev = new Map(); let psPrev = null;
+      ps.stdout.on('data', d => { for (const line of String(d).split(/\r?\n/)) {
+        const now = Date.now(), cores = os.cpus().length || 1;
+        if (line.startsWith('FF|')) { // processor share of each FFmpeg, named by what it does
+          const by = {}, kindOf = new Map([...outputs.outs.values()].map(o => [o.proc.pid, o.kind]));
+          for (const it of line.slice(3).split(',')) { const [pid, ms] = it.split(':').map(Number); if (!pid) continue;
+            const p = ffPrev.get(pid); ffPrev.set(pid, { t: now, ms });
+            if (p && now > p.t) { const k = { stream: 'yt', record: 'rec', native: 'native' }[kindOf.get(pid)] || 'ffmpeg'; by[k] = (by[k] || 0) + Math.max(0, 100 * (ms - p.ms) / (now - p.t) / cores); } }
+          pc.ff = by; continue;
+        }
+        if (line.startsWith('PS|')) { const ms = +line.slice(3); if (psPrev && now > psPrev.t) pc.ps = Math.max(0, 100 * (ms - psPrev.ms) / (now - psPrev.t) / cores); psPrev = { t: now, ms }; continue; }
+        const m = line.match(/^PC\|(\d*)\|(-?\d*)/); if (!m) continue; if (!pc.nv && m[1] !== '') pc.gpu = +m[1]; if (m[2] !== '' && +m[2] > 0 && +m[2] < 120) pc.cpuTemp = +m[2];
+      } });
       ps.on('error', () => {});
       app.on('before-quit', () => { try { ps.kill(); } catch (e) { /* */ } });
       if (win) win.on('closed', () => { try { ps.kill(); } catch (e) { /* */ } });
     } catch (e) { /* no powershell */ }
   }
 }
-ipcMain.handle('pc:stats', () => { pcStart(); return { cpu: pc.cpu, cpuTemp: pc.cpuTemp, gpu: pc.gpu, gpuTemp: pc.gpuTemp, gpuName: pc.gpuName, mem: pc.mem, cores: os.cpus().length, cpuName: (os.cpus()[0] || {}).model }; });
+ipcMain.handle('pc:stats', () => {
+  pcStart();
+  // processor share (of the whole PC, %) of each part: Live Studio's own processes, each FFmpeg, and everything else
+  let parts = null;
+  if (procCpu.parts) {
+    const r1 = x => Math.round(x * 10) / 10;
+    parts = {}; for (const [k, v] of Object.entries(procCpu.parts)) parts[k] = r1(v);
+    for (const [k, v] of Object.entries(pc.ff || {})) parts[k] = r1(v);
+    if (pc.ps !== undefined) parts.monitor = r1(pc.ps);
+    if (pc.cpu !== null) parts.otherPrograms = r1(Math.max(0, pc.cpu - Object.values(parts).reduce((a, b) => a + b, 0)));
+  }
+  return { cpu: pc.cpu, cpuTemp: pc.cpuTemp, gpu: pc.gpu, gpuTemp: pc.gpuTemp, gpuName: pc.gpuName, mem: pc.mem, cores: os.cpus().length, cpuName: (os.cpus()[0] || {}).model, parts, decode: decodeInfo };
+});
 
 /* ---------- web page overlays: pages rendered off-screen (like a browser source) ---------- */
 const webPages = new Map(); // id -> { win, cfg }

@@ -1049,13 +1049,13 @@
       const at = this.offset; this.offset += u8.length;
       const evs = this.scan.push(u8);
       if (!this.header) { this.pre = concatU8(this.pre, u8); if (this.scan.headerEnd >= 0) { this.header = this.pre.slice(0, this.scan.headerEnd); this.pre = null; } }
-      // keep the bytes since the last cluster start, so a newcomer can begin exactly there
+      // keep the last few seconds, so a newcomer can begin exactly at a keyframe cluster (whose first video block
+      // may only arrive in a later piece than the cluster's start — 24 Nov log: the recording began mid-cluster)
       this.hist.push({ at, u8 });
-      const lastCluster = evs.filter(e => e.type === 'cluster').pop();
-      if (lastCluster) while (this.hist.length > 1 && this.hist[1].at <= lastCluster.offset) this.hist.shift();
+      while (this.hist.length > 32) this.hist.shift();
       for (const sub of this.subs) if (sub.joined && !sub.justJoined) this._send(sub, u8);
       for (const sub of this.subs) sub.justJoined = false;
-      const key = evs.filter(e => e.type === 'key').pop();
+      const key = evs.filter(e => e.type === 'key' && this.hist.length && e.offset >= this.hist[0].at).pop();
       if (key && this.header) {
         const waiting = this.subs.filter(sub => !sub.joined);
         if (waiting.length) {
@@ -1282,22 +1282,38 @@
   /* ================= native engine test =================
      FFmpeg reads one capture card itself and encodes on the graphics card — the picture never goes through the
      Chrome engine. If this streams perfectly smooth, an OBS-style engine fixes the hitches. */
+  /* processor share of each part (from the main process, % of the whole PC) — short names for the log, plain ones for the window */
+  const CPU_PARTS = [['page', 'page', 'Picture engine (the program window)'], ['gpu', 'gpu', 'Graphics process'], ['capture', 'cam', 'Camera capture'], ['audio', 'aud', 'Sound'],
+    ['overlays', 'web', 'Web graphics'], ['yt', 'yt-enc', 'YouTube encoder (FFmpeg)'], ['rec', 'rec-enc', 'Recording encoder (FFmpeg)'], ['native', 'native', 'Native test (FFmpeg)'],
+    ['ffmpeg', 'ff', 'Other FFmpeg'], ['main', 'main', 'Live Studio main process'], ['helpers', 'help', 'Other Live Studio helpers'], ['monitor', 'mon', 'PC monitor'], ['otherPrograms', 'other', 'Other programs and Windows']];
+  const cpuPartsShort = P => CPU_PARTS.filter(([k]) => (P[k] || 0) >= 0.5).map(([k, n]) => `${n} ${Math.round(P[k])}`).join(' ');
+  const DECODE_WORDS = { 'cuda-zc': 'graphics card — the picture stays on the card (lowest processor load)', cuda: 'graphics card (NVIDIA), copied back', d3d11va: 'graphics card (Windows D3D11)', dxva2: 'graphics card (Windows DXVA2)', none: 'processor — graphics-card decoding does not work on this PC', auto: 'automatic' };
+
   function openNativeTest() {
     if (rt.live || rt.rec) { toast('Stop the stream and the recording first — the test uses the capture card on its own.', 'error'); return; }
     const body = el('div');
-    let dev = null, pickV = 0, pickA = -1, dest = settings.youtube.key ? 'yt' : 'file', run = null, lastMsg = '';
-    const o = settings.output, target = o.fps || 59.94;
-    const modeFor = v => {
-      const ok = (v.modes || []).filter(m => m.kind === 'pixel_format' && m.w === (o.width || 1920) && m.h === (o.height || 1080) && target >= m.minFps - 0.1 && target <= m.maxFps + 0.1);
-      const best = list => ['uyvy422', 'yuyv422', 'nv12', 'yuv420p'].map(f => list.find(m => m.fmt === f)).find(Boolean) || list[0] || null;
-      // no format at the output rate: use the card's own rate for the size (Blackmagic only gives a picture at its signal's rate)
-      return best(ok) || best((v.modes || []).filter(m => m.kind === 'pixel_format' && m.w === (o.width || 1920) && m.h === (o.height || 1080)));
+    let dev = null, pickV = 0, pickM = 0, pickA = -1, dest = settings.youtube.key ? 'yt' : 'file', run = null, lastMsg = '';
+    const o = settings.output, target = o.fps || 59.94, W = o.width || 1920, H = o.height || 1080;
+    /* The card's picture formats at the output size, the output's own rate first. Only an exact 1080p 59.94 format
+       makes a fair test (13:00 log: “Blackmagic WDM Capture” had none and the test silently ran at 25 fps). */
+    const near = f => Math.abs(f - target) < 0.05;
+    const fits = m => m.w === W && m.h === H && (near(m.maxFps) || near(m.minFps) || (target > m.minFps && target < m.maxFps));
+    const FMT = ['uyvy422', 'yuyv422', 'nv12', 'yuv420p', 'v210'], fr = m => { const i = FMT.indexOf(m.fmt); return i < 0 ? 9 : i; };
+    const modesOf = v => {
+      const seen = new Set(), list = [];
+      for (const m of (v.modes || [])) { if (m.w !== W || m.h !== H) continue; const k = `${m.kind}|${m.fmt}|${m.minFps}|${m.maxFps}`; if (!seen.has(k)) { seen.add(k); list.push(m); } }
+      return list.sort((a, b) => (fits(b) - fits(a)) || (fr(a) - fr(b)) || (Math.abs(a.maxFps - target) - Math.abs(b.maxFps - target)));
     };
+    const hasExact = v => modesOf(v).some(fits);
+    const modeFor = v => modesOf(v)[pickM] || null;
+    const modeFps = m => fits(m) ? target : +m.maxFps.toFixed(2);
+    const camOf = v => { const cs = show.cameras.filter(c => c.deviceLabel === v.name); return cs.length === 1 && dev.video.filter(x => x.name === v.name).length === 1 ? cs[0] : null; };
+    const sum1080 = v => { const ms = modesOf(v); if (!ms.length) return `no ${W}×${H} formats`; return `${W}×${H} at ${[...new Set(ms.map(m => +m.maxFps.toFixed(2)))].sort((a, b) => a - b).join(' / ')} fps (${[...new Set(ms.map(m => m.fmt))].join(', ')})${hasExact(v) ? '' : ` — NO ${target}`}`; };
     const vName = v => `${v.name}${dev.video.filter(x => x.name === v.name).length > 1 ? ` — card ${v.n + 1}` : ''}`;
     // the numbers are updated in place (rebuilding the window every second could swallow a click on Stop)
     const statsEl = el('div', { class: 'native-stats mono' });
     const updStats = () => { const L = run && run.last; statsEl.textContent = run ? `${L ? `${(L.fps || 0).toFixed(1)} fps · repeated ${run.dup} · dropped ${run.drop} · speed ${(L.speed || 0).toFixed(2)}× · ${((L.bitrate || 0) / 1000).toFixed(1)} Mb/s` : 'starting…'} · ${fmt((Date.now() - run.t0) / 1000)}` : (lastMsg || 'Not running'); };
-    const fmtMode = m => m ? `${m.w}×${m.h} at ${target >= m.minFps - 0.1 && target <= m.maxFps + 0.1 ? target : (+m.maxFps.toFixed(2)) + ' (the card’s signal)'} fps (${m.fmt})` : 'card’s own format';
+    const fmtMode = m => m ? `${m.w}×${m.h} · ${modeFps(m)} fps · ${m.fmt === 'v210' ? 'v210 (10-bit)' : m.fmt}` : 'the card’s own format';
     const finish = (msg) => {
       const r = run; run = null; rt.native = null; rt.nativeTest = false;
       if (r) {
@@ -1314,8 +1330,9 @@
       rt.nativeTest = true;
       for (const c of show.cameras) closeCamera(c.id);  // a capture card can only be used by one program at a time
       await wait(900);
-      const capFps = m && !(target >= m.minFps - 0.1 && target <= m.maxFps + 0.1) ? m.maxFps : target;
-      const opts = { kind: 'native', device: v.name, videoNumber: v.n, pixFmt: m ? m.fmt : null, width: o.width || 1920, height: o.height || 1080, fps: target, captureFps: capFps,
+      if (m && !fits(m)) logEvent('NATIVE', `warning: this format is ${modeFps(m)} fps, not the output ${target} fps — not a fair test`);
+      const opts = { kind: 'native', device: v.name, videoNumber: v.n, pixFmt: m && m.kind === 'pixel_format' ? m.fmt : null, vcodec: m && m.kind === 'vcodec' ? m.fmt : null,
+        width: W, height: H, fps: target, captureFps: m ? modeFps(m) : target,
         encoder: o.encoder, bitrate: o.bitrate, audioBitrate: o.audioBitrate, audioDevice: a ? a.name : null, audioNumber: a ? a.n : 0,
         url: dest === 'yt' ? streamURL() : null, dir: settings.recordDir };
       const r = await S.outStart(opts);
@@ -1345,11 +1362,14 @@
       const intro = el('div', { class: 'muted', style: 'margin-bottom:10px' }, 'Streams one camera straight from the capture card through FFmpeg and the graphics card — without the Chrome engine — to see if an OBS-style engine runs perfectly smooth on this PC. Live Studio lets go of the cameras while the test runs and takes them back afterwards. Use an unlisted / private YouTube event.');
       if (!dev) { put(body, intro, el('div', null, 'Looking for capture cards…')); return; }
       if (!dev.video.length) { put(body, intro, el('div', { class: 'status-bad' }, dev.note === 'Only on Windows' ? 'This test only works on the Windows PC.' : 'No capture cards found.')); return; }
-      const v = dev.video[pickV], m = modeFor(v);
+      const v = dev.video[pickV], m = modeFor(v), ms = modesOf(v);
       updStats();
+      const cardLabel = x => { const c = camOf(x); return `${vName(x)}${c ? ` — your “${c.name}”` : ''}${hasExact(x) ? '' : ` — no ${target} fps`}`; };
       put(body, intro,
-        el('div', { class: 'field' }, el('span', null, 'Camera card'), select(dev.video.map((x, i) => [String(i), vName(x)]), String(pickV), x => { pickV = +x; draw(); })),
-        el('div', { class: 'muted', style: 'font-size:.85em;margin:-4px 0 8px' }, `Picture: ${fmtMode(m)}`),
+        el('div', { class: 'field' }, el('span', null, 'Camera card'), select(dev.video.map((x, i) => [String(i), cardLabel(x)]), String(pickV), x => { pickV = +x; pickM = 0; draw(); })),
+        ms.length ? el('div', { class: 'field' }, el('span', null, 'Picture'), select(ms.map((x, i) => [String(i), fmtMode(x)]), String(pickM), x => { pickM = +x; draw(); }))
+          : el('div', { class: 'muted', style: 'font-size:.85em;margin:-4px 0 8px' }, `This card lists no ${W}×${H} formats — it will use its own.`),
+        m && !fits(m) ? el('div', { class: 'status-bad', style: 'font-size:.9em;margin:-2px 0 8px' }, `⚠ Not ${target} fps — this would not be a fair test. Pick another card (usually “Decklink Video Capture”).`) : null,
         el('div', { class: 'field' }, el('span', null, 'Sound'), select([['-1', 'Silence'], ...dev.audio.map((x, i) => [String(i), x.name])], String(pickA), x => { pickA = +x; })),
         el('div', { class: 'field' }, el('span', null, 'Send to'), select([['yt', 'YouTube (your stream key)'], ['file', 'A test file (recordings folder)']], dest, x => { dest = x; })),
         statsEl,
@@ -1360,7 +1380,16 @@
     };
     draw();
     openModal('Native engine test (OBS-style)', body);
-    S.nativeDevices ? S.nativeDevices().then(r => { dev = r || { video: [], audio: [] }; const ssl = dev.audio.findIndex(a => /ssl/i.test(a.name)); if (ssl >= 0) pickA = ssl; if (dev.raw) logEvent('NATIVE', 'devices: ' + dev.video.map(x => `${x.name} #${x.n + 1} (${(x.modes || []).length} modes)`).join(', ')); draw(); }) : (dev = { video: [], audio: [] }, draw());
+    S.nativeDevices ? S.nativeDevices().then(r => {
+      dev = r || { video: [], audio: [] };
+      const ssl = dev.audio.findIndex(a => /ssl/i.test(a.name)); if (ssl >= 0) pickA = ssl;
+      // start on a card that really offers 1080p 59.94 — the same kind the cameras use (Blackmagic WDM) if it does, else Decklink
+      const camNames = new Set(show.cameras.map(c => c.deviceLabel));
+      const score = x => (hasExact(x) ? 10 : 0) + (camNames.has(x.name) ? 2 : 0) + (/^decklink video capture/i.test(x.name) ? 1 : 0) + (camOf(x) ? 1 : 0);
+      dev.video.forEach((x, i) => { if (score(x) > score(dev.video[pickV])) pickV = i; });
+      for (const x of dev.video) logEvent('NATIVE', `card ${x.name} #${x.n + 1}: ${(x.modes || []).length} formats · ${sum1080(x)}`);
+      draw();
+    }) : (dev = { video: [], audio: [] }, draw());
   }
 
   /* ================= header ================= */
@@ -1415,6 +1444,8 @@
         el('h3', null, 'This computer'),
         rt.pc && rt.pc.cpu !== null ? [
           row(`Processor (CPU) — ${(rt.pc.cpuName || '').trim()}`, `${rt.pc.cpu}%`, rt.pc.cpu >= 90),
+          rt.pc.parts ? el('div', { class: 'muted', style: 'font-size:.85em;margin:-2px 0 6px 12px' }, CPU_PARTS.filter(([k]) => (rt.pc.parts[k] || 0) >= 0.5).map(([k, , w]) => `${w} ${Math.round(rt.pc.parts[k])}%`).join(' · ')) : null,
+          rt.pc.decode && DECODE_WORDS[rt.pc.decode.mode] ? row('Encoders decode the picture on', rt.pc.decode.mode === 'cuda-zc' ? 'graphics card ✓' : rt.pc.decode.mode === 'none' ? 'processor' : DECODE_WORDS[rt.pc.decode.mode].split(' (')[0]) : null,
           row('CPU temperature', rt.pc.cpuTemp !== null ? `${rt.pc.cpuTemp} °C` : 'not reported by this PC', rt.pc.cpuTemp >= 85),
           row(`Graphics (GPU)${rt.pc.gpuName ? ' — ' + rt.pc.gpuName : ''}`, rt.pc.gpu !== null ? `${rt.pc.gpu}%` : 'not available', rt.pc.gpu >= 95),
           row('GPU temperature', rt.pc.gpuTemp !== null ? `${rt.pc.gpuTemp} °C` : 'only available for NVIDIA cards', rt.pc.gpuTemp >= 85),
@@ -4012,10 +4043,12 @@
 
     // status line every second (every 10 s when nothing is running)
     const prev = { missed: engine.stats.missed, rep: 0, skip: 0, ld: 0, lr: 0, rd: 0, rr: 0, late: new Map(), at: 0, liveId: null, recId: null };
-    const sum = { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0 };
-    let n = 0;
+    const sum = { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0, cpuSum: 0, cpuN: 0, parts: {} };
+    let n = 0, decodeSeen = null;
     setInterval(() => {
       n++;
+      const dm = rt.pc && rt.pc.decode && rt.pc.decode.mode;
+      if (dm && dm !== 'checking' && dm !== decodeSeen) { decodeSeen = dm; logEvent('DECODE', `encoders decode the picture on the ${DECODE_WORDS[dm] || dm}${rt.pc.decode.tried ? ` · tried: ${rt.pc.decode.tried.join('; ')}` : ''}${rt.pc.decode.note ? ` · ${rt.pc.decode.note}` : ''}`); }
       const st = engine.stats, active = rt.live || rt.rec || (rt.service && rt.service !== 'hold');
       const busy = rt.longWin || []; rt.longWin = [];
       const cams = engine.cameraStats(true);
@@ -4044,7 +4077,11 @@
       } else if (rt.live) line += ' | yt starting';
       if (R) { const dd = (R.dup || 0) - prev.rd, dr = (R.drop || 0) - prev.rr; prev.rd = R.dup || 0; prev.rr = R.drop || 0; if (dd > 0 || dr > 0) flags.push('rec'); line += ` | rec ${Math.round(R.fps || 0)}fps dup ${dd} drop ${dr} x${(R.speed || 0).toFixed(2)}`; }
       const pc = rt.pc;
-      if (pc) { line += ` | cpu ${pc.cpu}%${pc.cpuTemp !== null ? ` ${pc.cpuTemp}°` : ''} gpu ${pc.gpu !== null ? pc.gpu + '%' : '?'}${pc.gpuTemp !== null ? ` ${pc.gpuTemp}°` : ''} mem ${pc.mem}%`; sum.cpu = Math.max(sum.cpu, pc.cpu || 0); sum.cpuT = Math.max(sum.cpuT, pc.cpuTemp || 0); sum.gpuT = Math.max(sum.gpuT, pc.gpuTemp || 0); }
+      if (pc) {
+        line += ` | cpu ${pc.cpu}%${pc.parts ? ` (${cpuPartsShort(pc.parts)})` : ''}${pc.cpuTemp !== null ? ` ${pc.cpuTemp}°` : ''} gpu ${pc.gpu !== null ? pc.gpu + '%' : '?'}${pc.gpuTemp !== null ? ` ${pc.gpuTemp}°` : ''} mem ${pc.mem}%`;
+        sum.cpu = Math.max(sum.cpu, pc.cpu || 0); sum.cpuT = Math.max(sum.cpuT, pc.cpuTemp || 0); sum.gpuT = Math.max(sum.gpuT, pc.gpuTemp || 0);
+        if (pc.cpu !== null) { sum.cpuSum += pc.cpu; sum.cpuN++; if (pc.parts) for (const [k, v] of Object.entries(pc.parts)) sum.parts[k] = (sum.parts[k] || 0) + v; }
+      }
       if (performance.memory) line += ` heap ${Math.round(performance.memory.usedJSHeapSize / 1048576)}M`;
       if (rt.MA) line += ` | ${rt.MA.lufsS <= -60 ? '—' : rt.MA.lufsS.toFixed(1)} LUFS`;
       if (busy.length) flags.push('busy');
@@ -4052,7 +4089,8 @@
       if (LOG.on) LOG.buf.push(`${logTime()}${flags.length ? ' !' : '  '} ${(rt.live ? 'LIVE ' : '') + (rt.rec ? 'REC ' : '')}${line}${flags.length ? '  [' + flags.join(',') + ']' : ''}`);
       if (Date.now() - sum.start >= 600000) {
         logEvent('SUMMARY', `last 10 min: ${sum.bad} seconds with a problem · frames missed ${sum.missed} · camera repeated ${sum.rep} / skipped ${sum.skip} · camera late ${sum.camLate} (longest gap ${Math.round(sum.worstGap)} ms) · YouTube repeated ${sum.dup} / dropped ${sum.drop} · busy moments ${sum.busy} (longest ${Math.round(sum.busyMax)} ms) · max CPU ${sum.cpu}% ${sum.cpuT}° · max GPU ${sum.gpuT}°`);
-        Object.assign(sum, { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0 });
+        if (sum.cpuN) { const avg = {}; for (const [k, v] of Object.entries(sum.parts)) avg[k] = v / sum.cpuN; logEvent('SUMMARY', `average CPU ${Math.round(sum.cpuSum / sum.cpuN)}% = ${cpuPartsShort(avg) || '?'}`); }
+        Object.assign(sum, { start: Date.now(), missed: 0, rep: 0, skip: 0, camLate: 0, dup: 0, drop: 0, busy: 0, busyMax: 0, worstGap: 0, cpuT: 0, gpuT: 0, cpu: 0, bad: 0, cpuSum: 0, cpuN: 0, parts: {} });
       }
     }, 1000);
   }

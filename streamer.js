@@ -23,9 +23,25 @@ const ENCODERS = {
     '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-bufsize', `${o.bitrate * 2}k`, '-g', g]
 };
 
-/* Decode the picture coming from Live Studio on the graphics card when it can (“auto” falls back to the processor by
-   itself). The 24 Nov log: stream alone CPU 33%, stream + recording 54–60% — mostly FFmpeg decoding the picture twice. */
-const hwDecode = o => (o.safe || o.hwDecode === false) ? [] : ['-hwaccel', 'auto'];
+/* Decode the picture coming from Live Studio on the graphics card. Which way works on this PC is found by
+   probeDecode() at start-up:
+     cuda-zc  NVIDIA, and the picture stays on the card from decoding to encoding (lowest processor load)
+     cuda / d3d11va / dxva2   decoded on the card, copied back for the encoder
+     none     the processor decodes
+   The 24 Nov 13:00 log: “-hwaccel auto” did not lower the load (stream + recording still 54–64 %). */
+let decodeMode = 'auto';
+const getDecodeMode = () => decodeMode;
+const setDecodeMode = m => { decodeMode = m; };
+const zeroCopy = o => !o.safe && o.hwDecode !== false && decodeMode === 'cuda-zc' && o.encoder === 'nvenc';
+const hwDecode = o => {
+  if (o.safe || o.hwDecode === false || decodeMode === 'none') return [];
+  if (zeroCopy(o)) return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-extra_hw_frames', '8'];
+  if (decodeMode === 'cuda-zc' || decodeMode === 'cuda') return ['-hwaccel', 'cuda'];
+  if (decodeMode === 'd3d11va' || decodeMode === 'dxva2') return ['-hwaccel', decodeMode];
+  return ['-hwaccel', 'auto'];
+};
+// the picture is already in the encoder's format on the card — converting it would bring it back to the processor
+const pixFmt = o => zeroCopy(o) ? [] : ['-pix_fmt', 'yuv420p'];
 
 function streamArgs(o) {
   const fps = o.fps || 30;
@@ -39,7 +55,7 @@ function streamArgs(o) {
     '-f', 'matroska', '-i', 'pipe:0',
     '-map', '0:v:0', '-map', '0:a:0?',
     ...enc,
-    '-pix_fmt', 'yuv420p', '-r', rate(fps), '-fps_mode', 'cfr',
+    ...pixFmt(o), '-r', rate(fps), '-fps_mode', 'cfr',
     '-c:a', 'aac', '-b:a', `${o.audioBitrate || 160}k`, '-ar', '48000', '-ac', '2',
     '-flvflags', 'no_duration_filesize',
     '-f', 'flv', url
@@ -55,7 +71,8 @@ function nativeArgs(o, partFile) {
   const video = ['-f', 'dshow', '-rtbufsize', '1500M',
     ...(o.videoNumber ? ['-video_device_number', String(o.videoNumber)] : []),
     '-video_size', `${o.width || 1920}x${o.height || 1080}`, '-framerate', rate(capRate(o.captureFps || fps)),
-    ...(o.pixFmt ? ['-pixel_format', o.pixFmt] : []),
+    // the card's picture format: a pixel format (uyvy422 …) or a codec the card sends (v210 …)
+    ...(o.vcodec ? ['-vcodec', o.vcodec] : o.pixFmt ? ['-pixel_format', o.pixFmt] : []),
     '-i', `video=${o.device}`];
   const audio = o.audioDevice
     ? ['-f', 'dshow', '-audio_buffer_size', '50', ...(o.audioNumber ? ['-audio_device_number', String(o.audioNumber)] : []), '-i', `audio=${o.audioDevice}`]
@@ -86,7 +103,7 @@ function recordArgs(o, partFile) {
   const hw = ['nvenc', 'qsv', 'amf'].includes(o.encoder);
   const kbps = o.bitrate || 20000;
   let v;
-  if (hw) v = [...(o.safe ? ENCODERS[o.encoder + '_safe'] : ENCODERS[o.encoder])({ bitrate: kbps }, String(Math.round(fps))), '-pix_fmt', 'yuv420p', '-r', rate(fps), '-fps_mode', 'cfr'];
+  if (hw) v = [...(o.safe ? ENCODERS[o.encoder + '_safe'] : ENCODERS[o.encoder])({ bitrate: kbps }, String(Math.round(fps))), ...pixFmt(o), '-r', rate(fps), '-fps_mode', 'cfr'];
   else if (o.inputCodec === 'h264' || o.inputCodec === 'vp9') v = ['-c:v', 'copy'];
   else v = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', rate(fps), '-fps_mode', 'cfr'];
   return [
@@ -187,6 +204,12 @@ class OutputManager extends EventEmitter {
     });
     proc.on('exit', async code => {
       this.outs.delete(id);
+      // graphics-card decoding failed on the real picture: the next start (reconnect / retry) uses a simpler way
+      const errText = out.err.join(' ');
+      if (code !== 0 && !out.stopping && o.kind !== 'native' && decodeMode !== 'none' && /hwaccel|cuda|surface|hw_frames|hwframe|Impossible to convert|d3d11|dxva/i.test(errText)) {
+        const was = decodeMode; decodeMode = decodeMode === 'cuda-zc' ? 'cuda' : 'none';
+        this.emit('event', { id, kind: o.kind, type: 'log', line: `graphics-card decoding (${was}) failed — now using ${decodeMode}` });
+      }
       let file = null;
       if ((out.kind === 'record' || out.kind === 'native') && partFile && fs.existsSync(partFile)) {
         file = await this._finalize(partFile, finalFile).catch(() => partFile);
@@ -264,11 +287,50 @@ async function listCaptureDevices(ffmpegPath) {
     const t = await runFF(ffmpegPath, ['-hide_banner', '-list_options', 'true', '-f', 'dshow', ...(v.n ? ['-video_device_number', String(v.n)] : []), '-i', `video=${v.name}`], 6000);
     v.modes = [];
     for (const line of t.split(/\r?\n/)) {
-      const m = line.match(/(pixel_format|vcodec)=(\S+)\s+min s=(\d+)x(\d+) fps=([\d.]+)\s+max s=(\d+)x(\d+) fps=([\d.]+)/);
+      const m = line.match(/(pixel_format|vcodec)=(\S+).*?min s=(\d+)x(\d+) fps=([\d.]+)\s+max s=(\d+)x(\d+) fps=([\d.]+)/);
       if (m) v.modes.push({ kind: m[1], fmt: m[2], w: +m[6], h: +m[7], minFps: +m[5], maxFps: +m[8] });
     }
   }
   return { video, audio, raw: text.slice(0, 4000) };
 }
 
-module.exports = { OutputManager, streamArgs, recordArgs, nativeArgs, parseStats, ensureDir, listCaptureDevices };
+/* Which way of decoding on the graphics card works on this PC: makes a 2-second test clip, then tries each way.
+   Runs once at start-up, in the background, at low priority. */
+async function probeDecode(ffmpegPath) {
+  const os = require('os');
+  let dir; try { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-studio-probe-')); } catch (e) { return { mode: 'auto', note: 'no temp folder' }; }
+  const sample = path.join(dir, 'sample.mkv');
+  const run = (args, ms = 20000) => new Promise(resolve => {
+    let err = '', p;
+    try { p = spawn(ffmpegPath, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] }); } catch (e) { return resolve({ ok: false, err: e.message }); }
+    try { if (p.pid) os.setPriority(p.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch (e) { /* */ }
+    const t = setTimeout(() => { try { p.kill(); } catch (e) { /* */ } }, ms);
+    p.stderr.on('data', d => { err += d.toString(); });
+    p.on('error', e => { clearTimeout(t); resolve({ ok: false, err: e.message }); });
+    p.on('exit', code => { clearTimeout(t); err = err.trim(); resolve({ ok: code === 0 && !/hwaccel|cuda|d3d11|dxva|device|fail|error|cannot|impossible/i.test(err), err: err.split(/\r?\n/).slice(-2).join(' | ').replace(/\[[^\]]*@ (0x)?[0-9a-f]+\]\s*/gi, '').slice(0, 160) }); });
+  });
+  const tried = [];
+  try {
+    let made = false;
+    for (const enc of [['-c:v', 'libx264', '-preset', 'ultrafast'], ['-c:v', 'h264_nvenc'], ['-c:v', 'h264_qsv'], ['-c:v', 'h264_amf'], ['-c:v', 'h264_mf']]) {
+      const r = await run(['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=60000/1001', '-t', '2', ...enc, '-pix_fmt', 'yuv420p', '-g', '60', '-f', 'matroska', '-y', sample]);
+      if (r.ok && fs.existsSync(sample) && fs.statSync(sample).size > 1000) { made = true; break; }
+    }
+    if (!made) return { mode: 'auto', note: 'could not make a test clip' };
+    const nv = [...ENCODERS.nvenc({ bitrate: 8000 }, '120'), '-r', '60000/1001', '-fps_mode', 'cfr'];
+    const ways = [
+      ['cuda-zc', ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-extra_hw_frames', '8'], nv],
+      ['cuda', ['-hwaccel', 'cuda'], []],
+      ['d3d11va', ['-hwaccel', 'd3d11va'], []],
+      ['dxva2', ['-hwaccel', 'dxva2'], []]
+    ];
+    for (const [mode, dec, enc] of ways) {
+      const r = await run(['-hide_banner', '-loglevel', 'error', '-fflags', '+genpts', ...dec, '-f', 'matroska', '-i', sample, '-map', '0:v:0', ...enc, '-f', 'null', '-']);
+      tried.push(`${mode} ${r.ok ? 'ok' : 'no' + (r.err ? ` (${r.err})` : '')}`);
+      if (r.ok) return { mode, tried };
+    }
+    return { mode: 'none', tried };
+  } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* */ } }
+}
+
+module.exports = { OutputManager, streamArgs, recordArgs, nativeArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode };

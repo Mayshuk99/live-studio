@@ -2,7 +2,7 @@
 // recording, so an FFmpeg change that rejects an option stops the build instead of reaching a live service.
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs'), os = require('os'), path = require('path');
-const { streamArgs, recordArgs } = require('../streamer.js');
+const { streamArgs, recordArgs, probeDecode } = require('../streamer.js');
 const ff = process.argv[2] || 'ffmpeg';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ls-selftest-'));
 const src = path.join(tmp, 'in.mkv');
@@ -31,5 +31,7 @@ function run(name, args, out) {
     await run('record (re-encode)', recordArgs({ fps: 59.94, audioBitrate: 320 }, mp4), mp4),
     await run('record (copy picture)', recordArgs({ fps: 60, inputCodec: 'h264' }, mp4b), mp4b)
   ];
+  // information only: which graphics-card decoding this machine has (build machines usually have none)
+  try { const d = await probeDecode(ff); console.log(`INFO graphics-card decoding here: ${d.mode}${d.tried ? ' — ' + d.tried.join('; ') : ''}`); } catch (e) { console.log('INFO decode check failed: ' + e.message); }
   process.exit(r.every(Boolean) ? 0 : 1);
 })();
