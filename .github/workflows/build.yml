@@ -131,6 +131,7 @@ jobs:
           if (-not $dll) { throw 'NDI Runtime did not install' }
           $env:NDI_RUNTIME_DIR_V6 = $dll.DirectoryName
           node scripts/ndi-selftest.js resources/ndi/ls-ndi.exe resources/engine/ls-engine.exe resources/ffmpeg/ffmpeg.exe
+          if ($LASTEXITCODE -ne 0) { throw 'NDI end-to-end test failed (report only)' }
 
       - name: Prepare the release
         shell: pwsh

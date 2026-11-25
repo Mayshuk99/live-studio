@@ -1,0 +1,47 @@
+# NDI end to end on Windows, by hand (Actions → "NDI test" → Run workflow): builds the native engine and the NDI
+# helper, installs the official NDI Runtime on the build machine, sends a test picture over NDI, finds it,
+# receives it with the helper and shows it through the engine as a camera. Publishes nothing.
+name: NDI test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ndi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+
+      - name: Build the native engine and the NDI helper
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path resources/engine, resources/ndi | Out-Null
+          go -C engine build -o ../resources/engine/ls-engine.exe .
+          if ($LASTEXITCODE -ne 0) { throw 'engine build failed' }
+          cmake -S ndihost -B ndihost/build -A x64
+          cmake --build ndihost/build --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'NDI helper build failed' }
+          $exe = Get-ChildItem ndihost/build -Recurse -Filter ls-ndi.exe | Select-Object -First 1
+          Copy-Item $exe.FullName resources/ndi/ls-ndi.exe -Force
+          & resources/ndi/ls-ndi.exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw 'NDI helper self-test failed' }
+
+      - name: NDI end to end (official NDI Runtime)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "http://ndi.link/NDIRedistV6" -OutFile ndi-runtime.exe
+          Start-Process -FilePath .\ndi-runtime.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait
+          $dll = Get-ChildItem "$env:ProgramFiles\NDI" -Recurse -Filter Processing.NDI.Lib.x64.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $dll) { throw 'NDI Runtime did not install' }
+          $env:NDI_RUNTIME_DIR_V6 = $dll.DirectoryName
+          node scripts/ndi-selftest.js resources/ndi/ls-ndi.exe resources/engine/ls-engine.exe ffmpeg
+          if ($LASTEXITCODE -ne 0) { throw 'NDI end-to-end test failed' }
