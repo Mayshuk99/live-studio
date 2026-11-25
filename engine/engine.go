@@ -87,6 +87,7 @@ type Engine struct {
 
 	clockCam  string
 	lastCount uint64
+	tickAt    time.Time          // the time this output frame stands for
 	acq       map[string]acqInfo // cameras drawn this frame: which frame, when it arrived
 	stopped   atomic.Bool
 
@@ -183,7 +184,7 @@ func (e *Engine) command(cmd string, m Msg, payload []byte) {
 	switch cmd {
 	case "camera":
 		id := m.str("id")
-		c := newCamera(e, id, m.strs("args"))
+		c := newCamera(e, id, m.strs("args"), m.num("fps"))
 		e.mu.Lock()
 		old := e.cams[id]
 		e.cams[id] = c
@@ -513,7 +514,7 @@ func (e *Engine) renderBase(dst *Frame, b *Base, n uint64) {
 	}
 	sm := e.smoothFor(b, n)
 	if c := e.cams[b.Src]; c != nil {
-		f, cnt, at := c.acquire()
+		f, cnt, at := c.acquireAt(e.tickAt)
 		e.acq[b.Src] = acqInfo{cnt, at, f != nil}
 		if f == nil {
 			c.release()
@@ -578,6 +579,7 @@ func (e *Engine) tick(n uint64, now time.Time) time.Duration {
 	t0 := time.Now()
 	of := e.getFrame()
 	e.mu.Lock()
+	e.tickAt = now
 	for k := range e.acq {
 		delete(e.acq, k)
 	}
@@ -641,11 +643,11 @@ func (e *Engine) tick(n uint64, now time.Time) time.Duration {
 		clock = e.cur.Src
 	}
 	if c := e.cams[clock]; c != nil {
-		// the frame actually shown, and when it arrived
+		// the frame actually shown, and its ideal time
 		a, drawn := e.acq[clock]
 		if !drawn {
 			c.mu.Lock()
-			a = acqInfo{c.count, c.lastAt, c.latest >= 0}
+			a = acqInfo{c.count, c.ideal, len(c.ring) > 0}
 			c.mu.Unlock()
 		}
 		cnt, at, ok := a.cnt, a.at, a.ok
@@ -661,8 +663,9 @@ func (e *Engine) tick(n uint64, now time.Time) time.Duration {
 			}
 		}
 		e.clockCam, e.lastCount = clock, cnt
-		if ok && now.Sub(at) < 3*e.period {
-			ph := now.Sub(at) % e.period
+		// keep the moment we pick from (now − cushion) half way between two ideal frame times
+		if ok && c.lock && !at.IsZero() && now.Sub(at) < camLatency+3*e.period {
+			ph := now.Add(-camLatency).Sub(at) % e.period
 			if ph < 0 {
 				ph += e.period
 			}
@@ -765,7 +768,7 @@ func (e *Engine) sendStats() {
 	for id, c := range e.cams {
 		c.secondTick()
 		c.mu.Lock()
-		cams[id] = Msg{"fps": c.fps, "ok": c.ok}
+		cams[id] = Msg{"fps": c.fps, "ok": c.ok, "jitMs": float64(c.jit.Microseconds()) / 1000, "late": c.tooLate}
 		c.mu.Unlock()
 	}
 	for id, v := range e.videos {

@@ -29,7 +29,7 @@ type Audio struct {
 
 const outRate = 48000.0
 const targetSec = 0.06
-const maxSec = 0.5
+const maxSec = 0.16
 
 func newAudio() *Audio { return &Audio{inRate: 48000} }
 
@@ -49,6 +49,8 @@ func (a *Audio) push(samples []float32, ch int, rate float64) {
 	}
 	a.gotAny = true
 	frames := len(a.buf) / 2
+	// far too much waiting (the window was busy, then sent everything at once): skip to the target now —
+	// the moment already had a gap, and otherwise the sound would stay late for a minute (24 Nov: 190 ms)
 	if float64(frames)-a.pos > maxSec*a.inRate {
 		// far too much waiting (the window was busy, then sent a burst): skip to the target
 		drop := int(float64(frames) - a.pos - targetSec*a.inRate)

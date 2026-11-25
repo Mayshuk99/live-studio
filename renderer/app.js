@@ -400,11 +400,13 @@
   const fpsND = fps => fps === 59.94 ? [60000, 1001] : fps === 29.97 ? [30000, 1001] : fps === 23.98 ? [24000, 1001] : [Math.round(fps * 1000), 1000];
   const hexRGB = h => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
   // a card's formats at exactly the output size and rate (as in the native test), best first
-  function natExact(v) {
-    const W = natW(), H = natH(), t = settings.output.fps || 59.94, near = f => Math.abs(f - t) < 0.05;
+  function natExact(v, loose) {
+    const W = natW(), H = natH(), t = settings.output.fps || 59.94, tol = loose ? 0.1 : 0.05, near = f => Math.abs(f - t) < tol;
     const FMT = ['uyvy422', 'yuyv422', 'nv12', 'yuv420p', 'v210'], r = m => (FMT.indexOf(m.fmt) + 10) % 10;
     return (v.modes || []).filter(m => m.w === W && m.h === H && (near(m.maxFps) || near(m.minFps) || (t > m.minFps && t < m.maxFps))).sort((a, b) => r(a) - r(b));
   }
+  // 60 output with 59.94 cards (or 30 / 29.97): still usable, one repeated frame about every 17 s — and said so
+  const natFits = v => natExact(v).length ? natExact(v) : natExact(v, true);
   /* the card a camera uses: the one chosen in Inputs, or the same card the classic engine used (same name and place
      in the list — e.g. “Blackmagic WDM Capture” 2 and 3), or the next free card that has the right format */
   function natCard(cam) {
@@ -412,13 +414,14 @@
     let v = null;
     if (cam.native && cam.native.name) v = list.find(x => x.name === cam.native.name && x.n === (cam.native.n || 0)) || null;
     if (!v) {
-      const taken = new Set([...NAT.cams].filter(([id]) => id !== cam.id).map(([, c]) => c.key)), free = x => natExact(x).length && !taken.has(x.name + '#' + x.n);
+      const taken = new Set([...NAT.cams].filter(([id]) => id !== cam.id).map(([, c]) => c.key)), free = x => natFits(x).length && !taken.has(x.name + '#' + x.n);
       const same = list.filter(x => x.name === cam.deviceLabel);
       v = (cam.deviceIdx !== undefined && same.find(x => x.n === cam.deviceIdx && free(x))) || same.find(free) || list.find(free) || null;
     }
     if (!v) return null;
-    const m = natExact(v)[0];
-    return { name: v.name, n: v.n, w: natW(), h: natH(), fps: settings.output.fps || 59.94, pixFmt: m && m.kind === 'pixel_format' ? m.fmt : null, vcodec: m && m.kind === 'vcodec' ? m.fmt : null, exact: !!m, key: v.name + '#' + v.n };
+    const m = natFits(v)[0];
+    if (m && !natExact(v).length) logEvent('NATIVE', `warning: ${v.name} ${v.n + 1} has no ${settings.output.fps} fps — capturing its ${(+m.maxFps.toFixed(2))} fps; set Settings → Video output → Frame rate to ${(+m.maxFps.toFixed(2))} for a perfectly smooth picture`);
+    return { name: v.name, n: v.n, w: natW(), h: natH(), fps: m ? +m.maxFps.toFixed(2) : (settings.output.fps || 59.94), pixFmt: m && m.kind === 'pixel_format' ? m.fmt : null, vcodec: m && m.kind === 'vcodec' ? m.fmt : null, exact: !!m, key: v.name + '#' + v.n };
   }
   function natPreviewCams() { S.nativeSend({ cmd: 'preview', cam: { w: 384, h: 216, every: 3 }, cams: [...NAT.cams.keys()], pgm: { w: 0, h: 0, every: 0 } }); }
   function natOpenCamera(cam) {
@@ -490,7 +493,7 @@
     for (const c of show.cameras) closeCamera(c.id);
     if (v === 'native') { if (NAT.on) await natStop(); if (!(await natStart())) { settings.output.engine = 'classic'; saveSettings(); } }
     else if (NAT.on) await natStop();
-    await wait(800); // the cards need a moment before another program can open them
+    await wait(1600); // the cards need a moment before another program can open them (24 Nov: “device already in use”)
     for (const c of show.cameras) openCamera(c);
     refreshAll();
   }
@@ -1338,7 +1341,7 @@
         if (!rt.eng.ready) throw new Error('The native engine is still starting — try again in a moment.');
         const fb = rt.encFallback && rt.encFallback.for === o.encoder ? rt.encFallback.level : 0;
         const encoder = fb >= 2 ? 'x264' : o.encoder, safe = fb === 1;
-        const base = { engine: true, width: o.width, height: o.height, videoDelayMs: o.videoDelayMs ?? 60, fps: o.fps, encoder, safe };
+        const base = { engine: true, width: o.width, height: o.height, videoDelayMs: o.videoDelayMs ?? 20, fps: o.fps, encoder, safe };
         const opts = this.kind === 'stream'
           ? Object.assign({ kind: 'stream', url: streamURL(), bitrate: o.bitrate, audioBitrate: o.audioBitrate }, base)
           : Object.assign({ kind: 'record', dir: settings.recordDir, name: show.showName, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256 }, base);
@@ -3970,7 +3973,7 @@
           o.engine = v; saveSettings(); switchEngine(v); toast(v === 'native' ? 'Native engine: the cameras now go straight to it (a few seconds)…' : 'Classic engine', 'ok');
         })),
         (o.engine || 'classic') === 'native' ? el('div', { class: 'field' }, el('span', null, 'Sound/picture sync (native)'), el('div', { class: 'row' },
-          el('input', { type: 'number', min: 0, max: 500, step: 10, value: o.videoDelayMs ?? 60, style: 'width:90px', onchange: e => { o.videoDelayMs = Math.max(0, Math.min(500, Math.round(+e.target.value || 0))); saveSettings(); } }),
+          el('input', { type: 'number', min: 0, max: 500, step: 10, value: o.videoDelayMs ?? 20, style: 'width:90px', onchange: e => { o.videoDelayMs = Math.max(0, Math.min(500, Math.round(+e.target.value || 0))); saveSettings(); } }),
           el('span', { class: 'muted' }, 'ms the picture waits for the sound (if lips move before you hear the words, raise it; starts with the next stream/recording)'))) : null),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free. Set the frame rate to exactly what the cameras send (Blackmagic at 59.94 → 59.94).'),
       rt.encFallback && rt.encFallback.for === o.encoder ? el('div', { class: 'status-bad', style: 'font-size:.9em;margin-top:6px' }, rt.encFallback.level >= 2 ? `This encoder would not start, so the software encoder is being used until the program is restarted. Updating the graphics card driver usually fixes it. Reported: ${rt.encFallback.detail || 'no details'}` : 'This encoder refused the tuned settings; plain settings are being used.') : null,
@@ -4352,7 +4355,7 @@
         E.used = true;
         const drops = Object.values(E.outputs || {}).reduce((a, o2) => a + (o2.dropped || 0), 0), dropNew = drops - (prev.natDrops || 0); prev.natDrops = drops;
         line += ` | native ${E.ticks}f rep ${E.repeat} skip ${E.skip}${E.late ? ` late ${E.late} (${E.maxLateMs}ms)` : ''}${E.resync ? ' STALL' : ''} mix ${E.renderMs}/${E.renderMaxMs}ms sound ${E.audioMs}ms ${E.audioPpm}ppm${E.audioUnder ? ` GAP ${E.audioUnder}` : ''}${dropNew > 0 ? ` enc-drop ${dropNew}` : ''}`;
-        for (const [id, c] of Object.entries(E.cams || {})) line += ` ${camName(id)} ${c.ok ? c.fps : 'NO SIGNAL'}`;
+        for (const [id, c] of Object.entries(E.cams || {})) line += ` ${camName(id)} ${c.ok ? `${c.fps} (uneven ${c.jitMs ?? '?'}ms${c.late ? `, ${c.late} too late` : ''})` : 'NO SIGNAL'}`;
         for (const [id, v] of Object.entries(E.videos || {})) if (v.playing && v.repeats) line += ` video-rep ${v.repeats}`;
         if (E.repeat || E.skip) flags.push('native'); if (E.late || E.resync) flags.push('late'); if (E.audioUnder) flags.push('sound'); if (dropNew > 0) flags.push('enc');
         sum.natRep += E.repeat; sum.natSkip += E.skip; sum.natLate += E.late; sum.natGap += E.audioUnder || 0; sum.natMix = Math.max(sum.natMix, E.renderMaxMs || 0);

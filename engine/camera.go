@@ -13,29 +13,54 @@ import (
 /*
 A camera: FFmpeg reads the capture card and hands over every frame (YUV 4:2:0, frame size) through a pipe.
 
-	Three buffers: one being filled, the newest finished one, and one the mixer may be reading.
+Frames do not arrive evenly through the pipe (24 Nov evening log: a frame shown twice and one skipped 5–6
+times a second when the mixer went by arrival time). So every frame gets an "ideal" time on the camera's own
+steady rhythm — the earliest-arrival line, which follows the card's clock — and the mixer picks frames by
+that time, a little in the past (camLatency), so a frame that comes late through the pipe is still there in time.
 */
+const camBufs = 8
+const camKeep = 6 // finished frames kept for the mixer to choose from
+
+type camSlot struct {
+	buf   int
+	n     uint64
+	ideal time.Time
+}
+
 type Camera struct {
 	id      string
 	args    []string
+	period  time.Duration // the camera's own frame time
+	lock    bool          // same rate as the output: the output clock may follow it
 	e       *Engine
 	mu      sync.Mutex
-	bufs    [3]*Frame
-	latest  int
+	bufs    [camBufs]*Frame
+	ring    []camSlot // finished frames, oldest first
 	held    int
 	filling int
 	count   uint64
 	lastAt  time.Time
+	ideal   time.Time // ideal time of the newest frame
 	ok      bool
 	status  string
 	stopped bool
 	cmd     *exec.Cmd
 	secN    int // frames this second
 	fps     float64
+	jitMax  time.Duration // how late (after its ideal time) the latest frame came, worst this second
+	jit     time.Duration
+	tooLate int // frames that came later than the mixer's cushion
+	lateSec int
 }
 
-func newCamera(e *Engine, id string, args []string) *Camera {
-	c := &Camera{id: id, args: args, e: e, latest: -1, held: -1, filling: 0}
+func newCamera(e *Engine, id string, args []string, fps float64) *Camera {
+	c := &Camera{id: id, args: args, e: e, held: -1, filling: 0, period: e.period, lock: true}
+	if fps > 1 {
+		c.period = time.Duration(float64(time.Second) / fps)
+		// a 59.94 camera into a 60 output (or the other way): show it, but never pull the output clock to it
+		outFps := float64(e.fpsNum) / float64(e.fpsDen)
+		c.lock = abs(fps-outFps) < 0.01
+	}
 	for i := range c.bufs {
 		c.bufs[i] = newFrame(e.W, e.H)
 		fillBlack(c.bufs[i])
@@ -54,8 +79,56 @@ func (c *Camera) setStatus(ok bool, text string) {
 	}
 }
 
+func (c *Camera) inRing(b int) bool {
+	for _, s := range c.ring {
+		if s.buf == b {
+			return true
+		}
+	}
+	return false
+}
+
+// a frame arrived: place it on the camera's steady timeline
+func (c *Camera) arrived(now time.Time) {
+	T := c.period
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.count++
+	c.secN++
+	c.lastAt = now
+	var ideal time.Time
+	if c.ideal.IsZero() {
+		ideal = now
+	} else {
+		ideal = c.ideal.Add(T)
+		d := now.Sub(ideal)
+		switch {
+		case d < 0 || d > 6*T: // earlier than the line (it moves down), or the card stopped for a while (start again)
+			ideal = now
+		default: // later than the line: creep toward it slowly, so the line follows the card's clock
+			ideal = ideal.Add(d / 256)
+		}
+	}
+	if d := now.Sub(ideal); d > c.jitMax {
+		c.jitMax = d
+	}
+	if now.Sub(ideal) > camLatency {
+		c.lateSec++
+	}
+	c.ideal = ideal
+	c.ring = append(c.ring, camSlot{buf: c.filling, n: c.count, ideal: ideal})
+	if len(c.ring) > camKeep {
+		c.ring = c.ring[len(c.ring)-camKeep:]
+	}
+	for i := 0; i < camBufs; i++ {
+		if i != c.held && !c.inRing(i) {
+			c.filling = i
+			break
+		}
+	}
+}
+
 func (c *Camera) loop() {
-	frameSize := c.e.W * c.e.H * 3 / 2
 	for attempt := 0; ; attempt++ {
 		c.mu.Lock()
 		if c.stopped {
@@ -84,6 +157,7 @@ func (c *Camera) loop() {
 		}
 		c.mu.Lock()
 		c.cmd = cmd
+		c.ideal = time.Time{}
 		c.mu.Unlock()
 		go func() {
 			sc := bufio.NewScanner(errp)
@@ -108,25 +182,12 @@ func (c *Camera) loop() {
 			if _, err := io.ReadFull(r, buf.Buf); err != nil {
 				break
 			}
-			now := time.Now()
+			c.arrived(time.Now())
 			got++
 			if got == 2 {
 				c.setStatus(true, "Running")
 			}
-			c.mu.Lock()
-			c.latest = c.filling
-			c.count++
-			c.secN++
-			c.lastAt = now
-			for i := 0; i < 3; i++ {
-				if i != c.latest && i != c.held {
-					c.filling = i
-					break
-				}
-			}
-			c.mu.Unlock()
 		}
-		_ = frameSize
 		cmd.Wait()
 		c.mu.Lock()
 		stopped := c.stopped
@@ -146,15 +207,39 @@ func (c *Camera) loop() {
 	}
 }
 
-// the newest frame, kept still until release()
+// how far behind "now" the mixer shows the camera: frames may come this late through the pipe without a hitch
+const camLatency = 2 * 16683 * time.Microsecond
+
+// the frame for output time t (its ideal time at most camLatency before t), kept still until release()
+func (c *Camera) acquireAt(t time.Time) (*Frame, uint64, time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.ring) == 0 {
+		return nil, c.count, time.Time{}
+	}
+	target := t.Add(-camLatency)
+	pick := 0 // the oldest, if all are newer than wanted (just started)
+	for i := len(c.ring) - 1; i >= 0; i-- {
+		if !c.ring[i].ideal.After(target) {
+			pick = i
+			break
+		}
+	}
+	s := c.ring[pick]
+	c.held = s.buf
+	return c.bufs[s.buf], s.n, s.ideal
+}
+
+// the newest frame (small pictures for the window)
 func (c *Camera) acquire() (*Frame, uint64, time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.latest < 0 {
+	if len(c.ring) == 0 {
 		return nil, c.count, c.lastAt
 	}
-	c.held = c.latest
-	return c.bufs[c.held], c.count, c.lastAt
+	s := c.ring[len(c.ring)-1]
+	c.held = s.buf
+	return c.bufs[s.buf], s.n, s.ideal
 }
 
 func (c *Camera) release() {
@@ -177,5 +262,14 @@ func (c *Camera) secondTick() {
 	c.mu.Lock()
 	c.fps = float64(c.secN)
 	c.secN = 0
+	c.jit, c.jitMax = c.jitMax, 0
+	c.tooLate, c.lateSec = c.lateSec, 0
 	c.mu.Unlock()
+}
+
+func abs(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

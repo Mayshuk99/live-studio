@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -119,6 +120,7 @@ func readMsg(r io.Reader) (Msg, []byte, error) {
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	debug.SetGCPercent(300)
 	setOwnPriority()
 	in := bufio.NewReaderSize(os.Stdin, 4<<20)
 	var eng *Engine

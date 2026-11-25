@@ -80,7 +80,7 @@ class NativeEngine extends EventEmitter {
 function engineInput(o) {
   const fps = o.fps || 59.94;
   const rate = fps === 59.94 ? '60000/1001' : fps === 29.97 ? '30000/1001' : String(fps);
-  const d = Math.max(0, o.videoDelayMs === undefined ? 60 : o.videoDelayMs) / 1000;
+  const d = Math.max(0, o.videoDelayMs === undefined ? 20 : o.videoDelayMs) / 1000;
   return [
     // no probing: the formats are known, and probing would wait for sound before reading any picture
     '-thread_queue_size', '2048', '-probesize', '32', '-analyzeduration', '0', '-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'tcp://127.0.0.1:{AUDIOPORT}',

@@ -15,7 +15,8 @@ class PcmTap extends AudioWorkletProcessor {
         this.buf[this.i * 2] = L[k]; this.buf[this.i * 2 + 1] = R[k];
         if (++this.i === this.n) {
           const b = this.buf.slice();
-          if (this.out) { try { this.out.postMessage({ rate: sampleRate, pcm: b }, [b.buffer]); } catch (e) { this.out = null; this.port.postMessage(b, [b.buffer]); } }
+          // copied, not transferred: the main process end of the line cannot take over a transferred buffer
+          if (this.out) { try { this.out.postMessage({ rate: sampleRate, pcm: b }); } catch (e) { this.out = null; this.port.postMessage(b, [b.buffer]); } }
           else this.port.postMessage(b, [b.buffer]);
           this.i = 0;
         }
