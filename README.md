@@ -10,7 +10,7 @@ Your own live production and streaming program for Windows.
 - **Shortcuts:** set your own key for every action.
 - **Audio:** a mixer for your SSL audio interface, camera audio and video files.
 - **Output:** streams to YouTube and records to MP4 at the same time.
-- **Updates:** installs from a normal `Setup.exe` and updates itself.
+- **Updates:** installs from a normal `Setup.exe`; tells you about new versions and installs them when you choose.
 
 ---
 
@@ -106,28 +106,64 @@ In **Titles & Graphics**, click **+ Web page** and paste the link of your live t
 
 ## 5. How updates work
 
-1. Ask Claude for a change. The code is updated and pushed to your GitHub repository.
-2. On GitHub, go to **Actions → Build Windows installer → Run workflow** and enter a higher version number, such as `1.0.1`.
-3. Every installed copy downloads the update in the background. A bar says **"Update ready — Restart & update"**. The app never restarts while you're live; otherwise the update installs the next time you close it.
+1. A change is pushed to the `main` branch of the GitHub repository.
+2. A new release is built when `package.json` gets a higher `"version"` (or by hand: **Actions → Build Windows installer → Run workflow**). GitHub Actions builds `Live-Studio-Setup-x.y.z.exe` and publishes it as a GitHub Release.
+3. Installed copies look for new releases. What happens next is chosen in **Settings → About → Updates**:
+   - **Tell me about a new version — I decide when to install it** (default): a bar says *Update x.y.z is available* with **Download & install** / **Later**. Nothing installs by itself.
+   - **Never look by itself:** only when you press *Check for updates*.
+   - **Automatic:** downloads in the background and installs when the app closes.
+   The app never updates while streaming or recording.
 
 ---
 
 ## For developers
 
+### Layout
+
 ```
-main.js        desktop app: window, files, settings, encoder, auto-update
-preload.js     safe bridge between the interface and the desktop app
-streamer.js    FFmpeg encoder control (YouTube RTMPS stream + MP4 recording)
+main.js            desktop app (Electron main): window, settings, files, YouTube sign-in, updates,
+                   the native engine and the VST host processes
+preload.js         safe bridge between the interface and main.js (window.S)
+streamer.js        FFmpeg command lines: YouTube stream (RTMPS/FLV), MP4 recording, capture cards (dshow),
+                   own encoder settings for stream / recording (Wirecast-style presets)
+native-engine.js   starts and talks to the native engine (engine/ → ls-engine.exe)
+vst-host.js        starts and talks to the VST3 plug-in host (vsthost/ → ls-vst.exe)
 renderer/
-  index.html   interface shell
-  styles.css   look and layout
-  app.js       panels, switching, shots, labels, intro/ending, outputs
-  engine.js    GPU video compositor (framing, color, transitions, labels)
-  audio.js     audio mixer (inputs, voice processing, limiter, meters)
-  bridge.js    browser stand-in so the interface can be designed in Chrome
-.github/workflows/build.yml   builds Setup.exe on GitHub and publishes updates
+  index.html       interface shell
+  styles.css       look and layout
+  app.js           almost all of the interface: shots, switching, labels, service flow, settings,
+                   outputs, audio panel, DYN (compressor / limiter / plug-ins / AUTO level), logs
+  engine.js        classic engine: WebGL2 compositor (framing, color, chroma key, PiP, transitions, labels)
+  audio.js         audio mixer (Web Audio): inputs, compressor, limiter, AUTO level, meters, LUFS
+  vst-insert.js    the audio path to / from the VST host
+  i18n.js          interface translation (swaps English texts on screen); i18n-ru.js = Russian texts
+  bridge.js        browser stand-in for window.S, so the interface runs in plain Chrome for testing
+  *-worklet.js, pcm-tap.js, ebml-scan.js   audio worklets (limiter, sync test, sound tap) and the
+                   WebM/Matroska scanner for the shared encoder
+engine/            native engine in Go (OBS-style): reads capture cards through FFmpeg, composites in YUV,
+                   feeds the stream / recording encoders; `go test ./...` runs its tests
+vsthost/           VST3 host in C++ (CMake; the Steinberg VST3 SDK is downloaded by the build, not stored here)
+i18n/              translation tools: extract.js, check.js, build.js, extra.tsv (English<TAB>Russian)
+scripts/           self-tests run by the build: ffmpeg-selftest.js, engine-selftest.js, vst-selftest.js
+.github/workflows/build.yml   the Windows build: FFmpeg download + test, Go engine build + test,
+                   VST host build + test, electron-builder installer, GitHub Release
 ```
 
-To run from source on Windows (needs Node.js 22): `npm install`, then put `ffmpeg.exe` in `resources/ffmpeg/` (or on PATH), then `npm start`.
+### Build and run
 
-How the video flows: the cameras feed the GPU compositor, which adds framing, color, labels and transitions. That result is encoded by the bundled FFmpeg: H.264 CBR with a keyframe every 2 seconds plus AAC audio, sent over RTMPS to YouTube and also written to MP4.
+The real build is `.github/workflows/build.yml` (runs on `windows-latest`); follow its steps to build by hand.
+
+- **Run from source on Windows** (Node.js 22): `npm install`, put `ffmpeg.exe` in `resources/ffmpeg/` (or on PATH), then `npm start`.
+- **Native engine:** Go 1.22+ (the build uses 1.24), `go -C engine build -o ../resources/engine/ls-engine.exe .`
+- **VST host:** Visual Studio 2022 + CMake; clone `steinbergmedia/vst3sdk` (tag `v3.8.1_build_84`) into `vsthost/vst3sdk` with the submodules `base pluginterfaces public.sdk cmake`, then `cmake -S vsthost -B vsthost/build -A x64` and `cmake --build vsthost/build --config Release --target ls-vst`; copy `ls-vst.exe` to `resources/vst/`.
+- **Installer:** `npm run dist` (electron-builder, output in `dist/`).
+- **Interface without Windows:** serve `renderer/` with any static server (e.g. `python -m http.server`) and open `index.html` in Chrome; `bridge.js` stands in for the desktop app (fake cameras with `--use-fake-device-for-media-stream`).
+
+### Translations
+
+The code is written in English. After adding interface text: add `English<TAB>Russian` lines to `i18n/extra.tsv`
+(use `{0}`, `{1}` for parts that change), then `node i18n/build.js renderer/i18n-ru.js`. See `i18n/README.md`.
+
+### Releasing
+
+Raise `"version"` in `package.json` and push to `main`; the workflow builds and publishes `vX.Y.Z`.
