@@ -151,7 +151,7 @@
   const defaultSettings = () => ({
     youtube: { server: 'rtmps://a.rtmps.youtube.com:443/live2', custom: '', key: '' },
     output: { width: 1920, height: 1080, fps: 30, bitrate: 8000, encoder: 'x264', audioBitrate: 160, recordBitrate: 20000, recordAudioBitrate: 256 },
-    recordDir: '', autoRecord: false, ftbAudio: true, zebra: false, moveSpeed: 0.12,
+    recordDir: '', autoRecord: false, ftbAudio: true, zebra: false, moveSpeed: 0.12, updates: 'ask',
     ui: { scale: 1, accent: '#3b82f6', card: 1, layouts: defaultLayouts(), layoutV: 5 },
     hotkeys: {}
   });
@@ -4594,7 +4594,12 @@
           if (r.status === 'dev') rt.upd = { status: 'note', message: 'Updates work in the installed app.' };
           else if (r.status === 'error') rt.upd = { status: 'error', message: r.message };
           updRender();
-        } }, 'Check for updates'))
+        } }, 'Check for updates')),
+      el('div', { class: 'field', style: 'margin-top:8px' }, el('span', null, 'Updates'),
+        select([['ask', 'Tell me about a new version — I decide when to install it'], ['off', 'Never look by itself — only when I press “Check for updates”'], ['auto', 'Automatic — download and install by itself']], s.updates || 'ask', v => {
+          s.updates = v; saveSettings(); logEvent('SETTINGS', `updates: ${v}`);
+          toast(v === 'auto' ? 'Updates: automatic.' : v === 'off' ? 'Updates: only when you press “Check for updates”.' : 'Updates: you will be told about a new version; nothing installs until you choose.', 'ok');
+        }))
     );
     openModal('Settings', body);
     updRender();
@@ -4618,6 +4623,12 @@
 
   /* ================= updates ================= */
   const installNow = () => { if (rt.live || rt.rec) return toast('Finish streaming/recording first, then restart to update.', 'error'); S.installUpdate(); };
+  // a new version was found and the user chose to get it (Updates: ask / off)
+  const downloadNow = async () => {
+    if (rt.live || rt.rec) return toast('Finish streaming/recording first, then download the update.', 'error');
+    const r = S.downloadUpdate ? await S.downloadUpdate() : { status: 'dev' };
+    if (r && r.status === 'error') toast(`The update could not be downloaded: ${r.message}`, 'error');
+  };
   // the same status is shown in the top bar and beside "Check for updates" in Settings
   function updRender() {
     const n = $('#updStatus'), u = rt.upd;
@@ -4626,6 +4637,7 @@
     if (!u) return;
     if (u.status === 'checking') n.textContent = 'Checking for updates…';
     else if (u.status === 'current') { n.textContent = '✓ You have the newest version.'; n.className = 'status-ok'; }
+    else if (u.status === 'available') { n.append(`Update ${u.version || ''} is available. `, el('button', { class: 'btn small primary', onclick: downloadNow }, 'Download & install')); }
     else if (u.status === 'downloading') n.textContent = `Update ${u.version || ''} found — downloading${u.percent !== undefined ? ` ${u.percent}%` : '…'}`;
     else if (u.status === 'ready') { n.className = 'status-ok'; n.append(`✓ Update ${u.version || ''} is downloaded. `, el('button', { class: 'btn small primary', onclick: installNow }, 'Restart & update now')); }
     else if (u.status === 'error') { n.textContent = `Update check failed: ${u.message}`; n.className = 'status-bad'; }
@@ -4636,7 +4648,12 @@
     rt.upd = Object.assign({}, u.status === 'downloading' && rt.upd && rt.upd.status === 'downloading' ? rt.upd : null, u);
     if (u.status === 'ready') {
       bar.innerHTML = '';
-      bar.append(el('span', null, `Update ${u.version} is ready.`), el('button', { class: 'btn small primary', onclick: installNow }, 'Restart & update'), el('span', { class: 'muted' }, 'It will also install automatically next time you close the app.'));
+      bar.append(el('span', null, `Update ${u.version} is ready.`), el('button', { class: 'btn small primary', onclick: installNow }, 'Restart & update'),
+        settings.updates === 'auto' ? el('span', { class: 'muted' }, 'It will also install automatically next time you close the app.') : el('button', { class: 'btn small', onclick: () => bar.classList.add('hidden') }, 'Later'));
+      bar.classList.remove('hidden');
+    } else if (u.status === 'available') {
+      bar.innerHTML = '';
+      bar.append(el('span', null, `Update ${u.version} is available.`), el('button', { class: 'btn small primary', onclick: downloadNow }, 'Download & install'), el('button', { class: 'btn small', onclick: () => bar.classList.add('hidden') }, 'Later'));
       bar.classList.remove('hidden');
     } else if (u.status === 'downloading') {
       bar.innerHTML = ''; bar.append(el('span', null, `Downloading update ${rt.upd.version || ''}… ${rt.upd.percent !== undefined ? rt.upd.percent + '%' : ''}`)); bar.classList.remove('hidden');

@@ -138,7 +138,8 @@
     onSaveRequest: fn => { window.__saveReq = fn; },
     saved: ok => { window.__saved = ok; },
     checkUpdates: async () => ({ status: 'dev' }),
-    installUpdate: () => {},
+    installUpdate: () => { window.__installs = (window.__installs || 0) + 1; },
+    downloadUpdate: async () => { window.__downloads = (window.__downloads || 0) + 1; return { status: 'ok' }; },
     confirmQuit: () => {},
     // browser stand-in for web overlays: draws a fake caption page (the real app renders the actual web page)
     webOpen: async (id, cfg) => {

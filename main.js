@@ -346,6 +346,7 @@ ipcMain.handle('settings:save', (e, obj) => {
   }
   writeJSON(settingsFile(), s);
   outputs.ffmpegPath = ffmpegPath();
+  applyUpdMode();
   return true;
 });
 
@@ -695,26 +696,42 @@ ipcMain.handle('yt:signIn', () => new Promise(resolve => {
   });
 }));
 
-/* ---------- automatic updates (GitHub Releases) ---------- */
+/* ---------- updates (GitHub Releases) — Settings → About → Updates:
+   ask  (default) look for a new version and offer it; nothing downloads or installs until the user presses the button
+   off  never look by itself — only when "Check for updates" is pressed (then it asks the same way)
+   auto download in the background and install when the program closes ---------- */
 let lastUpdate = null;
 function sendUpdate(status, extra) { lastUpdate = { status, ...extra }; if (win && !win.isDestroyed()) win.webContents.send('update:status', lastUpdate); }
+const updMode = () => { const m = readJSON(settingsFile(), {}).updates; return ['ask', 'off', 'auto'].includes(m) ? m : 'ask'; };
+function applyUpdMode() {
+  if (!autoUpdater) return;
+  const auto = updMode() === 'auto';
+  autoUpdater.autoDownload = auto;
+  autoUpdater.autoInstallOnAppQuit = auto;
+}
 function setupUpdater() {
   if (!autoUpdater || !app.isPackaged) return;
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  applyUpdMode();
   autoUpdater.on('checking-for-update', () => sendUpdate('checking'));
-  autoUpdater.on('update-available', i => sendUpdate('downloading', { version: i.version }));
+  autoUpdater.on('update-available', i => sendUpdate(autoUpdater.autoDownload ? 'downloading' : 'available', { version: i.version }));
   autoUpdater.on('update-not-available', () => sendUpdate('current'));
   autoUpdater.on('download-progress', p => sendUpdate('downloading', { percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', i => sendUpdate('ready', { version: i.version }));
   autoUpdater.on('error', err => sendUpdate('error', { message: String(err && err.message || err) }));
-  const check = () => { if (!outputs.active) autoUpdater.checkForUpdates().catch(() => {}); };
+  const check = () => { if (!outputs.active && updMode() !== 'off') autoUpdater.checkForUpdates().catch(() => {}); };
   setTimeout(check, 4000);
   setInterval(check, 2 * 60 * 60 * 1000);
 }
 ipcMain.handle('update:check', async () => {
   if (!autoUpdater || !app.isPackaged) return { status: 'dev' };
   try { if (lastUpdate && lastUpdate.status === 'ready') { sendUpdate('ready', { version: lastUpdate.version }); return { status: 'ready' }; } await autoUpdater.checkForUpdates(); return { status: 'checking' }; } catch (e) { return { status: 'error', message: e.message }; }
+});
+// the user chose to get the version that was found
+ipcMain.handle('update:download', async () => {
+  if (!autoUpdater || !app.isPackaged) return { status: 'dev' };
+  if (outputs.active) return { status: 'error', message: 'Finish streaming/recording first.' };
+  try { sendUpdate('downloading', { version: lastUpdate && lastUpdate.version }); await autoUpdater.downloadUpdate(); return { status: 'ok' }; }
+  catch (e) { sendUpdate('error', { message: e.message }); return { status: 'error', message: e.message }; }
 });
 ipcMain.on('update:install', () => {
   if (outputs.active) return;

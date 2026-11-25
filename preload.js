@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('studio', {
   onUpdate: cb => ipcRenderer.on('update:status', (e, s) => cb(s)),
   checkUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.send('update:install'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
   webOpen: (id, cfg) => ipcRenderer.invoke('web:open', id, cfg),
   webClose: id => ipcRenderer.invoke('web:close', id),
   webReload: id => ipcRenderer.invoke('web:reload', id),

@@ -1117,7 +1117,18 @@ window.I18N_RU = {
     "Off: the stream uses the encoder from Video output and the bitrates above.": "Выключено: трансляция использует кодировщик из «Видеовыход» и битрейт выше.",
     "x264 cannot stream 4K / 1440p in time — choose NVIDIA H.264.": "x264 не успевает транслировать 4K / 1440p — выберите NVIDIA H.264.",
     "Wirecast “Pilgrim Live Services”": "Wirecast «Pilgrim Live Services»",
-    "e.g. --bframes 0": "например --bframes 0"
+    "e.g. --bframes 0": "например --bframes 0",
+    "Updates": "Обновления",
+    "Tell me about a new version — I decide when to install it": "Сообщать о новой версии — я сам решаю, когда установить",
+    "Never look by itself — only when I press “Check for updates”": "Не искать самому — только когда я нажму «Проверить обновления»",
+    "Automatic — download and install by itself": "Автоматически — скачивать и устанавливать самому",
+    "Updates: automatic.": "Обновления: автоматически.",
+    "Updates: only when you press “Check for updates”.": "Обновления: только по кнопке «Проверить обновления».",
+    "Updates: you will be told about a new version; nothing installs until you choose.": "Обновления: программа сообщит о новой версии; ничего не установится, пока вы не решите.",
+    "Download & install": "Скачать и установить",
+    "Later": "Позже",
+    "Finish streaming/recording first, then download the update.": "Сначала закончите трансляцию/запись, затем скачайте обновление.",
+    "Finish streaming/recording first.": "Сначала закончите трансляцию/запись."
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
@@ -1272,6 +1283,8 @@ window.I18N_RU = {
     ["native ({0})", "встроенный ({0})"],
     ["Same as Video output — {0}", "Как в «Видеовыход» — {0}"],
     ["Same as the program ({0})", "Как у программы ({0})"],
-    ["YouTube needs a key frame at least every 4 seconds ({0} frames or fewer).", "YouTube требует ключевой кадр не реже раза в 4 секунды ({0} кадров или меньше)."]
+    ["YouTube needs a key frame at least every 4 seconds ({0} frames or fewer).", "YouTube требует ключевой кадр не реже раза в 4 секунды ({0} кадров или меньше)."],
+    ["Update {0} is available.", "Доступно обновление {0}."],
+    ["The update could not be downloaded: {0}", "Не удалось скачать обновление: {0}"]
   ]
 };
