@@ -29,7 +29,9 @@ type camSlot struct {
 
 type Camera struct {
 	id      string
-	W, H    int // captured size
+	W, H    int     // captured size
+	comb    float64 // how combed the picture looks (‰ of the picture; interlaced signal captured as whole frames)
+	dark    bool    // the picture is black (no signal, or the wrong format chosen on the card)
 	args    []string
 	period  time.Duration // the camera's own frame time
 	lock    bool          // same rate as the output: the output clock may follow it
@@ -188,6 +190,13 @@ func (c *Camera) loop() {
 			if _, err := io.ReadFull(r, buf.Buf); err != nil {
 				break
 			}
+			if got%30 == 5 { // about once a second: does the picture look interlaced (combing), or black?
+				comb, mean := combScore(buf)
+				c.mu.Lock()
+				c.comb = c.comb*0.6 + comb*0.4
+				c.dark = mean < 20
+				c.mu.Unlock()
+			}
 			c.arrived(time.Now())
 			got++
 			if got == 2 {
@@ -274,6 +283,40 @@ func (c *Camera) secondTick() {
 }
 
 func abs(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+/*
+combing: a line that differs from both lines next to it (the other field) the same way, while matching the lines
+
+	two away (its own field) — what an interlaced picture with movement looks like when shown as one frame.
+	Thin lines in a progressive picture differ from the lines two away too, so they do not count.
+	Returns ‰ of the sampled picture that is combed, and the average brightness.
+*/
+func combScore(f *Frame) (float64, float64) {
+	Y, W, H := f.Y(), f.W, f.H
+	combed, total, sum := 0, 0, 0
+	for y := 2; y < H-2; y += 6 {
+		r0, ra, rb, ra2, rb2 := Y[y*W:(y+1)*W], Y[(y-1)*W:y*W], Y[(y+1)*W:(y+2)*W], Y[(y-2)*W:(y-1)*W], Y[(y+2)*W:(y+3)*W]
+		for x := 0; x < W; x += 4 {
+			c, a, b := int(r0[x]), int(ra[x]), int(rb[x])
+			sum += c
+			total++
+			if (c-a)*(c-b) > 400 && iabs(c-int(ra2[x])) < 14 && iabs(c-int(rb2[x])) < 14 {
+				combed++
+			}
+		}
+	}
+	if total == 0 {
+		return 0, 0
+	}
+	return float64(combed) * 1000 / float64(total), float64(sum) / float64(total)
+}
+
+func iabs(v int) int {
 	if v < 0 {
 		return -v
 	}

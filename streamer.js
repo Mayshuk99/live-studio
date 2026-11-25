@@ -96,13 +96,16 @@ function nativeArgs(o, partFile) {
   ];
 }
 
-/* a capture card for the native engine: { name, n, w, h, fps, pixFmt | vcodec } */
+/* a capture card for the native engine: { name, n, w, h, fps, capFps, deint, pixFmt | vcodec }
+   1080i: the card gives whole frames at capFps (1080i59.94 → 29.97); bwdif makes one picture per field
+   (deint 'field' → 59.94p) or per frame ('frame'). HD interlaced is top field first. */
 function captureArgs(d) {
+  const deint = d.deint === 'field' ? ['-vf', 'bwdif=mode=send_field:parity=tff:deint=all'] : d.deint === 'frame' ? ['-vf', 'bwdif=mode=send_frame:parity=tff:deint=all'] : [];
   return ['-f', 'dshow', '-rtbufsize', '1500M',
     ...(d.n ? ['-video_device_number', String(d.n)] : []),
-    '-video_size', `${d.w || 1920}x${d.h || 1080}`, '-framerate', rate(capRate(d.fps || 59.94)),
+    '-video_size', `${d.w || 1920}x${d.h || 1080}`, '-framerate', rate(capRate(d.capFps || d.fps || 59.94)),
     ...(d.vcodec ? ['-vcodec', d.vcodec] : d.pixFmt ? ['-pixel_format', d.pixFmt] : []),
-    '-i', `video=${d.name}`];
+    '-i', `video=${d.name}`, ...deint];
 }
 
 // a card's reported rate like 59.9402 → 59.94

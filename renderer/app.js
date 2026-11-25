@@ -370,7 +370,9 @@
     try {
       // Blackmagic cards only give a picture when the requested format matches the camera's signal exactly (e.g. 1080p59.94)
       if (cam.fps === undefined) cam.fps = /blackmagic|decklink|intensity|ultrastudio/i.test(cam.deviceLabel || '') ? '59.94' : '';
-      const fps = +cam.fps || 0;
+      // 1080i: the card gives whole frames at half the field rate (1080i59.94 → 29.97), blended so lines do not comb
+      const fps = cam.signal === 'i' && +cam.fps > 30 ? +cam.fps / 2 : +cam.fps || 0;
+      if (cam.signal === 'i') engine.deint.add(cam.id); else engine.deint.delete(cam.id);
       const base = { deviceId: { exact: cam.deviceId }, width: fps ? { exact: res[0] } : { ideal: res[0] }, height: fps ? { exact: res[1] } : { ideal: res[1] } };
       let stream;
       try { stream = await navigator.mediaDevices.getUserMedia({ video: Object.assign({}, base, { frameRate: fps ? { min: fps - 0.5, max: fps + 0.5, ideal: fps } : { ideal: settings.output.fps } }), audio: false }); }
@@ -403,7 +405,7 @@
      A separate program captures the cameras itself, mixes the program on its own steady clock (locked to the camera
      on air) and feeds YouTube and the recording. This window still does everything you see and touch: it tells the
      engine what is on air and sends it the graphics, captions and sound; the engine sends back small camera pictures. */
-  const NAT = { on: false, ready: false, devices: null, cams: new Map(), M: null };
+  const NAT = { on: false, ready: false, devices: null, cams: new Map(), M: null, force: new Map(), tried: new Map() }; // force / tried: 1080i vs 1080p chosen automatically
   rt.eng = null; // NAT while the native engine is in use
   const natW = () => settings.output.width || 1920, natH = () => settings.output.height || 1080;
   // the size a camera is captured at: the output size up to 1080p; for 4K / 1440p output the camera's own size (Inputs → resolution)
@@ -411,8 +413,8 @@
   const fpsND = fps => fps === 59.94 ? [60000, 1001] : fps === 29.97 ? [30000, 1001] : fps === 23.98 ? [24000, 1001] : [Math.round(fps * 1000), 1000];
   const hexRGB = h => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
   // a card's formats at exactly the output size and rate (as in the native test), best first
-  function natExact(v, loose, cam) {
-    const [W, H] = natCap(cam), t = settings.output.fps || 59.94, tol = loose ? 0.1 : 0.05, near = f => Math.abs(f - t) < tol;
+  function natExact(v, loose, cam, rateOverride) {
+    const [W, H] = natCap(cam), t = rateOverride || settings.output.fps || 59.94, tol = loose ? 0.1 : 0.05, near = f => Math.abs(f - t) < tol;
     const FMT = ['uyvy422', 'yuyv422', 'nv12', 'yuv420p', 'v210'], r = m => (FMT.indexOf(m.fmt) + 10) % 10;
     return (v.modes || []).filter(m => m.w === W && m.h === H && (near(m.maxFps) || near(m.minFps) || (t > m.minFps && t < m.maxFps))).sort((a, b) => r(a) - r(b));
   }
@@ -430,9 +432,30 @@
       v = (cam.deviceIdx !== undefined && same.find(x => x.n === cam.deviceIdx && free(x))) || same.find(free) || list.find(free) || null;
     }
     if (!v) return null;
+    const plan = natPlan(v, cam, natForce(cam));
+    if (plan.deint) {
+      const m = plan.mode, cap = natCap(cam), out = settings.output.fps || 59.94;
+      return { name: v.name, n: v.n, w: cap[0], h: cap[1], fps: plan.deint === 'field' ? out : +m.maxFps.toFixed(2), capFps: +m.maxFps.toFixed(2), deint: plan.deint, pixFmt: m.kind === 'pixel_format' ? m.fmt : null, vcodec: m.kind === 'vcodec' ? m.fmt : null, exact: true, key: v.name + '#' + v.n, label: plan.label };
+    }
     const m = natFits(v, cam)[0], cap = natCap(cam);
     if (m && !natExact(v, false, cam).length) logEvent('NATIVE', `warning: ${v.name} ${v.n + 1} has no ${settings.output.fps} fps — capturing its ${(+m.maxFps.toFixed(2))} fps; set Settings → Video output → Frame rate to ${(+m.maxFps.toFixed(2))} for a perfectly smooth picture`);
     return { name: v.name, n: v.n, w: cap[0], h: cap[1], fps: m ? +m.maxFps.toFixed(2) : (settings.output.fps || 59.94), pixFmt: m && m.kind === 'pixel_format' ? m.fmt : null, vcodec: m && m.kind === 'vcodec' ? m.fmt : null, exact: !!m, key: v.name + '#' + v.n };
+  }
+  /* 1080i: an interlaced camera shows up on the card as whole frames at half its field rate (1080i59.94 = 29.97
+     frames). Those are captured and deinterlaced (bwdif) back to full motion: 1080i59.94 → 59.94p (one picture per
+     field), or to one picture per frame when the output itself is 25 / 29.97 / 30.
+     cam.signal: 'auto' (default) | 'p' (progressive) | 'i' (interlaced). Automatic uses the progressive format when
+     the card has it, the interlaced one when it has only that, and switches by itself when the picture says otherwise
+     (combing seen, or no picture / black on the format it tried) — see natAuto. */
+  const natForce = cam => (NAT.force.get(cam.id) || (cam.signal === 'i' ? 'i' : cam.signal === 'p' ? 'p' : null));
+  function natPlan(v, cam, want) {
+    const out = settings.output.fps || 59.94, P = natExact(v, false, cam), half = out > 30 ? natExact(v, false, cam, out / 2) : [];
+    const iName = r => `1080i${(+(r * 2).toFixed(2))}`;
+    if (want !== 'p') {
+      if (out > 30 && half.length && (want === 'i' || !P.length)) return { deint: 'field', mode: half[0], label: `${iName(half[0].maxFps)} → ${out}p` };
+      if (out <= 30 && P.length && want === 'i') return { deint: 'frame', mode: P[0], label: `${iName(P[0].maxFps)} → ${out}p` };
+    }
+    return { deint: null };
   }
   function natPreviewCams() { S.nativeSend({ cmd: 'preview', cam: { w: 384, h: 216, every: 3 }, cams: [...NAT.cams.keys()], pgm: { w: 0, h: 0, every: 0 } }); }
   function natOpenCamera(cam) {
@@ -441,13 +464,13 @@
     const d = natCard(cam);
     if (!d) { const c = natCap(cam); rt.camStatus.set(cam.id, { ok: false, text: `No free capture card with ${c[0]}×${c[1]} at ${settings.output.fps} fps — choose one below` }); refreshInputStatus(); return; }
     const prev = NAT.cams.get(cam.id);
-    if (prev && prev.key === d.key && prev.fmt === (d.pixFmt || d.vcodec)) return; // already capturing it
-    NAT.cams.set(cam.id, { key: d.key, fmt: d.pixFmt || d.vcodec, dev: d });
+    if (prev && prev.key === d.key && prev.fmt === (d.pixFmt || d.vcodec) && prev.deint === (d.deint || null)) return; // already capturing it
+    NAT.cams.set(cam.id, { key: d.key, fmt: d.pixFmt || d.vcodec, deint: d.deint || null, dev: d, since: performance.now(), bad: 0, comb: 0 });
     rt.camStatus.set(cam.id, { ok: false, text: `Connecting to ${d.name} ${d.n + 1}…` });
     S.nativeCamera(cam.id, d);
     if (cam.color) S.nativeSend(Object.assign({ cmd: 'color', id: cam.id }, cam.color));
     natPreviewCams();
-    logEvent('NATIVE', `camera ${cam.name}: ${d.name} #${d.n + 1} · ${d.w}×${d.h} at ${d.fps} · ${d.pixFmt || d.vcodec || 'the card’s own format'}`);
+    logEvent('NATIVE', `camera ${cam.name}: ${d.name} #${d.n + 1} · ${d.w}×${d.h} at ${d.capFps || d.fps}${d.deint ? ` interlaced (${d.label}, deinterlaced)` : ''} · ${d.pixFmt || d.vcodec || 'the card’s own format'}`);
     refreshInputStatus();
   }
   function natCloseCamera(id) { if (NAT.cams.delete(id) && NAT.ready) { S.nativeSend({ cmd: 'camera-close', id }); natPreviewCams(); } }
@@ -456,13 +479,13 @@
       case 'ready': NAT.ready = true; logEvent('ENGINE', `ready · ${h.w}×${h.h} · ${h.threads} threads`); natResync(); break;
       case 'cam-status': {
         const cam = camById(h.id), d = NAT.cams.get(h.id);
-        rt.camStatus.set(h.id, { ok: h.ok, text: h.ok ? `${d ? d.dev.w : natW()}×${d ? d.dev.h : natH()} · ${settings.output.fps} fps · native${d ? ` (${d.dev.name} ${d.dev.n + 1})` : ''}` : h.text });
+        rt.camStatus.set(h.id, { ok: h.ok, text: h.ok ? (d && d.dev.deint ? `${d.dev.label} · deinterlaced · native (${d.dev.name} ${d.dev.n + 1})` : `${d ? d.dev.w : natW()}×${d ? d.dev.h : natH()} · ${settings.output.fps} fps · native${d ? ` (${d.dev.name} ${d.dev.n + 1})` : ''}`) : h.text });
         refreshInputStatus();
         if (cam) logEvent('NATIVE', `camera ${cam.name}: ${h.ok ? 'picture is coming in' : h.text}`);
         break;
       }
       case 'cam-frame': if (payload && NAT.cams.has(h.id)) engine.rawPatch(h.id, { full: true, w: h.w, h: h.h, data: payload }); break;
-      case 'stats': rt.engStats = h; break;
+      case 'stats': rt.engStats = h; natAuto(h); break;
       case 'audio-port-ok': NAT.portOK = true; logEvent('ENGINE', 'sound goes straight from the sound thread to the engine'); break;
       case 'log': logEvent('ENGINE', h.line); break;
       case 'exit':
@@ -510,6 +533,39 @@
     refreshAll();
   }
   // everything is sent again (after a start or restart of the engine)
+  function natAuto(st) {
+    for (const [id, c] of NAT.cams) {
+      const cam = camById(id), s2 = st.cams && st.cams[id];
+      if (!cam || !s2 || (cam.signal && cam.signal !== 'auto')) continue;
+      const age = performance.now() - c.since, out = settings.output.fps || 59.94;
+      // whole frames that are combed: the camera is interlaced → deinterlace them
+      c.comb = s2.ok && s2.comb > 3 ? c.comb + 1 : 0;
+      if (!c.deint && c.comb >= 3) {
+        NAT.force.set(id, 'i');
+        logEvent('NATIVE', `camera ${cam.name}: the picture is interlaced (combing ${s2.comb}‰) — deinterlacing it`);
+        toast(`${cam.name}: interlaced signal (1080i) recognised — deinterlacing it.`, 'ok');
+        natOpenCamera(cam); continue;
+      }
+      // no picture, or only black, on the format tried: the camera may send the other kind (1080i vs 1080p)
+      c.bad = (!s2.ok || s2.dark) && age > 3000 ? c.bad + 1 : 0;
+      c.good = s2.ok && !s2.dark ? (c.good || 0) + 1 : 0;
+      if (c.good >= 10) NAT.tried.delete(id); // a good picture again: free to try again next time
+      const tried = NAT.tried.get(id) || new Set();
+      if (c.bad >= 5 && out > 30 && !tried.has('done')) {
+        tried.add(c.deint ? 'i' : 'p'); NAT.tried.set(id, tried);
+        const other = c.deint ? 'p' : 'i', v = (NAT.devices.video || []).find(x => x.name + '#' + x.n === c.key);
+        if (!tried.has(other) && v && (other === 'p' ? natExact(v, false, cam).length : natExact(v, false, cam, out / 2).length)) {
+          NAT.force.set(id, other);
+          logEvent('NATIVE', `camera ${cam.name}: no picture as ${c.deint ? '1080i' : '1080p'} — trying ${other === 'i' ? '1080i' : '1080p'}`);
+          natOpenCamera(cam);
+        } else {
+          tried.add('done');
+          logEvent('NATIVE', `camera ${cam.name}: no picture as 1080p or 1080i — check the camera, the cable and the card's input`);
+          if (NAT.force.has(id)) { NAT.force.delete(id); natOpenCamera(cam); }
+        }
+      }
+    }
+  }
   function natResync() {
     if (!NAT.ready) return;
     NAT.M = { pid: undefined, sig: '', trans: null, black: null, webs: new Map(), labels: new Map(), stills: new Map(), videos: new Map(), bands: new Map(), noted: new Set() };
@@ -4266,12 +4322,13 @@
         el('div', null,
           el('div', { class: 'row' }, el('input', { type: 'text', class: 'grow', value: cam.name, oninput: e => { cam.name = e.target.value; changed(); } }),
             el('button', { class: 'btn small danger', title: 'Remove camera', onclick: () => { closeCamera(cam.id); show.cameras = show.cameras.filter(c => c !== cam); changed(); refreshAll(); } }, '✕')),
-          el('div', { class: 'row', style: 'margin-top:6px' },
+          el('div', { class: 'row wrap', style: 'margin-top:6px;gap:6px' },
             select(devOpts, cam.deviceId, v => { cam.deviceId = v; delete cam.fps; rememberDevice(cam, 'video'); changed(); openCamera(cam); }, { class: 'grow' }),
             select([['720', '720p'], ['1080', '1080p'], ['2160', '4K']], cam.res || '1080', v => { cam.res = v; changed(); openCamera(cam); }),
-            select([['', 'Auto fps'], ['23.98', '23.98'], ['24', '24'], ['25', '25'], ['29.97', '29.97'], ['30', '30'], ['50', '50'], ['59.94', '59.94'], ['60', '60']], cam.fps || '', v => { cam.fps = v; changed(); openCamera(cam); }, { title: 'Must match the signal your camera sends' })),
+            select([['', 'Auto fps'], ['23.98', '23.98'], ['24', '24'], ['25', '25'], ['29.97', '29.97'], ['30', '30'], ['50', '50'], ['59.94', '59.94'], ['60', '60']], cam.fps || '', v => { cam.fps = v; changed(); openCamera(cam); }, { title: 'Must match the signal your camera sends' }),
+            select([['auto', 'p / i: automatic'], ['p', 'Progressive (p)'], ['i', 'Interlaced (1080i)']], cam.signal || 'auto', v => { cam.signal = v; NAT.force.delete(cam.id); NAT.tried.delete(cam.id); changed(); logEvent('CAMERA', `${cam.name}: signal ${v}`); openCamera(cam); refresh('inputs'); }, { title: 'Progressive (1080p) or interlaced (1080i) signal from the camera. Interlaced is deinterlaced back to full motion. Automatic recognises it by itself with the native engine.' })),
           NAT.on && NAT.devices ? el('div', { class: 'row', style: 'margin-top:6px' }, el('span', { class: 'muted', style: 'font-size:.85em;white-space:nowrap' }, 'Card (native engine)'),
-            select([['', 'Automatic'], ...NAT.devices.video.map(v => [`${v.name}|${v.n}`, `${v.name} — card ${v.n + 1}${natExact(v).length ? '' : ` (no ${settings.output.fps} fps)`}`])],
+            select([['', 'Automatic'], ...NAT.devices.video.map(v => [`${v.name}|${v.n}`, `${v.name} — card ${v.n + 1}${natExact(v, false, cam).length ? '' : (settings.output.fps || 59.94) > 30 && natExact(v, false, cam, (settings.output.fps || 59.94) / 2).length ? ' (1080i only)' : ` (no ${settings.output.fps} fps)`}`])],
               cam.native ? `${cam.native.name}|${cam.native.n}` : '', v => { const i = v.lastIndexOf('|'); cam.native = v ? { name: v.slice(0, i), n: +v.slice(i + 1) } : null; changed(); NAT.cams.delete(cam.id); natOpenCamera(cam); }, { class: 'grow' })) : null,
           el('div', { style: 'font-size:.85em;margin-top:5px' }, el('span', { dataset: { camStatus: cam.id } })))));
     }

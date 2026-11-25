@@ -1056,7 +1056,13 @@ window.I18N_RU = {
     "YouTube 4K 60 fps": "YouTube 4K 60 кадр/с",
     "YouTube 1440p 60 fps": "YouTube 1440p 60 кадр/с",
     "4K (for editing)": "4K (для монтажа)",
-    "YouTube suggests 4,500–9,000 kbps for 1080p at 30 fps, about 12,000 for 1080p at 60 fps, 24,000 for 1440p at 60 fps and 35,000 for 4K at 60 fps. Your upload speed should be about 1.5× the picture bitrate.": "YouTube рекомендует 4 500–9 000 кбит/с для 1080p при 30 кадр/с, около 12 000 для 1080p при 60 кадр/с, 24 000 для 1440p при 60 кадр/с и 35 000 для 4K при 60 кадр/с. Скорость отдачи интернета должна быть примерно в 1,5 раза больше битрейта картинки."
+    "YouTube suggests 4,500–9,000 kbps for 1080p at 30 fps, about 12,000 for 1080p at 60 fps, 24,000 for 1440p at 60 fps and 35,000 for 4K at 60 fps. Your upload speed should be about 1.5× the picture bitrate.": "YouTube рекомендует 4 500–9 000 кбит/с для 1080p при 30 кадр/с, около 12 000 для 1080p при 60 кадр/с, 24 000 для 1440p при 60 кадр/с и 35 000 для 4K при 60 кадр/с. Скорость отдачи интернета должна быть примерно в 1,5 раза больше битрейта картинки.",
+    "p / i: automatic": "p / i: автоматически",
+    "Progressive (p)": "Прогрессивный (p)",
+    "Interlaced (1080i)": "Чересстрочный (1080i)",
+    "Progressive (1080p) or interlaced (1080i) signal from the camera. Interlaced is deinterlaced back to full motion. Automatic recognises it by itself with the native engine.": "Прогрессивный (1080p) или чересстрочный (1080i) сигнал с камеры. Чересстрочный преобразуется обратно в полное движение. «Автоматически» распознаёт его сам во встроенном движке.",
+    "(1080i only)": "(только 1080i)",
+    "deinterlaced": "без чересстрочности"
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
@@ -1205,6 +1211,9 @@ window.I18N_RU = {
     ["LIMIT −{0}", "ЛИМИТ −{0}"],
     ["“{0}”: the small picture is not in the native engine yet", "«{0}»: маленькая картинка пока не во встроенном движке"],
     ["The stream is set to {0} kbps — for {1} YouTube recommends {2} kbps.", "Трансляция настроена на {0} кбит/с — для {1} YouTube рекомендует {2} кбит/с."],
-    ["Use {0} kbps", "Поставить {0} кбит/с"]
+    ["Use {0} kbps", "Поставить {0} кбит/с"],
+    ["{0}: interlaced signal (1080i) recognised — deinterlacing it.", "{0}: распознан чересстрочный сигнал (1080i) — устраняю чересстрочность."],
+    ["{0} · deinterlaced · native ({1})", "{0} · без чересстрочности · встроенный ({1})"],
+    ["native ({0})", "встроенный ({0})"]
   ]
 };

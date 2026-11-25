@@ -886,7 +886,7 @@ func (e *Engine) sendStats() {
 	for id, c := range e.cams {
 		c.secondTick()
 		c.mu.Lock()
-		cams[id] = Msg{"fps": c.fps, "ok": c.ok, "jitMs": float64(c.jit.Microseconds()) / 1000, "late": c.tooLate}
+		cams[id] = Msg{"fps": c.fps, "ok": c.ok, "jitMs": float64(c.jit.Microseconds()) / 1000, "late": c.tooLate, "comb": math.Round(c.comb*10) / 10, "dark": c.dark}
 		c.mu.Unlock()
 	}
 	for id, v := range e.videos {

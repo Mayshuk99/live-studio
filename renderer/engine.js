@@ -36,6 +36,7 @@
   uniform vec3 u_keyColor;
   uniform float u_keyTol;
   uniform int u_bgra;        // web-page pictures arrive as BGRA with premultiplied alpha
+  uniform float u_deint;     // 1080i camera seen as whole frames: blend each line with the next (one texel down) — no combing
   uniform int u_ck;          // green screen: remove the key colour from a camera / video (like OBS's chroma key)
   uniform vec2 u_ckC;        // key colour as Cb, Cr (BT.709)
   uniform vec3 u_ckP;        // strength (similarity), edge softness, spill
@@ -43,6 +44,7 @@
   void main() {
     if (u_mode == 2) { o = vec4(u_solid.rgb, u_solid.a * u_opacity); return; }
     vec4 t = texture(u_tex, v_uv);
+    if (u_deint > 0.0) t = 0.5 * (t + texture(u_tex, v_uv + vec2(0.0, u_deint)));
     if (u_bgra == 1) { t = vec4(t.b, t.g, t.r, t.a); if (t.a > 0.0) t.rgb = t.rgb / t.a; }
     if (u_mode == 1) {
       float a = t.a;
@@ -150,6 +152,7 @@
       this.moveSpeed = 0.12;
       this.zebra = true;
       this.bypass = new Set();
+      this.deint = new Set();     // sources that are interlaced (1080i) — blended in the classic engine
       this.getShot = () => null;
       this.onTransitionEnd = null;
 
@@ -186,7 +189,7 @@
       gl.useProgram(p);
       this.u = {};
       ['u_dst', 'u_src', 'u_tex', 'u_mode', 'u_solid', 'u_opacity', 'u_exposure', 'u_contrast', 'u_saturation',
-        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra', 'u_keyOn', 'u_keyColor', 'u_keyTol', 'u_bgra', 'u_ck', 'u_ckC', 'u_ckP', 'u_matte'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
+        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra', 'u_keyOn', 'u_keyColor', 'u_keyTol', 'u_bgra', 'u_ck', 'u_ckC', 'u_ckP', 'u_matte', 'u_deint'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
       const vao = gl.createVertexArray();
       gl.bindVertexArray(vao);
       const buf = gl.createBuffer();
@@ -545,11 +548,14 @@
       gl.uniform1f(this.u.u_black, c.black);
       gl.uniform1i(this.u.u_zebra, zebra ? 1 : 0);
       gl.uniform1i(this.u.u_ck, key ? 1 : 0);
+      const dz = s.kind === 'video' && this.deint.has(sourceId) && this.sourceSize(sourceId); // (native cameras arrive deinterlaced already)
+      if (dz) gl.uniform1f(this.u.u_deint, 1 / dz.h);
       if (key) { gl.uniform2f(this.u.u_ckC, key.cb, key.cr); gl.uniform3f(this.u.u_ckP, key.sim, key.smooth, key.spill); gl.uniform1i(this.u.u_matte, matte ? 1 : 0); }
       gl.uniform4fv(this.u.u_dst, rect);
       gl.uniform4fv(this.u.u_src, uv);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       if (key) { gl.uniform1i(this.u.u_ck, 0); gl.uniform1i(this.u.u_matte, 0); }
+      if (dz) gl.uniform1f(this.u.u_deint, 0);
     }
     _drawShot(shot, opacity, smooth, zebra, matte) {
       const W = this.W, H = this.H;
