@@ -77,7 +77,34 @@ ipcMain.handle('native:start', (e, opts) => {
 });
 ipcMain.handle('native:stop', async () => { natWanted = null; natWebs.clear(); await nat.stop(); return true; });
 ipcMain.on('native:send', (e, h, payload) => { nat.send(h, payload || undefined); });
-ipcMain.on('native:camera', (e, id, dev) => { nat.send({ cmd: 'camera', id, fps: dev.fps, w: dev.w, h: dev.h, args: require('./streamer').captureArgs(dev) }); });
+ipcMain.on('native:camera', (e, id, dev) => {
+  // a network source: NDI through the NDI helper, SRT / RTSP / other addresses through FFmpeg — never the clock
+  if (dev.net) {
+    if (dev.net.type === 'ndi') {
+      const exe = ndiExe();
+      if (!exe) { natSendEv({ ev: 'cam-status', id, ok: false, text: 'The NDI helper is missing from this installation — update Live Studio.' }); return; }
+      nat.send({ cmd: 'camera', id, exe, free: true, w: dev.w, h: dev.h, args: ['--recv', dev.net.name || '', ...(dev.net.url ? ['--url', dev.net.url] : []), ...(dev.net.low ? ['--low'] : [])] });
+    } else nat.send({ cmd: 'camera', id, free: true, w: dev.w, h: dev.h, args: require('./streamer').netArgs(Object.assign({ w: dev.w, h: dev.h }, dev.net)) });
+    return;
+  }
+  nat.send({ cmd: 'camera', id, fps: dev.fps, w: dev.w, h: dev.h, args: require('./streamer').captureArgs(dev) });
+});
+/* NDI: the helper finds the sources on the network (needs the NDI Runtime from NDI Tools) */
+function ndiExe() {
+  const exe = process.platform === 'win32' ? 'ls-ndi.exe' : 'ls-ndi';
+  const c = [];
+  if (app.isPackaged) c.push(path.join(process.resourcesPath, 'ndi', exe));
+  c.push(path.join(__dirname, 'resources', 'ndi', exe), path.join(__dirname, 'ndihost', 'build', exe), path.join(__dirname, 'ndihost', 'build', 'Release', exe));
+  return c.find(p => { try { return fs.statSync(p).isFile(); } catch (e) { return false; } }) || null;
+}
+ipcMain.handle('ndi:list', () => new Promise(resolve => {
+  const exe = ndiExe();
+  if (!exe) { resolve({ error: 'The NDI helper is missing from this installation — update Live Studio.' }); return; }
+  require('child_process').execFile(exe, ['--list', '3000'], { timeout: 15000, windowsHide: true }, (err, out) => {
+    try { resolve(JSON.parse(String(out).trim().split(/\r?\n/).pop())); }
+    catch (x) { resolve({ error: err ? err.message : 'no answer from the NDI helper' }); }
+  });
+}));
 ipcMain.on('native:audio', (e, rate, pcm) => { if (nat.backlog < 64 << 20) nat.send({ cmd: 'audio', rate, ch: 2 }, pcm); });
 // the direct line from the window's sound thread (does not wait for the window when it is busy)
 ipcMain.on('native:audio-port', e => {
@@ -331,6 +358,10 @@ ipcMain.handle('settings:load', () => {
     try { s.youtube.clientSecret = safeStorage.decryptString(Buffer.from(s.youtube.clientSecretEnc, 'base64')); } catch (e) { s.youtube.clientSecret = ''; }
   }
   if (s.youtube) { delete s.youtube.keyEnc; delete s.youtube.clientSecretEnc; }
+  for (const d of Array.isArray(s.streams) ? s.streams : []) {
+    if (d.keyEnc && safeStorage.isEncryptionAvailable()) { try { d.key = safeStorage.decryptString(Buffer.from(d.keyEnc, 'base64')); } catch (e) { d.key = ''; } }
+    delete d.keyEnc;
+  }
   if (!s.recordDir) s.recordDir = path.join(app.getPath('videos'), 'Live Studio');
   return s;
 });
@@ -343,6 +374,9 @@ ipcMain.handle('settings:save', (e, obj) => {
   if (s.youtube && s.youtube.clientSecret && safeStorage.isEncryptionAvailable()) {
     s.youtube.clientSecretEnc = safeStorage.encryptString(s.youtube.clientSecret).toString('base64');
     delete s.youtube.clientSecret;
+  }
+  for (const d of Array.isArray(s.streams) ? s.streams : []) {
+    if (d.key && safeStorage.isEncryptionAvailable()) { d.keyEnc = safeStorage.encryptString(d.key).toString('base64'); delete d.key; }
   }
   writeJSON(settingsFile(), s);
   outputs.ffmpegPath = ffmpegPath();

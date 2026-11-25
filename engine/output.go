@@ -45,9 +45,13 @@ type Output struct {
 	dropped int64
 	started time.Time
 	live    atomic.Bool // FFmpeg has connected for the sound: frames go to it from now on
+	src     string      // ISO: record this camera instead of the program
+	iso     *OutFrame   // ISO: this tick's picture
+	group   string      // started together with others: frames begin for all of them on the same tick
+	gsize   int
 }
 
-func (e *Engine) startOutput(id string, args []string) {
+func (e *Engine) startOutput(id string, args []string, src, group string, gsize int) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		send(Msg{"ev": "out-exit", "id": id, "code": -1, "error": "no local port for the sound: " + err.Error()}, nil)
@@ -72,7 +76,7 @@ func (e *Engine) startOutput(id string, args []string) {
 		send(Msg{"ev": "out-exit", "id": id, "code": -1, "error": "Encoder could not start: " + err.Error()}, nil)
 		return
 	}
-	o := &Output{id: id, e: e, cmd: cmd, stdin: stdin, vch: make(chan *OutFrame, 20), ach: make(chan []byte, 600), ln: ln, started: time.Now()}
+	o := &Output{id: id, e: e, cmd: cmd, stdin: stdin, vch: make(chan *OutFrame, 20), ach: make(chan []byte, 600), ln: ln, started: time.Now(), src: src, group: group, gsize: gsize}
 	e.mu.Lock()
 	e.outputs[id] = o
 	e.mu.Unlock()
@@ -168,19 +172,60 @@ func (e *Engine) stopOutput(id string, kill bool) {
 	}
 }
 
+// a group (the recording and its ISO files) starts when all its encoders are ready — at most 5 s after the first
+func (e *Engine) groupReady(g string, size int) bool {
+	if e.groupGo[g] {
+		return true
+	}
+	n, live := 0, 0
+	var first time.Time
+	for _, x := range e.outputs {
+		if x.group != g {
+			continue
+		}
+		n++
+		if x.live.Load() {
+			live++
+		}
+		if first.IsZero() || x.started.Before(first) {
+			first = x.started
+		}
+	}
+	if (live >= size && live == n) || (!first.IsZero() && time.Since(first) > 5*time.Second) {
+		e.groupGo[g] = true
+		logf("outputs %s start together (%d of %d ready)", g, live, size)
+	}
+	return e.groupGo[g]
+}
+
 // called by the clock with the engine lock held
 func (e *Engine) dispatch(of *OutFrame, pcm []byte) {
 	for _, o := range e.outputs {
-		if o.closing || !o.live.Load() {
+		f := of
+		if o.src != "" {
+			f, o.iso = o.iso, nil
+			if f == nil {
+				continue
+			}
+		}
+		if o.closing || !o.live.Load() || (o.group != "" && !e.groupReady(o.group, o.gsize)) {
+			if o.src != "" {
+				f.release()
+			}
 			continue
 		}
 		// picture and sound are dropped together, so they always stay paired
 		if len(o.vch) < cap(o.vch) && len(o.ach) < cap(o.ach) {
-			atomic.AddInt32(&of.refs, 1)
-			o.vch <- of
+			if o.src == "" {
+				atomic.AddInt32(&f.refs, 1)
+			}
+			o.vch <- f
 			o.ach <- pcm
 		} else {
 			o.dropped++
+			if o.src != "" {
+				f.release()
+			}
 		}
 	}
 }

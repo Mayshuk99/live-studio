@@ -86,6 +86,7 @@ type Engine struct {
 	orderOK  bool
 	audio    *Audio
 	outputs  map[string]*Output
+	groupGo  map[string]bool // outputs started together (recording + ISO): all get their first frame on the same tick
 	pool     chan *Frame
 	scA, scB *Frame
 	vidTick  map[string]uint64
@@ -115,7 +116,7 @@ func newEngine(m Msg) *Engine {
 		W: int(m.num("w")), H: int(m.num("h")), fpsNum: int(m.num("fpsNum")), fpsDen: int(m.num("fpsDen")),
 		ffmpeg: m.str("ffmpeg"), moveSpeed: 0.12,
 		cams: map[string]*Camera{}, videos: map[string]*Video{}, stills: map[string]*Still{}, colors: map[string]*colorLUT{},
-		sm: map[string]*smoothState{}, overlays: map[string]*Overlay{}, outputs: map[string]*Output{},
+		sm: map[string]*smoothState{}, overlays: map[string]*Overlay{}, outputs: map[string]*Output{}, groupGo: map[string]bool{},
 		audio: newAudio(), pool: make(chan *Frame, 64), vidTick: map[string]uint64{}, acq: map[string]acqInfo{},
 	}
 	if e.W <= 0 || e.H <= 0 {
@@ -210,7 +211,7 @@ func (e *Engine) command(cmd string, m Msg, payload []byte) {
 	switch cmd {
 	case "camera":
 		id := m.str("id")
-		c := newCamera(e, id, m.strs("args"), m.num("fps"), int(m.num("w")), int(m.num("h")))
+		c := newCamera(e, id, m.strs("args"), m.num("fps"), int(m.num("w")), int(m.num("h")), m.str("exe"), m.boolean("free"))
 		e.mu.Lock()
 		old := e.cams[id]
 		e.cams[id] = c
@@ -337,7 +338,7 @@ func (e *Engine) command(cmd string, m Msg, payload []byte) {
 			e.audio.push(s, ch, m.num("rate"))
 		}
 	case "output-start":
-		e.startOutput(m.str("id"), m.strs("args"))
+		e.startOutput(m.str("id"), m.strs("args"), m.str("src"), m.str("group"), int(m.num("groupSize")))
 	case "output-stop":
 		e.stopOutput(m.str("id"), false)
 	case "output-kill":
@@ -772,7 +773,8 @@ func (e *Engine) tick(n uint64, now time.Time) time.Duration {
 		c.mu.Lock()
 		ok = ok && c.ok
 		c.mu.Unlock()
-		if clock == e.clockCam && ok {
+		// (a network source has its own frame rate: a picture shown twice there is normal, not a hitch)
+		if clock == e.clockCam && ok && !c.free {
 			switch d := cnt - e.lastCount; {
 			case d == 0:
 				e.st.pgmRepeat++
@@ -801,6 +803,14 @@ func (e *Engine) tick(n uint64, now time.Time) time.Duration {
 		e.clockCam = ""
 	}
 	pcm := e.audio.pull(e.samplesFor(n))
+	// ISO recordings: one camera each, full picture (with its colour correction), on the same tick as the program
+	for _, o := range e.outputs {
+		if o.src != "" && !o.closing && o.live.Load() {
+			f := e.getFrame()
+			e.renderPlain(f.f, &Base{Key: "iso:" + o.src, Src: o.src, Zoom: 1, X: 0.5, Y: 0.5}, n, true)
+			o.iso = f
+		}
+	}
 	e.dispatch(of, pcm)
 	pgmW, pgmH, pgmEvery := e.pvPgmW, e.pvPgmH, e.pvPgmEvery
 	camW, camH, camEvery := e.pvCamW, e.pvCamH, e.pvCamEvery

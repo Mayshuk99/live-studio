@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('studio', {
   nativeStop: () => ipcRenderer.invoke('native:stop'),
   nativeSend: (h, payload) => ipcRenderer.send('native:send', h, payload || null),
   nativeCamera: (id, dev) => ipcRenderer.send('native:camera', id, dev),
+  ndiList: () => ipcRenderer.invoke('ndi:list'),
   nativeAudio: (rate, pcm) => ipcRenderer.send('native:audio', rate, pcm),
   nativeWeb: (id, cfg) => ipcRenderer.send('native:web', id, cfg),
   onNative: cb => ipcRenderer.on('native:ev', (e, h, payload) => cb(h, payload)),

@@ -262,3 +262,80 @@ target {0}	цель {0}
 −60 s	−60 с
 now	сейчас
 Behaviour: custom	Поведение: своё
+Also record every camera in its own file (ISO)	Также записывать каждую камеру в отдельный файл (ISO)
+Low bandwidth	Низкая полоса
+On	Вкл
+UDP	UDP
++ Add destination	+ Добавить направление
++ Network source (NDI / SRT / RTSP)	+ Сетевой источник (NDI / SRT / RTSP)
+2 — best	2 — лучшее
+3 — high	3 — высокое
+5 — good	5 — хорошее
+8 — small files	8 — маленькие файлы
+A picture from the network: NDI (other computers, NDI cameras and phones), SRT or RTSP (IP cameras, encoders)	Картинка из сети: NDI (другие компьютеры, NDI-камеры и телефоны), SRT или RTSP (IP-камеры, кодировщики)
+About {0} GB per hour for each camera ({1}×{2}, {3} fps).	Около {0} ГБ в час на каждую камеру ({1}×{2}, {3} кадр/с).
+Any address FFmpeg can read.	Любой адрес, который читает FFmpeg.
+Choose an NDI source	Выберите NDI-источник
+Connecting to {0}…	Подключение к {0}…
+Destination {0}	Направление {0}
+Encoder settings	Настройки кодировщика
+Every destination starts with GO LIVE and has its own encoder: if one drops, it reconnects by itself and the others carry on. Each one is encoded again — with the processor (x264) that is heavy; “NVIDIA H.264” under Encoder is light. Facebook: up to 1080p, about 4,000–6,000 kbps, key frame every 2 seconds.	Каждое направление запускается кнопкой «В ЭФИР» и кодируется отдельно: если одно оборвётся, оно само переподключится, а остальные продолжат. Каждое кодируется заново — процессором (x264) это тяжело; «NVIDIA H.264» в поле «Кодировщик» — легко. Facebook: до 1080p, около 4 000–6 000 кбит/с, ключевой кадр каждые 2 секунды.
+Facebook Live	Facebook Live
+Found {0} NDI source{1}.	Найдено NDI-источников: {0}.
+H.264 on the NVIDIA card (.mp4) — small files	H.264 на видеокарте NVIDIA (.mp4) — маленькие файлы
+H.264 on the processor (.mp4)	H.264 на процессоре (.mp4)
+ISO files saved: {0}	ISO-файлы сохранены: {0}
+ISO recording needs the native engine — only the program is recorded.	ISO-записи нужен встроенный движок — записывается только программа.
+ISO recording needs the native engine: Video output → Picture engine → Native.	ISO-записи нужен встроенный движок: «Видеовыход» → «Движок картинки» → «Встроенный».
+ISO recording of {0} stopped: {1}	ISO-запись {0} остановилась: {1}
+ISO recording — each camera in its own file	ISO-запись — каждая камера в отдельный файл
+ISO {0}: the computer cannot encode it in time — frames are lost. Choose MJPEG or H.264 (NVIDIA) in Settings → Recording.	ISO {0}: компьютер не успевает кодировать — кадры теряются. Выберите MJPEG или H.264 (NVIDIA) в «Настройки» → «Запись».
+ISO {0}: {1}	ISO {0}: {1}
+Looking for NDI sources…	Поиск NDI-источников…
+MJPEG (.avi) — lightest on the processor	MJPEG (.avi) — легче всего для процессора
+MJPEG quality	Качество MJPEG
+More destinations — stream to several places at once	Другие направления — трансляция сразу в несколько мест
+NDI {0}	NDI {0}
+NDI: {0}	NDI: {0}
+Needs the native engine: Settings → Video output → Picture engine → Native.	Нужен встроенный движок: «Настройки» → «Видеовыход» → «Движок картинки» → «Встроенный».
+Network sources (NDI / SRT / RTSP) work with the native engine — Settings → Video output → Picture engine: Native.	Сетевые источники (NDI / SRT / RTSP) работают с встроенным движком — «Настройки» → «Видеовыход» → «Движок картинки»: «Встроенный».
+Network {0}	Сеть {0}
+No NDI sources found	NDI-источники не найдены
+Other address (RTMP / HTTP / UDP)	Другой адрес (RTMP / HTTP / UDP)
+Other server (RTMP / RTMPS / SRT)	Другой сервер (RTMP / RTMPS / SRT)
+Own settings for this destination	Свои настройки для этого направления
+Paste the stream key	Вставьте ключ трансляции
+ProRes 422 HQ — best, largest	ProRes 422 HQ — лучшее, самые большие файлы
+ProRes 422 LT — recommended	ProRes 422 LT — рекомендуется
+ProRes 422 Proxy — smallest	ProRes 422 Proxy — самые маленькие файлы
+RTSP (IP camera)	RTSP (IP-камера)
+Remove this destination	Удалить это направление
+Remove this source	Удалить этот источник
+Same as the YouTube stream	Как у трансляции на YouTube
+Server address	Адрес сервера
+Stream key (if the server gives one)	Ключ трансляции (если сервер его даёт)
+The address from the camera’s manual or web page. Picture only — bring the sound through your desk.	Адрес из инструкции или веб-страницы камеры. Только картинка — звук ведите через пульт.
+The encoder sends to this computer: srt://0.0.0.0:PORT?mode=listener (open that port in the firewall). This computer calls the encoder: srt://ADDRESS:PORT. Add &passphrase=… if it uses one.	Кодировщик шлёт на этот компьютер: srt://0.0.0.0:ПОРТ?mode=listener (откройте порт в брандмауэре). Этот компьютер сам подключается к кодировщику: srt://АДРЕС:ПОРТ. Добавьте &passphrase=…, если он задан.
+The files go next to the recording (“… ISO Camera 1.mov”). Each has the program sound, starts on the same frame as the recording and carries the same timecode — Premiere and DaVinci Resolve line them up by themselves. ProRes and MJPEG are encoded by the processor: if the log says “frames lost”, choose a lighter format.	Файлы ложатся рядом с записью («… ISO Camera 1.mov»). В каждом звук программы, все начинаются с того же кадра, что и запись, и несут один таймкод — Premiere и DaVinci Resolve выстроят их сами. ProRes и MJPEG кодирует процессор: если в журнале «frames lost», выберите формат полегче.
+Type the address of the stream	Введите адрес потока
+YouTube — another channel	YouTube — другой канал
+no cameras yet	камер пока нет
+not started — fill in the address / key	не запущено — заполните адрес / ключ
+or type it: COMPUTER (Source name)	или введите: КОМПЬЮТЕР (Имя источника)
+reconnecting… {0}	переподключение… {0}
+the encoder closed	кодировщик закрылся
+the stream stopped	трансляция остановилась
+{0} (not seen now)	{0} (сейчас не видно)
+{0} is streaming again.	{0} снова в эфире.
+{0} starting…	{0} запускается…
+{0} · {1}×{2} · native	{0} · {1}×{2} · встроенный
+{0}: {1} — trying again…	{0}: {1} — пробую снова…
+— choose an NDI source —	— выберите NDI-источник —
+— press Find —	— нажмите «Найти» —
+↻ Find	↻ Найти
+● streaming	● в эфире
+{0} reconnecting…	{0} переподключение…
+NETWORK	СЕТЬ
+Cameras:	Камеры:
+Format	Формат
+NDI® is a registered trademark of Vizrt NDI AB (ndi.video). NDI sources need the free NDI Tools on this computer.	NDI® — зарегистрированный товарный знак Vizrt NDI AB (ndi.video). Для NDI-источников на этом компьютере нужны бесплатные NDI Tools.

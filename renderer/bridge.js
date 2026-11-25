@@ -16,6 +16,7 @@
   const outs = new Map();
   let n = 0;
   const emit = ev => outListeners.forEach(cb => cb(ev));
+  window.__outEmit = emit; // tests: pretend an encoder stopped
   const vstSyncWorker = L => { if (L.worker) L.worker.postMessage({ n: L.chain.filter(id => L.slots[id] && !L.slots[id].bypass).length, delay: L.delayMs, running: L.running }); };
   const vstL = () => window.__vst = window.__vst || { sent: [], cbs: [], audioCbs: [], slots: {}, chain: [], delayMs: 4, latOf: {},
     list: [{ path: 'C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 14.12_x64.vst3', cid: '57415645534C324C3220537465726500', name: 'L2 Stereo', vendor: 'Waves', sub: 'Fx|Dynamics' },
@@ -91,6 +92,7 @@
       return { ok: true }; },
     nativeStop: async () => { const L = window.__nat; if (L) clearInterval(L.timer); return true; },
     nativeSend: (h, payload) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push(Object.assign({}, h, payload ? { bytes: payload.byteLength } : {})); if (h.cmd === 'camera-close') L.sent.filter(m => m.cmd === 'camera' && m.id === h.id).forEach(m => { m.closed = true; }); },
+    ndiList: async () => { await new Promise(r => setTimeout(r, 300)); return { sources: [{ name: 'CHURCH-PC (ProPresenter)', url: '192.168.1.20:5961' }, { name: 'IPHONE (NDI HX Camera)', url: '192.168.1.31:5962' }], version: 'NDI SDK (browser stand-in)' }; },
     nativeCamera: (id, dev) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push({ cmd: 'camera', id, dev }); setTimeout(() => L.cbs.forEach(cb => cb({ ev: 'cam-status', id, ok: true, text: 'Running' })), 100); },
     nativeAudio: (rate, pcm) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.audio = (L.audio || 0) + pcm.length; },
     nativeWeb: (id, cfg) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push({ cmd: 'web', id, cfg }); },

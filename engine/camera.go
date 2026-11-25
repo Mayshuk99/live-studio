@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,9 @@ import (
 
 /*
 A camera: FFmpeg reads the capture card and hands over every frame (YUV 4:2:0, frame size) through a pipe.
+A network source is the same: FFmpeg reads SRT / RTSP, or the NDI helper (exe) receives NDI, and hands over
+frames already scaled to the size asked for. Those are "free": their timing comes over the network, so they never
+set the output clock, and their frame time is learned from what arrives.
 
 Frames do not arrive evenly through the pipe (24 Nov evening log: a frame shown twice and one skipped 5–6
 times a second when the mixer went by arrival time). So every frame gets an "ideal" time on the camera's own
@@ -33,6 +37,9 @@ type Camera struct {
 	comb    float64 // how combed the picture looks (‰ of the picture; interlaced signal captured as whole frames)
 	dark    bool    // the picture is black (no signal, or the wrong format chosen on the card)
 	args    []string
+	exe     string // run this instead of FFmpeg (the NDI helper); it is given --w / --h and writes the frames itself
+	free    bool   // a network source: never the output clock; frame time learned from what arrives
+	fpsHist [3]float64
 	period  time.Duration // the camera's own frame time
 	lock    bool          // same rate as the output: the output clock may follow it
 	e       *Engine
@@ -58,16 +65,16 @@ type Camera struct {
 
 // w, h: the size it is captured at (the camera's own; 0 = the output size). It is scaled to the output when drawn,
 // so a 1080p camera in a 4K output is captured — and piped — at 1080p.
-func newCamera(e *Engine, id string, args []string, fps float64, w, h int) *Camera {
+func newCamera(e *Engine, id string, args []string, fps float64, w, h int, exe string, free bool) *Camera {
 	if w < 16 || h < 16 || w%2 != 0 || h%2 != 0 {
 		w, h = e.W, e.H
 	}
-	c := &Camera{id: id, args: args, e: e, held: -1, filling: 0, period: e.period, lock: true, W: w, H: h}
+	c := &Camera{id: id, args: args, e: e, held: -1, filling: 0, period: e.period, lock: !free, W: w, H: h, exe: exe, free: free}
 	if fps > 1 {
 		c.period = time.Duration(float64(time.Second) / fps)
 		// a 59.94 camera into a 60 output (or the other way): show it, but never pull the output clock to it
 		outFps := float64(e.fpsNum) / float64(e.fpsDen)
-		c.lock = abs(fps-outFps) < 0.01
+		c.lock = !free && abs(fps-outFps) < 0.01
 	}
 	for i := range c.bufs {
 		c.bufs[i] = newFrame(w, h)
@@ -144,10 +151,15 @@ func (c *Camera) loop() {
 			return
 		}
 		c.mu.Unlock()
-		args := append([]string{"-hide_banner", "-loglevel", "error", "-nostats", "-nostdin"}, c.args...)
-		// every frame exactly as the card delivers it (no copies added to fill gaps: the mixer counts real gaps)
-		args = append(args, "-an", "-sn", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", fmt.Sprintf("%dx%d", c.W, c.H), "-")
-		cmd := exec.Command(c.e.ffmpeg, args...)
+		var cmd *exec.Cmd
+		if c.exe != "" { // the NDI helper: frames of exactly this size on its output
+			cmd = exec.Command(c.exe, append(append([]string{}, c.args...), "--w", strconv.Itoa(c.W), "--h", strconv.Itoa(c.H))...)
+		} else {
+			args := append([]string{"-hide_banner", "-loglevel", "error", "-nostats", "-nostdin"}, c.args...)
+			// every frame exactly as the card delivers it (no copies added to fill gaps: the mixer counts real gaps)
+			args = append(args, "-an", "-sn", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", fmt.Sprintf("%dx%d", c.W, c.H), "-")
+			cmd = exec.Command(c.e.ffmpeg, args...)
+		}
 		procAttr(cmd, true)
 		out, err := cmd.StdoutPipe()
 		if err != nil {
@@ -159,7 +171,11 @@ func (c *Camera) loop() {
 		var lastErr string
 		var errMu sync.Mutex
 		if err := cmd.Start(); err != nil {
-			c.setStatus(false, "could not start FFmpeg: "+err.Error())
+			what := "FFmpeg"
+			if c.exe != "" {
+				what = "the NDI helper"
+			}
+			c.setStatus(false, "could not start "+what+": "+err.Error())
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -277,9 +293,45 @@ func (c *Camera) secondTick() {
 	c.mu.Lock()
 	c.fps = float64(c.secN)
 	c.secN = 0
+	// a network source: learn its frame time from the last 3 seconds (snapped to the usual rates)
+	if c.free {
+		c.fpsHist[0], c.fpsHist[1], c.fpsHist[2] = c.fpsHist[1], c.fpsHist[2], c.fps
+		if p := learnPeriod(c.fpsHist); p > 0 && p != c.period {
+			c.period = p
+			c.ideal = time.Time{}
+		}
+	}
 	c.jit, c.jitMax = c.jitMax, 0
 	c.tooLate, c.lateSec = c.lateSec, 0
 	c.mu.Unlock()
+}
+
+// the usual frame rate nearest to 3 seconds of counted frames (0 = not steady yet)
+func learnPeriod(h [3]float64) time.Duration {
+	lo, hi, sum := h[0], h[0], 0.0
+	for _, v := range h {
+		if v < lo {
+			lo = v
+		}
+		if v > hi {
+			hi = v
+		}
+		sum += v
+	}
+	if lo < 5 || hi-lo > 3 {
+		return 0
+	}
+	avg := sum / 3
+	best, bd := 0.0, 1e9
+	for _, r := range []float64{23.976, 24, 25, 29.97, 30, 50, 59.94, 60} {
+		if d := abs(r - avg); d < bd {
+			best, bd = r, d
+		}
+	}
+	if bd > 1.5 {
+		best = avg
+	}
+	return time.Duration(float64(time.Second) / best)
 }
 
 func abs(v float64) float64 {

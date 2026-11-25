@@ -57,8 +57,7 @@ function streamArgs(o) {
     '-fflags', '+genpts',
     ...inputOf(o),
     ...advOut(o, true),
-    '-flvflags', 'no_duration_filesize',
-    '-f', 'flv', o.url
+    ...sendTo(o.url)
   ];
   const fps = o.fps || 30;
   const g = String(Math.round(fps * 2)); // keyframe every 2 seconds (YouTube requirement)
@@ -71,8 +70,61 @@ function streamArgs(o) {
     ...enc,
     ...pixFmt(o), ...cfr(o, fps),
     '-c:a', 'aac', '-b:a', `${o.audioBitrate || 160}k`, '-ar', '48000', '-ac', '2',
-    '-flvflags', 'no_duration_filesize',
-    '-f', 'flv', url
+    ...sendTo(url)
+  ];
+}
+// where a stream goes: RTMP / RTMPS (YouTube, Facebook …) as FLV; SRT as MPEG-TS
+const sendTo = url => /^srt:\/\//i.test(url)
+  ? ['-mpegts_flags', '+resend_headers', '-f', 'mpegts', url]
+  : ['-flvflags', 'no_duration_filesize', '-f', 'flv', url];
+
+/* Network sources for the native engine (they are read like a capture card): SRT, RTSP, or any other address FFmpeg
+   reads (RTMP, HTTP/HLS, UDP). Low delay; FFmpeg gives up after 5 s without data so the engine starts it again.
+   The picture is fitted into the size asked for (black bars when the shape differs). */
+function netArgs(d) {
+  const url = String(d.url || '').trim(), W = d.w || 1920, H = d.h || 1080;
+  const low = ['-fflags', '+nobuffer+discardcorrupt', '-flags', 'low_delay', '-probesize', '2000000', '-analyzeduration', '1000000'];
+  const fit = ['-vf', `scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=bicubic,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1`];
+  if (/^rtsps?:\/\//i.test(url)) return [...low, '-rtsp_transport', d.udp ? 'udp' : 'tcp', '-timeout', '5000000', '-i', url, ...fit];
+  // SRT waiting for a caller (mode=listener) may wait as long as it takes; a caller gives up after 5 s
+  if (/^srt:\/\//i.test(url)) return [...low, ...(/mode=listener/i.test(url) ? [] : ['-rw_timeout', '5000000']), '-i', url, ...fit];
+  return [...low, '-rw_timeout', '5000000', '-i', url, ...fit];
+}
+
+/* ISO recording: one camera in its own file, with the program sound, fed by the native engine (o.src = camera).
+   ProRes (.mov) and MJPEG (.avi) for editing; H.264 (.mp4) for small files. The .mov is written in 1-second
+   fragments, so a file is readable even if the computer stops — no long copy at the end. */
+const ISO_CODECS = {
+  'prores-proxy': { ext: 'mov', prores: 0 }, 'prores-lt': { ext: 'mov', prores: 1 }, 'prores-422': { ext: 'mov', prores: 2 }, 'prores-hq': { ext: 'mov', prores: 3 },
+  mjpeg: { ext: 'avi' }, 'h264-nvenc': { ext: 'mp4' }, 'h264-x264': { ext: 'mp4' }
+};
+function isoArgs(o, file) {
+  const c = ISO_CODECS[o.codec] ? o.codec : 'prores-lt', C = ISO_CODECS[c], fps = o.fps || 59.94, g = String(Math.round(fps));
+  const px = (o.width || 1920) * (o.height || 1080), kbps = Math.round(40000 * px / 2073600 * Math.max(0.5, fps / 59.94));
+  let v, a, mux;
+  if (C.prores !== undefined) {
+    v = ['-c:v', 'prores_aw', '-profile:v', String(C.prores), '-vendor', 'apl0', '-pix_fmt', 'yuv422p10le'];
+    a = ['-c:a', 'pcm_s24le'];
+    mux = ['-movflags', '+empty_moov+default_base_moof', '-frag_duration', '1000000', '-f', 'mov'];
+  } else if (c === 'mjpeg') {
+    v = ['-c:v', 'mjpeg', '-q:v', String(Math.min(10, Math.max(2, o.q || 3))), '-pix_fmt', 'yuvj422p'];
+    a = ['-c:a', 'pcm_s16le'];
+    mux = ['-f', 'avi'];
+  } else {
+    v = c === 'h264-nvenc'
+      ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '19', '-b:v', `${kbps}k`, '-maxrate', `${Math.round(kbps * 1.5)}k`, '-bufsize', `${kbps * 2}k`, '-profile:v', 'high', '-g', g, '-bf', '0', '-pix_fmt', 'yuv420p']
+      : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-profile:v', 'high', '-g', g, '-pix_fmt', 'yuv420p'];
+    a = ['-c:a', 'aac', '-b:a', '320k'];
+    mux = ['-movflags', '+frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4'];
+  }
+  return [
+    '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
+    '-fflags', '+genpts',
+    ...inputOf(Object.assign({}, o, { engine: true })),
+    ...v,
+    ...(o.timecode ? ['-timecode', o.timecode] : []),
+    ...a, '-ar', '48000', '-ac', '2',
+    ...mux, '-y', file
   ];
 }
 
@@ -247,6 +299,14 @@ class OutputManager extends EventEmitter {
     if (o.kind === 'stream') {
       if (!o.url) throw new Error('No stream address / key set.');
       args = streamArgs(o);
+    } else if (o.kind === 'iso') {
+      ensureDir(o.dir);
+      const C = ISO_CODECS[o.codec] || ISO_CODECS['prores-lt'];
+      const base = `${(o.name || 'Live Studio').replace(/[\\/:*?"<>|]/g, '_')} ${stamp()} ISO ${(o.camName || o.src || '').replace(/[\\/:*?"<>|]/g, '_')}`;
+      finalFile = path.join(o.dir, `${base}.${C.ext}`);
+      // H.264 is written crash-safe and tidied into a normal MP4 at the end (small files); ProRes / MJPEG are used as written
+      if (C.ext === 'mp4') partFile = path.join(o.dir, `${base}.recording.mp4`);
+      args = isoArgs(o, partFile || finalFile);
     } else if (o.kind === 'native') {
       if (!o.device) throw new Error('No capture card chosen.');
       if (!o.url) {
@@ -265,7 +325,7 @@ class OutputManager extends EventEmitter {
     // fed by the native engine: the engine runs this FFmpeg itself; here it looks like any other output
     const viaEngine = !!o.engine && o.kind !== 'native';
     if (viaEngine && !(this.engine && this.engine.ready)) throw new Error('The native engine is not running.');
-    const proc = viaEngine ? this._engineProc(id, args) : spawn(this.ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+    const proc = viaEngine ? this._engineProc(id, args, o) : spawn(this.ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
     // the encoder has time to spare (speed stays above 1×); the program's picture does not — it goes first
     try { if (proc.pid) require('os').setPriority(proc.pid, require('os').constants.priority.PRIORITY_BELOW_NORMAL); } catch (e) { /* not allowed */ }
     const out = { id, kind: o.kind, proc, finalFile, partFile, stopping: false, err: [], first: [], frames: 0, bytes: 0, viaEngine };
@@ -301,9 +361,9 @@ class OutputManager extends EventEmitter {
         this.emit('event', { id, kind: o.kind, type: 'log', line: `graphics-card decoding (${was}) failed — now using ${decodeMode}` });
       }
       let file = null;
-      if ((out.kind === 'record' || out.kind === 'native') && partFile && fs.existsSync(partFile)) {
+      if ((out.kind === 'record' || out.kind === 'native' || out.kind === 'iso') && partFile && fs.existsSync(partFile)) {
         file = await this._finalize(partFile, finalFile).catch(() => partFile);
-      }
+      } else if (out.kind === 'iso' && finalFile && fs.existsSync(finalFile)) file = finalFile;
       this.emit('event', {
         id, kind: o.kind, type: 'exit', code, expected: out.stopping, file,
         error: (code !== 0 && !out.stopping) ? (out.err.slice(-3).join(' | ') || `Encoder stopped (code ${code})`) : null,
@@ -348,12 +408,13 @@ class OutputManager extends EventEmitter {
   }
 
   /* an encoder inside the engine, made to look like a child process (its messages arrive as engine events) */
-  _engineProc(id, args) {
+  _engineProc(id, args, o) {
     const p = new EventEmitter();
     p.pid = 0; p.stderr = new EventEmitter();
     p.stdin = { writable: false, writableLength: 0, on() {}, write() {}, end() {} };
     p.kill = () => { if (this.engine) this.engine.send({ cmd: 'output-kill', id }); setTimeout(() => this._engineExit(id, -9), 3000); };
-    this.engine.send({ cmd: 'output-start', id, args });
+    // src: an ISO recording of that camera; group: started together (the recording and its ISO files)
+    this.engine.send({ cmd: 'output-start', id, args, src: (o && o.kind === 'iso' && o.src) || '', group: (o && o.group) || '', groupSize: (o && o.groupSize) || 0 });
     return p;
   }
   engineEvent(h) {
@@ -450,4 +511,4 @@ async function probeDecode(ffmpegPath) {
   } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* */ } }
 }
 
-module.exports = { OutputManager, streamArgs, recordArgs, x264Opts, nativeArgs, captureArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode };
+module.exports = { OutputManager, streamArgs, recordArgs, x264Opts, netArgs, isoArgs, ISO_CODECS, nativeArgs, captureArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode };

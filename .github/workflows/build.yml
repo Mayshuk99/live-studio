@@ -103,6 +103,35 @@ jobs:
       - name: "Test the plug-in host (SDK sample plug-ins: echo, limiter, bypass, saved settings)"
         run: node scripts/vst-selftest.js resources/vst/ls-vst.exe vsthost/build
 
+      - name: Build the NDI helper (NDI network sources)
+        shell: pwsh
+        run: |
+          cmake -S ndihost -B ndihost/build -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'cmake configure failed' }
+          cmake --build ndihost/build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { throw 'NDI helper build failed' }
+          New-Item -ItemType Directory -Force -Path resources/ndi | Out-Null
+          $exe = Get-ChildItem ndihost/build -Recurse -Filter ls-ndi.exe | Select-Object -First 1
+          Copy-Item $exe.FullName resources/ndi/ls-ndi.exe -Force
+          & resources/ndi/ls-ndi.exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw 'NDI helper self-test failed' }
+
+      - name: "Network sources and ISO files through the engine (SRT source, ProRes / MJPEG ISO, recording started together)"
+        run: node scripts/engine-selftest.js resources/engine/ls-engine.exe resources/ffmpeg/ffmpeg.exe --iso-net
+
+      # NDI end to end needs the NDI Runtime, which is not part of Live Studio. Tried here with the official
+      # runtime; it only reports, it never stops the build.
+      - name: "Try NDI end to end (official NDI Runtime; report only)"
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "http://ndi.link/NDIRedistV6" -OutFile ndi-runtime.exe
+          Start-Process -FilePath .\ndi-runtime.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait
+          $dll = Get-ChildItem "$env:ProgramFiles\NDI" -Recurse -Filter Processing.NDI.Lib.x64.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $dll) { throw 'NDI Runtime did not install' }
+          $env:NDI_RUNTIME_DIR_V6 = $dll.DirectoryName
+          node scripts/ndi-selftest.js resources/ndi/ls-ndi.exe resources/engine/ls-engine.exe resources/ffmpeg/ffmpeg.exe
+
       - name: Prepare the release
         shell: pwsh
         env:
@@ -111,7 +140,7 @@ jobs:
           $v = (Get-Content package.json | ConvertFrom-Json).version
           gh release view "v$v" 2>$null
           if ($LASTEXITCODE -eq 0) { gh release delete "v$v" --yes --cleanup-tag }
-          gh release create "v$v" --draft --target "${{ github.sha }}" --title "Live Studio $v" --notes "Download **Live-Studio-Setup-$v.exe** below and run it. Installed copies update themselves."
+          gh release create "v$v" --draft --target "${{ github.sha }}" --title "Live Studio $v" --notes "Download **Live-Studio-Setup-$v.exe** below and run it. Installed copies offer this update (Settings → About → Updates)."
 
       - name: Build installer and upload it
         env:

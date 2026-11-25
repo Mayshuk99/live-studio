@@ -7,6 +7,7 @@ const { NativeEngine } = require('../native-engine');
 const { recordArgs } = require('../streamer');
 const exe = process.argv[2], ff = process.argv[3] || 'ffmpeg';
 const W = 1280, H = 720;
+if (process.argv[4] === '--iso-net') { require('./engine-selftest-isonet')(exe, ff); return; }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ls-engine-test-'));
 const e = new NativeEngine();
 const stats = []; let exited = null, ready = false, camOk = false, outLines = [];

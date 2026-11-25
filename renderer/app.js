@@ -9,6 +9,7 @@
   const $ = (s, r = document) => r.querySelector(s);
   // a text as it will appear on screen (translated) — for code that compares before it sets, so nothing is redrawn needlessly
   const T = s => (window.I18N ? window.I18N.tr(s) : s);
+  const escapeHTML = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   function el(tag, props, ...kids) {
     const e = document.createElement(tag);
     if (props) for (const [k, v] of Object.entries(props)) {
@@ -281,7 +282,7 @@
   // Windows sometimes renames a card slightly ("Line In (2- Blackmagic…)", "Default - …"); compare without those bits
   const devKey = l => String(l || '').toLowerCase().replace(/^(default|communications)\s*-\s*/, '').replace(/\(\d+-\s*/g, '(').replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)/g, '').replace(/\s+/g, ' ').trim();
   function resolveDevices() {
-    for (const [kind, items] of [['video', show.cameras], ['audio', show.audio.inputs]]) {
+    for (const [kind, items] of [['video', show.cameras.filter(c => !c.net)], ['audio', show.audio.inputs]]) {
       const list = rt.devices[kind], claimed = new Set();
       for (const it of items) {                       // 1st pass: by remembered name + position
         if (!it.deviceLabel) { if (list.find(d => d.id === it.deviceId)) { rememberDevice(it, kind); claimed.add(it.deviceId); } continue; }
@@ -359,6 +360,7 @@
     if (NAT.on) { natOpenCamera(cam); return; }
     rt.camNote.delete(cam.id);
     closeCamera(cam.id);
+    if (cam.net) { rt.camStatus.set(cam.id, { ok: false, text: 'Network sources (NDI / SRT / RTSP) work with the native engine — Settings → Video output → Picture engine: Native.' }); refreshInputStatus(); return; }
     if (!cam.deviceId) { rt.camStatus.set(cam.id, { ok: false, text: 'Choose a device' }); refresh('inputs'); return; }
     if (!rt.devices.video.find(d => d.id === cam.deviceId)) {
       // device ids can change; try matching by name
@@ -460,6 +462,7 @@
   function natPreviewCams() { S.nativeSend({ cmd: 'preview', cam: { w: 384, h: 216, every: 3 }, cams: [...NAT.cams.keys()], pgm: { w: 0, h: 0, every: 0 } }); }
   function natOpenCamera(cam) {
     if (!engine.sources.has(cam.id) || engine.sources.get(cam.id).kind !== 'raw') engine.setRawSource(cam.id);
+    if (cam.net) { natOpenNet(cam); return; }
     if (!NAT.ready || !NAT.devices) { rt.camStatus.set(cam.id, { ok: false, text: 'Starting the native engine…' }); refreshInputStatus(); return; }
     const d = natCard(cam);
     if (!d) { const c = natCap(cam); rt.camStatus.set(cam.id, { ok: false, text: `No free capture card with ${c[0]}×${c[1]} at ${settings.output.fps} fps — choose one below` }); refreshInputStatus(); return; }
@@ -473,19 +476,36 @@
     logEvent('NATIVE', `camera ${cam.name}: ${d.name} #${d.n + 1} · ${d.w}×${d.h} at ${d.capFps || d.fps}${d.deint ? ` interlaced (${d.label}, deinterlaced)` : ''} · ${d.pixFmt || d.vcodec || 'the card’s own format'}`);
     refreshInputStatus();
   }
+  /* a network source (NDI / SRT / RTSP / other address): read like a capture card, at the output size (up to 1080p) */
+  const netLabel = n => n.type === 'ndi' ? `NDI ${n.name || ''}`.trim() : `${(n.type || 'url').toUpperCase()} ${String(n.url || '').replace(/\/\/[^/@]*@/, '//…@')}`;
+  function natOpenNet(cam) {
+    if (!NAT.ready) { rt.camStatus.set(cam.id, { ok: false, text: 'Starting the native engine…' }); refreshInputStatus(); return; }
+    const n = cam.net, need = n.type === 'ndi' ? !String(n.name || '').trim() : !String(n.url || '').trim();
+    if (need) { natCloseCamera(cam.id); rt.camStatus.set(cam.id, { ok: false, text: n.type === 'ndi' ? 'Choose an NDI source' : 'Type the address of the stream' }); refreshInputStatus(); return; }
+    const [W, H] = natCap(cam), dev = { net: clone(n), w: W, h: H, name: netLabel(n) }, key = 'net:' + JSON.stringify(n) + W + 'x' + H;
+    const prev = NAT.cams.get(cam.id);
+    if (prev && prev.key === key) return;
+    NAT.cams.set(cam.id, { key, fmt: 'net', deint: null, dev, since: performance.now(), bad: 0, comb: 0 });
+    rt.camStatus.set(cam.id, { ok: false, text: `Connecting to ${dev.name}…` });
+    S.nativeCamera(cam.id, dev);
+    if (cam.color) S.nativeSend(Object.assign({ cmd: 'color', id: cam.id }, cam.color));
+    natPreviewCams();
+    logEvent('NATIVE', `network source ${cam.name}: ${dev.name} → ${W}×${H}`);
+    refreshInputStatus();
+  }
   function natCloseCamera(id) { if (NAT.cams.delete(id) && NAT.ready) { S.nativeSend({ cmd: 'camera-close', id }); natPreviewCams(); } }
   if (S.onNative) S.onNative((h, payload) => {
     switch (h.ev) {
       case 'ready': NAT.ready = true; logEvent('ENGINE', `ready · ${h.w}×${h.h} · ${h.threads} threads`); natResync(); break;
       case 'cam-status': {
         const cam = camById(h.id), d = NAT.cams.get(h.id);
-        rt.camStatus.set(h.id, { ok: h.ok, text: h.ok ? (d && d.dev.deint ? `${d.dev.label} · deinterlaced · native (${d.dev.name} ${d.dev.n + 1})` : `${d ? d.dev.w : natW()}×${d ? d.dev.h : natH()} · ${settings.output.fps} fps · native${d ? ` (${d.dev.name} ${d.dev.n + 1})` : ''}`) : h.text });
+        rt.camStatus.set(h.id, { ok: h.ok, text: h.ok ? (d && d.dev.net ? `${d.dev.name} · ${d.dev.w}×${d.dev.h} · native` : d && d.dev.deint ? `${d.dev.label} · deinterlaced · native (${d.dev.name} ${d.dev.n + 1})` : `${d ? d.dev.w : natW()}×${d ? d.dev.h : natH()} · ${settings.output.fps} fps · native${d ? ` (${d.dev.name} ${d.dev.n + 1})` : ''}`) : h.text });
         refreshInputStatus();
         if (cam) logEvent('NATIVE', `camera ${cam.name}: ${h.ok ? 'picture is coming in' : h.text}`);
         break;
       }
       case 'cam-frame': if (payload && NAT.cams.has(h.id)) engine.rawPatch(h.id, { full: true, w: h.w, h: h.h, data: payload }); break;
-      case 'stats': rt.engStats = h; natAuto(h); break;
+      case 'stats': rt.engStats = h; natAuto(h); isoCheck(h); break;
       case 'audio-port-ok': NAT.portOK = true; logEvent('ENGINE', 'sound goes straight from the sound thread to the engine'); break;
       case 'log': logEvent('ENGINE', h.line); break;
       case 'exit':
@@ -536,7 +556,7 @@
   function natAuto(st) {
     for (const [id, c] of NAT.cams) {
       const cam = camById(id), s2 = st.cams && st.cams[id];
-      if (!cam || !s2 || (cam.signal && cam.signal !== 'auto')) continue;
+      if (!cam || !s2 || cam.net || (cam.signal && cam.signal !== 'auto')) continue;
       const age = performance.now() - c.since, out = settings.output.fps || 59.94;
       // whole frames that are combed: the camera is interlaced → deinterlace them
       c.comb = s2.ok && s2.comb > 3 ? c.comb + 1 : 0;
@@ -570,9 +590,10 @@
     if (!NAT.ready) return;
     NAT.M = { pid: undefined, sig: '', trans: null, black: null, webs: new Map(), labels: new Map(), stills: new Map(), videos: new Map(), bands: new Map(), noted: new Set() };
     for (const w of show.webs) S.nativeWeb(w.id, null);
-    if (!NAT.devices) return; // the cameras once the cards are known
     NAT.cams.clear();
-    for (const c of show.cameras) natOpenCamera(c);
+    for (const c of show.cameras) if (c.net) natOpenCamera(c); // network sources need no card list
+    if (!NAT.devices) return; // the cameras once the cards are known
+    for (const c of show.cameras) if (!c.net) natOpenCamera(c);
     natPreviewCams();
   }
   function natNote(M, key, text) { if (!M.noted.has(key)) { M.noted.add(key); logEvent('NATIVE', text); } }
@@ -1440,12 +1461,15 @@
   }
 
   class Output {
-    constructor(kind) { this.kind = kind; this.active = false; this.id = null; this.chain = Promise.resolve(); }
+    // dest: one of the extra stream destinations (Facebook, another channel …); none = the YouTube stream / recording
+    constructor(kind, dest) { this.kind = kind; this.dest = dest || null; this.active = false; this.id = null; this.chain = Promise.resolve(); }
     async start() {
-      const o = settings.output;
+      const o = settings.output, D = this.dest;
+      const kbps = D && D.own ? D.bitrate || 6000 : o.bitrate, akbps = D && D.own ? D.audioBitrate || 128 : o.audioBitrate;
+      const url = D ? destURL(D) : this.kind === 'stream' ? streamURL() : '', who = D ? D.name : this.kind;
       if (rt.eng) { // native engine: it already has the finished picture and sound; FFmpeg is started next to it
         if (!rt.eng.ready) throw new Error('The native engine is still starting — try again in a moment.');
-        const rec = advSettings(this.kind === 'stream' ? 'live' : 'rec'), enc0 = rec && rec.encoder ? rec.encoder : o.encoder;
+        const rec = D ? destAdv(D) : advSettings(this.kind === 'stream' ? 'live' : 'rec'), enc0 = rec && rec.encoder ? rec.encoder : o.encoder;
         const fb = rt.encFallback && rt.encFallback.for === enc0 ? rt.encFallback.level : 0;
         const encoder = fb >= 2 ? 'x264' : enc0, safe = fb === 1;
         this.enc0 = enc0; this.conv = !!(rec && rec.fps > 0 && Math.abs(rec.fps - o.fps) > 0.1);
@@ -1453,26 +1477,26 @@
         const base = { engine: true, width: o.width, height: o.height, videoDelayMs: (o.videoDelayMs ?? 20) + fx, fps: o.fps, encoder, safe };
         if (fx) logEvent('ENCODER', `${this.kind}: picture delayed ${(o.videoDelayMs ?? 20) + fx} ms (sync ${o.videoDelayMs ?? 20} + plug-ins ${fx})`);
         const opts = this.kind === 'stream'
-          ? Object.assign({ kind: 'stream', url: streamURL(), bitrate: o.bitrate, audioBitrate: o.audioBitrate, adv: rec }, base)
-          : Object.assign({ kind: 'record', dir: settings.recordDir, name: show.showName, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, adv: rec, timecode: rec && rec.timecode ? timecodeNow(rec.fps || o.fps) : '' }, base);
-        if (rec) logEvent('ENCODER', `${this.kind}: own encoder settings — ${recAdvText(rec, encoder)}`);
+          ? Object.assign({ kind: 'stream', url, bitrate: kbps, audioBitrate: akbps, adv: rec }, base)
+          : Object.assign({ kind: 'record', dir: settings.recordDir, name: show.showName, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, adv: rec, timecode: this.tc || (rec && rec.timecode ? timecodeNow(rec.fps || o.fps) : ''), group: this.group || '', groupSize: this.groupSize || 0 }, base);
+        if (rec) logEvent('ENCODER', `${who}: own encoder settings — ${recAdvText(rec, encoder)}`);
         const r = await S.outStart(opts);
         if (!r || r.error) throw new Error(r ? r.error : 'Encoder did not start');
         this.id = r.id; this.viaEngine = true; this.active = true;
-        logEvent('ENCODER', `${this.kind}: fed by the native engine (${encoder})`);
+        logEvent('ENCODER', `${who}: fed by the native engine (${encoder})`);
         return;
       }
       const mime = pickMime();
       if (!mime) throw new Error('This computer cannot encode video in the app.');
       // if the graphics-card encoder refused to start: 1 = plain settings, 2 = software encoder (for this session)
-      const rec = advSettings(this.kind === 'stream' ? 'live' : 'rec'), enc0 = rec && rec.encoder ? rec.encoder : o.encoder;
+      const rec = D ? destAdv(D) : advSettings(this.kind === 'stream' ? 'live' : 'rec'), enc0 = rec && rec.encoder ? rec.encoder : o.encoder;
       const fb = rt.encFallback && rt.encFallback.for === enc0 ? rt.encFallback.level : 0;
       const encoder = fb >= 2 ? 'x264' : enc0, safe = fb === 1;
       this.enc0 = enc0; this.conv = !!(rec && rec.fps > 0 && Math.abs(rec.fps - o.fps) > 0.1);
       const opts = this.kind === 'stream'
-        ? { kind: 'stream', url: streamURL(), fps: o.fps, bitrate: o.bitrate, encoder, safe, audioBitrate: o.audioBitrate, inputCodec: codecOf(mime), adv: rec, width: engine.W, height: engine.H }
+        ? { kind: 'stream', url, fps: o.fps, bitrate: kbps, encoder, safe, audioBitrate: akbps, inputCodec: codecOf(mime), adv: rec, width: engine.W, height: engine.H }
         : { kind: 'record', dir: settings.recordDir, name: show.showName, fps: o.fps, encoder, safe, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, inputCodec: codecOf(mime), adv: rec, timecode: rec && rec.timecode ? timecodeNow(rec.fps || o.fps) : '', width: engine.W, height: engine.H };
-      if (rec) logEvent('ENCODER', `${this.kind}: own encoder settings — ${recAdvText(rec, encoder)}`);
+      if (rec) logEvent('ENCODER', `${who}: own encoder settings — ${recAdvText(rec, encoder)}`);
       const r = await S.outStart(opts);
       if (!r || r.error) throw new Error(r ? r.error : 'Encoder did not start');
       this.id = r.id;
@@ -1489,7 +1513,7 @@
       // the picture handed to FFmpeg: when FFmpeg encodes it again (always for the stream; for the recording with a
       // graphics-card encoder) it gets a clean, high-quality copy, so the final file is not compressed twice at a low rate
       const reenc = this.kind === 'stream' || ['nvenc', 'qsv', 'amf'].includes(encoder) || !!rec;
-      const vbps = this.kind === 'stream' ? clamp(o.bitrate * 2000, 8e6, 30e6) : reenc ? clamp(o.recordBitrate * 3000, 10e6, 100e6) : clamp(o.recordBitrate * 1000, 1e6, 100e6);
+      const vbps = this.kind === 'stream' ? clamp(kbps * 2000, 8e6, 30e6) : reenc ? clamp(o.recordBitrate * 3000, 10e6, 100e6) : clamp(o.recordBitrate * 1000, 1e6, 100e6);
       this.rec = new MediaRecorder(ms, { mimeType: mime, videoBitsPerSecond: vbps, audioBitsPerSecond: 510000 });
       const id = this.id;
       this.rec.ondataavailable = e => {
@@ -1510,6 +1534,58 @@
     async stop() { this.active = false; await this.stopRecorder(); if (this.id) await S.outStop(this.id); }
   }
 
+  /* ---------- more destinations: the same program to several places at once (Facebook, another YouTube channel,
+     any RTMP / RTMPS / SRT server). Each has its own encoder and its own reconnect, so one failing never stops the
+     others. They start with GO LIVE and stop with END STREAM. ---------- */
+  const STREAM_SERVICES = {
+    facebook: { name: 'Facebook Live', url: 'rtmps://live-api-s.facebook.com:443/rtmp/', kbps: 6000 },
+    youtube: { name: 'YouTube — another channel', url: 'rtmps://a.rtmps.youtube.com:443/live2', kbps: 0 },
+    custom: { name: 'Other server (RTMP / RTMPS / SRT)', url: '', kbps: 6000 }
+  };
+  function destURL(D) {
+    const base = String((D.service === 'custom' ? D.server : (STREAM_SERVICES[D.service] || {}).url) || '').trim(), key = String(D.key || '').trim();
+    if (!key || /^srt:/i.test(base)) return base;
+    return base.replace(/\/+$/, '') + '/' + key;
+  }
+  const destReady = D => !!D.on && (D.service === 'custom' ? /^(rtmps?|srt):\/\//i.test(String(D.server || '').trim()) : !!String(D.key || '').trim());
+  // "same as the YouTube stream" = the same settings, encoded once more for this destination
+  const destAdv = D => D.own ? Object.assign(REC_DEF(), D.adv || {}, { on: true }) : advSettings('live');
+  rt.extras = new Map(); // destination id → { D, out, stats, state, tries, timer }
+  async function startExtra(D) {
+    const X = rt.extras.get(D.id) || { D, tries: 0 };
+    X.D = D; X.state = 'starting'; clearTimeout(X.timer); rt.extras.set(D.id, X);
+    renderHeader();
+    try {
+      const out = new Output('stream', D); await out.start();
+      if (rt.extras.get(D.id) !== X || !rt.live) { out.stop(); return; }
+      X.out = out; X.state = 'on'; X.stats = null; logEvent('STREAM', `${D.name}: started`);
+    } catch (e) { X.out = null; logEvent('STREAM', `${D.name}: could not start — ${e.message}`); retryExtra(X, e.message); }
+    renderHeader();
+  }
+  function retryExtra(X, why) {
+    if (!rt.live || rt.extras.get(X.D.id) !== X) return;
+    X.state = 'retry'; X.why = why || ''; X.tries++;
+    if (X.tries === 1) toast(`${X.D.name}: ${why || 'the stream stopped'} — trying again…`, 'error');
+    X.timer = setTimeout(() => { if (rt.live && rt.extras.get(X.D.id) === X) startExtra(X.D); }, Math.min(30000, 3000 * X.tries));
+    renderHeader();
+  }
+  async function stopExtra(id) {
+    const X = rt.extras.get(id); if (!X) return;
+    rt.extras.delete(id); clearTimeout(X.timer);
+    if (X.out) await X.out.stop().catch(() => {});
+    logEvent('STREAM', `${X.D.name}: stopped`); renderHeader();
+  }
+  const stopExtras = () => Promise.all([...rt.extras.keys()].map(stopExtra));
+  function extraEvent(ev) {
+    const X = [...rt.extras.values()].find(x => x.out && x.out.id === ev.id);
+    if (!X) return false;
+    if (ev.type === 'stats') { X.stats = ev; if (X.tries && ev.frame > 30) { X.tries = 0; toast(`${X.D.name} is streaming again.`, 'ok'); } }
+    else if (ev.type === 'exit') {
+      logEvent('STREAM', `${X.D.name}: encoder ${ev.expected ? 'finished' : 'stopped'}${ev.error ? ` — ${ev.error}` : ''}`);
+      if (!ev.expected) { X.out = null; retryExtra(X, ev.error); }
+    }
+    return true;
+  }
   async function goLive() {
     if (!settings.youtube.key && settings.youtube.server !== 'custom') { toast('Add your YouTube stream key first.', 'error'); openSettings('youtube'); return; }
     mixer.resume();
@@ -1522,13 +1598,14 @@
       document.body.classList.add('is-live');
       if (settings.autoRecord && !rt.rec) startRec();
       ytAfterGoLive();
+      for (const D of (settings.streams || []).filter(destReady)) startExtra(D);
     } catch (e) { rt.live = null; toast(`Could not go live: ${e.message}`, 'error'); }
     btn.disabled = false; renderHeader();
   }
   async function stopLive() {
     const o = rt.live; if (!o) return;
     rt.live = null; rt.reconnecting = false;
-    await o.stop();
+    await Promise.all([o.stop(), stopExtras()]);
     S.setLive(!!rt.rec);
     document.body.classList.remove('is-live');
     toast(`Stream ended after ${fmt((Date.now() - rt.liveStart) / 1000)}.`, 'ok');
@@ -1548,15 +1625,65 @@
     }, wait);
   }
   async function startRec() {
-    try { rt.rec = new Output('record'); await rt.rec.start(); rt.recStart = Date.now(); S.setLive(true); }
-    catch (e) { rt.rec = null; toast(`Could not record: ${e.message}`, 'error'); }
+    if (rt.iso.size) await stopIso();
+    try {
+      // ISO: the recording and every camera file start on the same frame with the same timecode (native engine)
+      const C = isoCfg(), iso = C.on && rt.eng && rt.eng.ready ? isoCams() : [];
+      if (C.on && !rt.eng) toast('ISO recording needs the native engine — only the program is recorded.', 'error');
+      const out = new Output('record');
+      if (iso.length) { out.group = uid('g'); out.groupSize = iso.length + 1; out.tc = timecodeNow(settings.output.fps); }
+      rt.rec = out; await out.start(); rt.recStart = Date.now(); S.setLive(true);
+      if (iso.length) await startIso(iso, out.group, out.groupSize, out.tc);
+    } catch (e) { rt.rec = null; toast(`Could not record: ${e.message}`, 'error'); }
     renderHeader();
   }
-  async function stopRec() { const o = rt.rec; rt.rec = null; if (o) await o.stop(); S.setLive(!!rt.live); renderHeader(); }
+  async function stopRec() { const o = rt.rec; rt.rec = null; await Promise.all([o ? o.stop() : null, stopIso()]); S.setLive(!!rt.live); renderHeader(); }
+
+  /* ---------- ISO recording: each camera in its own file as well (native engine). Every file has the program sound,
+     starts on the same frame as the recording and carries the same timecode, so editors line them up by themselves. */
+  const ISO_DEF = () => ({ on: false, codec: 'prores-lt', q: 3 });
+  const isoCfg = () => Object.assign(ISO_DEF(), settings.iso || {});
+  const isoCams = () => show.cameras.filter(c => c.iso !== false);
+  rt.iso = new Map(); // output id → { cam, drops, warned }
+  async function startIso(cams, group, size, tc) {
+    const C = isoCfg(), o = settings.output, fx = vstMs();
+    for (const cam of cams) {
+      const r = await S.outStart({ kind: 'iso', engine: true, src: cam.id, camName: cam.name, dir: settings.recordDir, name: show.showName, codec: C.codec, q: C.q, timecode: tc, group, groupSize: size, width: o.width, height: o.height, fps: o.fps, videoDelayMs: (o.videoDelayMs ?? 20) + fx }).catch(e => ({ error: e.message }));
+      if (!r || r.error) { toast(`ISO ${cam.name}: ${r ? r.error : 'could not start'}`, 'error'); continue; }
+      rt.iso.set(r.id, { cam, drops: 0 });
+    }
+    logEvent('RECORD', `ISO: ${rt.iso.size} camera file(s) · ${C.codec}${C.codec === 'mjpeg' ? ` q${C.q}` : ''} · timecode ${tc}`);
+  }
+  async function stopIso() { rt.isoSaved = []; await Promise.all([...rt.iso.keys()].map(id => S.outStop(id).catch(() => {}))); }
+  function isoEvent(ev) {
+    const I = rt.iso.get(ev.id);
+    if (ev.type === 'stats') { if (I) I.stats = ev; return; }
+    if (ev.type !== 'exit') return;
+    rt.iso.delete(ev.id);
+    const name = I ? I.cam.name : 'camera';
+    logEvent('RECORD', `ISO ${name}: ${ev.expected ? 'finished' : 'stopped'}${ev.file ? ` → ${ev.file}` : ''}${ev.error ? ` — ${ev.error}` : ''}`);
+    if (!ev.expected) toast(`ISO recording of ${name} stopped: ${ev.error || 'the encoder closed'}`, 'error');
+    if (ev.file) {
+      (rt.isoSaved = rt.isoSaved || []).push(ev.file);
+      if (!rt.iso.size) { const f = rt.isoSaved; toast(`ISO files saved: ${f.length}`, 'ok', S.showFile ? { label: 'Show', fn: () => S.showFile(f[0]) } : null); rt.isoSaved = []; }
+    }
+  }
+  // an ISO encoder that cannot keep up loses frames (the engine never waits for it): said once, logged every time
+  function isoCheck(st) {
+    for (const [id, I] of rt.iso) {
+      const d = st.outputs && st.outputs[id] ? st.outputs[id].dropped || 0 : 0;
+      if (d <= I.drops) continue;
+      logEvent('RECORD', `ISO ${I.cam.name}: ${d - I.drops} frames lost (the encoder is too slow)`);
+      if (!I.warned) { I.warned = true; toast(`ISO ${I.cam.name}: the computer cannot encode it in time — frames are lost. Choose MJPEG or H.264 (NVIDIA) in Settings → Recording.`, 'error'); }
+      I.drops = d;
+    }
+  }
 
   S.onOutEvent(ev => {
     if (rt.native && rt.native.id === ev.id) { rt.native.on(ev); return; }
     if (rt.test && rt.test.out.id === ev.id) { rt.test.on(ev); return; }
+    if (ev.kind === 'iso') { isoEvent(ev); return; }
+    if (ev.type !== 'log' && extraEvent(ev)) return;
     // FFmpeg's own messages go to the log (the first 25 of each output — enough to see what went wrong)
     if (ev.type === 'log') { rt.ffLines = rt.ffLines || {}; const n = rt.ffLines[ev.id] = (rt.ffLines[ev.id] || 0) + 1; if (n <= 25) logEvent('ENCODER', `${ev.kind}: ${String(ev.line).slice(0, 300)}`); }
     if (ev.type === 'stats') {
@@ -1897,6 +2024,10 @@
       const slow = (st.speed && st.speed < 0.97) || (st.backlog > 8e6);
       if (slow) { if (!rt.slowSince) rt.slowSince = Date.now(); } else rt.slowSince = 0;
       if (rt.slowSince && Date.now() - rt.slowSince > 5000) parts.push('<span class="bad">⚠ Computer or internet can\'t keep up — lower bitrate or use a hardware encoder</span>');
+    }
+    for (const X of rt.extras.values()) {
+      const n = escapeHTML(X.D.name || 'Destination');
+      parts.push(X.state === 'on' ? `${n} ${X.stats && X.stats.bitrate ? (X.stats.bitrate / 1000).toFixed(1) + ' Mb/s' : '●'}` : X.state === 'retry' ? `<span class="bad">${n} reconnecting…</span>` : `${n} starting…`);
     }
     const yp = $('#ytStatus');
     if (yp) {
@@ -4454,6 +4585,7 @@
     put(body, el('div', { class: 'section', style: 'border:0;margin:0;padding:0' }, el('h4', null, 'Cameras & capture cards')));
     if (!show.cameras.length) put(body, el('div', { class: 'empty' }, 'No cameras yet. Connect your Blackmagic card, then click “Add camera”.'));
     for (const cam of show.cameras) {
+      if (cam.net) { put(body, netCard(cam)); continue; }
       const devOpts = [['', '— choose device —'], ...rt.devices.video.map(d => [d.id, d.label])];
       put(body, el('div', { class: 'input-card' }, viewFor(cam.id),
         el('div', null,
@@ -4471,6 +4603,7 @@
     }
     put(body, el('div', { class: 'row', style: 'margin-bottom:14px' },
       el('button', { class: 'btn', onclick: addCamera }, '+ Add camera'),
+      el('button', { class: 'btn', title: 'A picture from the network: NDI (other computers, NDI cameras and phones), SRT or RTSP (IP cameras, encoders)', onclick: addNetSource }, '+ Network source (NDI / SRT / RTSP)'),
       el('button', { class: 'btn ghost small', onclick: async () => { await refreshDevices(); refresh('inputs'); toast(`Found ${rt.devices.video.length} video and ${rt.devices.audio.length} audio devices.`); } }, '↻ Rescan devices')));
 
     put(body, el('div', { class: 'section' }, el('h4', null, 'Video, picture & music files')));
@@ -4488,6 +4621,53 @@
     put(body, el('button', { class: 'btn', onclick: addFiles }, '+ Add video / picture / music'));
     refreshInputStatus();
   };
+  function addNetSource() {
+    const cam = { id: uid('cam'), name: `Network ${show.cameras.filter(c => c.net).length + 1}`, net: { type: 'ndi', name: '', url: '' }, res: '1080', color: clone(NEUTRAL) };
+    show.cameras.push(cam); changed();
+    openCamera(cam); refreshAll();
+    if (NAT.on) findNdi(true);
+  }
+  rt.ndiFound = null;
+  async function findNdi(quiet) {
+    if (!S.ndiList) return;
+    rt.ndiLooking = true; refresh('inputs');
+    const r = await S.ndiList().catch(e => ({ error: e.message }));
+    rt.ndiLooking = false;
+    if (r && r.error) { rt.ndiFound = []; rt.ndiErr = r.error; if (!quiet) toast(`NDI: ${r.error}`, 'error'); }
+    else { rt.ndiFound = (r && r.sources) || []; rt.ndiErr = ''; logEvent('NDI', `found ${rt.ndiFound.length}: ${rt.ndiFound.map(x => x.name).join(', ')}${r && r.version ? ` · ${r.version}` : ''}`); if (!quiet) toast(`Found ${rt.ndiFound.length} NDI source${rt.ndiFound.length === 1 ? '' : 's'}.`, rt.ndiFound.length ? 'ok' : ''); }
+    refresh('inputs');
+  }
+  function netCard(cam) {
+    const n = cam.net, again = () => { changed(); NAT.cams.delete(cam.id); openCamera(cam); refresh('inputs'); };
+    const found = rt.ndiFound || [], names = found.map(x => x.name);
+    const typeSel = select([['ndi', 'NDI'], ['srt', 'SRT'], ['rtsp', 'RTSP (IP camera)'], ['url', 'Other address (RTMP / HTTP / UDP)']], n.type, v => { n.type = v; logEvent('CAMERA', `${cam.name}: network type ${v}`); again(); });
+    let src;
+    if (n.type === 'ndi') {
+      src = el('div', null,
+        el('div', { class: 'row wrap', style: 'gap:6px' },
+          select([['', rt.ndiLooking ? 'Looking for NDI sources…' : found.length ? '— choose an NDI source —' : rt.ndiFound ? 'No NDI sources found' : '— press Find —'], ...found.map(x => [x.name, x.name]), ...(n.name && !names.includes(n.name) ? [[n.name, `${n.name} (not seen now)`]] : [])], n.name || '', v => { n.name = v; again(); }, { class: 'grow' }),
+          el('button', { class: 'btn small', onclick: () => findNdi(false) }, '↻ Find')),
+        el('div', { class: 'row wrap', style: 'gap:6px;margin-top:6px' },
+          el('input', { type: 'text', class: 'grow', value: n.name || '', placeholder: 'or type it: COMPUTER (Source name)', onchange: e => { n.name = e.target.value.trim(); again(); } }),
+          check(' Low bandwidth', !!n.low, v => { n.low = v; again(); })),
+        rt.ndiErr ? el('div', { class: 'status-bad', style: 'font-size:.85em;margin-top:4px' }, rt.ndiErr) : null);
+    } else {
+      const ph = { srt: 'srt://0.0.0.0:9000?mode=listener   or   srt://192.168.1.50:9000', rtsp: 'rtsp://user:password@192.168.1.60:554/stream1', url: 'rtmp://…  http://…/index.m3u8  udp://@:1234' }[n.type];
+      const hint = { srt: 'The encoder sends to this computer: srt://0.0.0.0:PORT?mode=listener (open that port in the firewall). This computer calls the encoder: srt://ADDRESS:PORT. Add &passphrase=… if it uses one.', rtsp: 'The address from the camera’s manual or web page. Picture only — bring the sound through your desk.', url: 'Any address FFmpeg can read.' }[n.type];
+      src = el('div', null,
+        el('div', { class: 'row', style: 'gap:6px' }, el('input', { type: 'text', class: 'grow', value: n.url || '', placeholder: ph, spellcheck: false, onchange: e => { n.url = e.target.value.trim(); again(); } }),
+          n.type === 'rtsp' ? check(' UDP', !!n.udp, v => { n.udp = v; again(); }) : null),
+        el('div', { class: 'muted', style: 'font-size:.8em;margin-top:4px' }, hint));
+    }
+    return el('div', { class: 'input-card' }, viewFor(cam.id),
+      el('div', null,
+        el('div', { class: 'row' }, el('input', { type: 'text', class: 'grow', value: cam.name, oninput: e => { cam.name = e.target.value; changed(); } }),
+          el('button', { class: 'btn small danger', title: 'Remove this source', onclick: () => { closeCamera(cam.id); show.cameras = show.cameras.filter(c => c !== cam); changed(); refreshAll(); } }, '✕')),
+        el('div', { class: 'row wrap', style: 'margin-top:6px;gap:6px;align-items:flex-start' }, el('span', { class: 'net-badge' }, 'NETWORK'), typeSel),
+        el('div', { style: 'margin-top:6px' }, src),
+        NAT.on ? null : el('div', { class: 'status-bad', style: 'font-size:.85em;margin-top:5px' }, 'Needs the native engine: Settings → Video output → Picture engine → Native.'),
+        el('div', { style: 'font-size:.85em;margin-top:5px' }, el('span', { dataset: { camStatus: cam.id } }))));
+  }
   function addCamera() {
     const used = new Set(show.cameras.map(c => c.deviceId));
     const dev = rt.devices.video.find(d => !used.has(d.id));
@@ -4561,20 +4741,23 @@
       rec: { v: 'recordBitrate', a: 'recordAudioBitrate', vr: [1000, 100000], ar: [96, 512], builtin: [['Wirecast “Default Record Pavel”', 4500, 192, { on: true, encoder: 'x264', w: 1920, h: 1080, fps: 60, speed: 'superfast', profile: 'baseline', gop: 60, cbr: false, aligned: false, x264: '', channels: 2, rate: 48000, timecode: false }], ['4K (for editing)', 80000, 320], ['Standard', 20000, 256], ['High (for editing)', 40000, 320], ['Small files', 10000, 192], ['Very small (like Wirecast)', 3600, 160]] }
     };
     /* Live stream / Recording → Encoder settings: the same choices as Wirecast's encoder presets */
-    function advBlock(kind, redraw) {
-      const K = ADV_KEY[kind], Q = QUAL[kind], isRec = kind === 'rec';
-      const R = o[K] || (o[K] = REC_DEF());
+    // dest: an extra stream destination with its own settings (no on / off box: always its own)
+    function advBlock(kind, redraw, dest) {
+      const K = ADV_KEY[kind], Q = QUAL[kind], isRec = !dest && kind === 'rec';
+      const R = dest ? (dest.adv = Object.assign(REC_DEF(), dest.adv || {}, { on: true })) : (o[K] || (o[K] = REC_DEF()));
+      const vGet = () => dest ? dest.bitrate : o[Q.v], vSet = x => { if (dest) dest.bitrate = x; else o[Q.v] = x; };
+      const aGet = () => dest ? dest.audioBitrate : o[Q.a], aSet = x => { if (dest) dest.audioBitrate = x; else o[Q.a] = x; };
       const save = () => { saveSettings(); redraw(); };
       const enc = R.encoder || o.encoder || 'x264', encName = { x264: 'x264 (software)', nvenc: 'NVIDIA H.264', qsv: 'Intel H.264', amf: 'AMD H.264' };
       const progW = rt.eng ? o.width : uiW(), progH = rt.eng ? o.height : uiH();
       const num = (val, ph, on, attrs) => el('input', Object.assign({ type: 'number', value: val || '', placeholder: String(ph), disabled: live || null, style: 'width:120px', onchange: e => on(Math.max(0, Math.round(+e.target.value) || 0)) }, attrs || {}));
       const row = (label, ...ctl) => [el('span', { class: 'rec-adv-l' }, label), el('div', { class: 'row', style: 'gap:8px' }, ...ctl)];
-      const body = R.on ? el('div', { class: 'rec-adv' },
+      const body = (dest || R.on) ? el('div', { class: 'rec-adv' },
         ...row('Encoder', select([['', `Same as Video output — ${encName[o.encoder] || o.encoder}`], ['x264', 'x264 (software)'], ['nvenc', 'NVIDIA H.264 (NVENC)'], ['qsv', 'Intel H.264 (Quick Sync)'], ['amf', 'AMD H.264 (AMF)']], R.encoder || '', v => { R.encoder = v; R.speed = ''; save(); }, { disabled: live || null })),
         ...row('Width', num(R.w, progW, v => { R.w = v & ~1; if (!v) R.h = 0; save(); }), el('span', { class: 'muted', style: 'font-size:.85em' }, 'empty = the program size')),
         ...row('Height', num(R.h, progH, v => { R.h = v & ~1; if (!v) R.w = 0; save(); })),
         ...row('Frames per second', select([[0, `Same as the program (${o.fps})`], [60, '60'], [59.94, '59.94'], [50, '50'], [30, '30'], [29.97, '29.97'], [25, '25'], [24, '24']], R.fps || 0, v => { R.fps = +v; save(); }, { disabled: live || null })),
-        ...row('Average bit rate', num(o[Q.v], isRec ? 20000 : 8000, v => { o[Q.v] = clamp(v || (isRec ? 20000 : 8000), Q.vr[0], Q.vr[1]); save(); }, { step: 100 }), el('span', null, 'kbits/sec')),
+        ...row('Average bit rate', num(vGet(), isRec ? 20000 : 8000, v => { vSet(clamp(v || (isRec ? 20000 : 8000), Q.vr[0], Q.vr[1])); save(); }, { step: 100 }), el('span', null, 'kbits/sec')),
         ...row('Quality', select(SPEEDS[enc] || SPEEDS.x264, R.speed && (SPEEDS[enc] || []).some(x => x[0] === R.speed) ? R.speed : SPEED_DEF[enc], v => { R.speed = v; save(); }, { disabled: live || null })),
         ...(enc === 'x264' ? row('x264 command line options', el('input', { type: 'text', value: R.x264 || '', placeholder: 'e.g. --bframes 0', disabled: live || null, class: 'grow', onchange: e => { R.x264 = e.target.value.trim(); save(); } })) : []),
         ...row('Profile', select([['baseline', 'Baseline'], ['main', 'Main'], ['high', 'High']], R.profile || 'high', v => { R.profile = v; save(); }, { disabled: live || null })),
@@ -4585,15 +4768,78 @@
         el('span'), check(' Keyframe aligned', R.aligned, v => { R.aligned = v; save(); }),
         el('div', { class: 'rec-adv-h' }, 'Audio (AAC)'),
         ...row('Channels', select([[2, 'Stereo'], [1, 'Mono']], R.channels === 1 ? 1 : 2, v => { R.channels = +v; save(); }, { disabled: live || null })),
-        ...row('Target bit rate', select([96, 128, 160, 192, 256, 320].map(v => [v, String(v)]).concat([96, 128, 160, 192, 256, 320].includes(o[Q.a] || (isRec ? 256 : 160)) ? [] : [[o[Q.a], String(o[Q.a])]]), o[Q.a] || (isRec ? 256 : 160), v => { o[Q.a] = +v; save(); }, { disabled: live || null }), el('span', null, 'kbits/sec')),
+        ...row('Target bit rate', select([96, 128, 160, 192, 256, 320].map(v => [v, String(v)]).concat([96, 128, 160, 192, 256, 320].includes(aGet() || (isRec ? 256 : 160)) ? [] : [[aGet(), String(aGet())]]), aGet() || (isRec ? 256 : 160), v => { aSet(+v); save(); }, { disabled: live || null }), el('span', null, 'kbits/sec')),
         ...row('Sample rate', select([[48000, '48.000 kHz'], [44100, '44.100 kHz']], R.rate === 44100 ? 44100 : 48000, v => { R.rate = +v; save(); }, { disabled: live || null })),
         enc === 'x264' && (R.w > 1920 || (!R.w && progH > 1080)) ? el('div', { class: 'status-bad', style: 'grid-column:1/-1;font-size:.85em' }, isRec ? 'x264 cannot record 4K / 1440p in time — choose NVIDIA H.264.' : 'x264 cannot stream 4K / 1440p in time — choose NVIDIA H.264.') : null,
         rt.eng || !isRec ? null : el('div', { class: 'muted', style: 'grid-column:1/-1;font-size:.85em' }, 'With the classic engine the recording is encoded once more with these settings (instead of being copied).'))
         : el('div', { class: 'muted', style: 'font-size:.85em' }, isRec ? 'Off: recordings use the encoder from Video output and the bitrates above.' : 'Off: the stream uses the encoder from Video output and the bitrates above.');
+      if (dest) return body;
       return el('div', { class: 'section', style: 'margin-top:4px' },
         el('h4', null, isRec ? 'Recording encoder settings' : 'Stream encoder settings'),
         check(isRec ? ' Use my own encoder settings for recordings (like Wirecast’s encoder presets)' : ' Use my own encoder settings for the live stream (like Wirecast’s encoder presets)', R.on, v => { R.on = v; save(); }),
         body);
+    }
+    /* YouTube → More destinations: the same program to several places at once */
+    function destBlock() {
+      const wrap = el('div');
+      const draw = () => {
+        const list = s.streams || (s.streams = []);
+        const save = () => { saveSettings(); };
+        wrap.innerHTML = '';
+        for (const D of list) {
+          const keyIn = el('input', { type: 'password', class: 'grow', value: D.key || '', placeholder: D.service === 'custom' ? 'Stream key (if the server gives one)' : 'Paste the stream key', autocomplete: 'off', onchange: e => { D.key = e.target.value.trim(); save(); draw(); } });
+          const X = rt.extras.get(D.id);
+          const state = !rt.live ? '' : X ? (X.state === 'on' ? '● streaming' : X.state === 'retry' ? `reconnecting… ${X.why || ''}` : 'starting…') : D.on ? (destReady(D) ? '' : 'not started — fill in the address / key') : 'off';
+          put(wrap, el('div', { class: 'dest-card' + (D.on ? '' : ' off') },
+            el('div', { class: 'row wrap', style: 'gap:8px;align-items:center' },
+              check(' On', !!D.on, v => { D.on = v; save(); logEvent('STREAM', `${D.name}: ${v ? 'on' : 'off'}`); if (rt.live) { if (v && destReady(D)) startExtra(D); else stopExtra(D.id); } draw(); }),
+              el('input', { type: 'text', value: D.name, style: 'width:180px', oninput: e => { D.name = e.target.value; save(); } }),
+              select(Object.entries(STREAM_SERVICES).map(([k, v]) => [k, v.name]), D.service, v => { D.service = v; save(); draw(); }, { disabled: (rt.live && X) || null }),
+              el('span', { class: 'grow' }),
+              state ? el('span', { class: X && X.state === 'retry' ? 'status-bad' : 'muted', style: 'font-size:.85em' }, state) : null,
+              el('button', { class: 'btn small danger', title: 'Remove this destination', onclick: () => { stopExtra(D.id); s.streams = list.filter(x => x !== D); save(); draw(); } }, '✕')),
+            D.service === 'custom' ? el('div', { class: 'field', style: 'margin:6px 0 0' }, el('span', null, 'Server address'),
+              el('input', { type: 'text', value: D.server || '', placeholder: 'rtmps://server/app   or   srt://server:port?streamid=…', spellcheck: false, onchange: e => { D.server = e.target.value.trim(); save(); draw(); } })) : null,
+            !(D.service === 'custom' && /^srt:/i.test(D.server || '')) ? el('div', { class: 'row', style: 'gap:6px;margin-top:6px' }, ...keyInput2(keyIn)) : null,
+            el('div', { class: 'row wrap', style: 'gap:8px;margin-top:6px;align-items:center' },
+              el('span', { class: 'muted', style: 'font-size:.85em' }, 'Encoder settings'),
+              select([['same', 'Same as the YouTube stream'], ['own', 'Own settings for this destination']], D.own ? 'own' : 'same', v => { D.own = v === 'own'; if (D.own && !D.bitrate) { D.bitrate = (STREAM_SERVICES[D.service] || {}).kbps || 6000; D.audioBitrate = 128; } save(); draw(); }, { disabled: live || null })),
+            D.own ? advBlock('live', () => { save(); draw(); }, D) : null));
+        }
+        put(wrap,
+          el('div', { class: 'row wrap', style: 'gap:8px;margin-top:6px' },
+            el('button', { class: 'btn', onclick: () => { list.push({ id: uid('dst'), name: list.some(x => x.service === 'facebook') ? `Destination ${list.length + 1}` : 'Facebook', service: list.some(x => x.service === 'facebook') ? 'custom' : 'facebook', server: '', key: '', on: true, own: true, bitrate: 6000, audioBitrate: 128, adv: REC_DEF() }); save(); draw(); } }, '+ Add destination')),
+          el('div', { class: 'muted', style: 'font-size:.85em;margin-top:6px' }, 'Every destination starts with GO LIVE and has its own encoder: if one drops, it reconnects by itself and the others carry on. Each one is encoded again — with the processor (x264) that is heavy; “NVIDIA H.264” under Encoder is light. Facebook: up to 1080p, about 4,000–6,000 kbps, key frame every 2 seconds.'));
+      };
+      draw();
+      return wrap;
+    }
+    // a key box with a Show button
+    function keyInput2(inp) {
+      return [inp, el('button', { class: 'btn small', onclick: e => { inp.type = inp.type === 'password' ? 'text' : 'password'; e.target.textContent = inp.type === 'password' ? 'Show' : 'Hide'; } }, 'Show')];
+    }
+    /* Recording → ISO: each camera in its own file */
+    function isoBlock() {
+      const wrap = el('div');
+      const draw = () => {
+        const C = s.iso || (s.iso = ISO_DEF());
+        const save = () => { saveSettings(); draw(); };
+        const px = (o.width || 1920) * (o.height || 1080) / 2073600 * (o.fps || 59.94) / 59.94;
+        const gbh = { 'prores-proxy': 41, 'prores-lt': 92, 'prores-422': 132, 'prores-hq': 198, mjpeg: { 2: 80, 3: 55, 5: 35, 8: 25 }[C.q] || 55, 'h264-nvenc': 18, 'h264-x264': 18 }[C.codec] * px;
+        wrap.innerHTML = '';
+        put(wrap,
+          check(' Also record every camera in its own file (ISO)', !!C.on, v => { C.on = v; logEvent('SETTINGS', `ISO recording ${v ? 'on' : 'off'}`); save(); }),
+          C.on ? el('div', { class: 'grid2', style: 'margin-top:8px' },
+            el('div', { class: 'field' }, el('span', null, 'Format'), select([['prores-proxy', 'ProRes 422 Proxy — smallest'], ['prores-lt', 'ProRes 422 LT — recommended'], ['prores-422', 'ProRes 422'], ['prores-hq', 'ProRes 422 HQ — best, largest'], ['mjpeg', 'MJPEG (.avi) — lightest on the processor'], ['h264-nvenc', 'H.264 on the NVIDIA card (.mp4) — small files'], ['h264-x264', 'H.264 on the processor (.mp4)']], C.codec, v => { C.codec = v; save(); }, { disabled: live || null })),
+            C.codec === 'mjpeg' ? el('div', { class: 'field' }, el('span', null, 'MJPEG quality'), select([[2, '2 — best'], [3, '3 — high'], [5, '5 — good'], [8, '8 — small files']], C.q || 3, v => { C.q = +v; save(); }, { disabled: live || null })) : el('div')) : null,
+          C.on ? el('div', { class: 'muted', style: 'font-size:.85em;margin:2px 0 6px' }, `About ${Math.round(gbh)} GB per hour for each camera (${o.width}×${o.height}, ${o.fps} fps).`) : null,
+          C.on ? el('div', { class: 'row wrap', style: 'gap:14px;margin:4px 0' }, el('span', { class: 'muted', style: 'font-size:.85em' }, 'Cameras:'),
+            ...(show.cameras.length ? show.cameras.map(cam => check(` ${cam.name}`, cam.iso !== false, v => { cam.iso = v; changed(); })) : [el('span', { class: 'muted' }, 'no cameras yet')])) : null,
+          C.on && o.engine !== 'native' ? el('div', { class: 'status-bad', style: 'font-size:.85em' }, 'ISO recording needs the native engine: Video output → Picture engine → Native.') : null,
+          C.on ? el('div', { class: 'muted', style: 'font-size:.85em' }, 'The files go next to the recording (“… ISO Camera 1.mov”). Each has the program sound, starts on the same frame as the recording and carries the same timecode — Premiere and DaVinci Resolve line them up by themselves. ProRes and MJPEG are encoded by the processor: if the log says “frames lost”, choose a lighter format.') : null);
+      };
+      draw();
+      return wrap;
     }
     function qualityBlock(kind) {
       const Q = QUAL[kind], wrap = el('div');
@@ -4634,6 +4880,8 @@
       customRow,
       el('div', { class: 'field' }, el('span', null, 'Stream key'), el('div', { class: 'row' }, keyInput, el('button', { class: 'btn small', onclick: e => { keyInput.type = keyInput.type === 'password' ? 'text' : 'password'; e.target.textContent = keyInput.type === 'password' ? 'Show' : 'Hide'; } }, 'Show'), el('button', { class: 'btn small primary', onclick: () => { saveSettings(); closeModal(); openStreamTest(); } }, '▶ Test this key'))),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Find it in YouTube Studio → Create → Go live → Stream → “Stream key”. Keep it private — it is stored encrypted on this computer.'),
+      el('h4', { id: 'set-dest', style: 'margin:14px 0 4px' }, 'More destinations — stream to several places at once'),
+      destBlock(),
 
       el('h3', { id: 'set-out' }, 'Video output'),
       live ? el('div', { class: 'status-bad', style: 'margin-bottom:8px' }, 'Locked while live or recording.') : null,
@@ -4663,6 +4911,8 @@
         el('div', { class: 'field' }, check(' Also start recording when I press GO LIVE (normally recording starts with START SERVICE)', s.autoRecord, v => { s.autoRecord = v; saveSettings(); }))),
       el('h4', { style: 'margin:6px 0' }, 'Recording quality'),
       qualityBlock('rec'),
+      el('h4', { id: 'set-iso', style: 'margin:12px 0 4px' }, 'ISO recording — each camera in its own file'),
+      isoBlock(),
 
       el('h3', null, 'Switching'),
       el('div', { class: 'grid2' },
@@ -4700,6 +4950,7 @@
           else if (r.status === 'error') rt.upd = { status: 'error', message: r.message };
           updRender();
         } }, 'Check for updates')),
+      el('div', { class: 'muted', style: 'font-size:.8em;margin-top:4px' }, 'NDI® is a registered trademark of Vizrt NDI AB (ndi.video). NDI sources need the free NDI Tools on this computer.'),
       el('div', { class: 'field', style: 'margin-top:8px' }, el('span', null, 'Updates'),
         select([['ask', 'Tell me about a new version — I decide when to install it'], ['off', 'Never look by itself — only when I press “Check for updates”'], ['auto', 'Automatic — download and install by itself']], s.updates || 'ask', v => {
           s.updates = v; saveSettings(); logEvent('SETTINGS', `updates: ${v}`);
@@ -5043,6 +5294,7 @@
         if (!rt.live.conv) { sum.dup += Math.max(0, dd); sum.drop += Math.max(0, dr); }
         line += ` | yt ${Math.round(L.fps || 0)}fps ${((L.bitrate || 0) / 1000).toFixed(1)}Mb dup ${dd} drop ${dr} x${(L.speed || 0).toFixed(2)} buf ${Math.round((L.backlog || 0) / 1024)}K`;
       } else if (rt.live) line += ' | yt starting';
+      for (const X of rt.extras.values()) line += ` | ${String(X.D.name).slice(0, 14)} ${X.state === 'on' && X.stats ? `${Math.round(X.stats.fps || 0)}fps ${((X.stats.bitrate || 0) / 1000).toFixed(1)}Mb x${(X.stats.speed || 0).toFixed(2)}` : X.state}`;
       if (R) { const dd = (R.dup || 0) - prev.rd, dr = (R.drop || 0) - prev.rr; prev.rd = R.dup || 0; prev.rr = R.drop || 0; if ((dd > 0 || dr > 0) && !rt.rec.conv) flags.push('rec'); line += ` | rec ${Math.round(R.fps || 0)}fps dup ${dd} drop ${dr} x${(R.speed || 0).toFixed(2)}`; }
       // native engine: what IT did this second (frames made, camera frame shown twice / skipped, sound waiting)
       const E = rt.eng && rt.engStats;

@@ -718,3 +718,6 @@ textarea { width: 100%; box-sizing: border-box; }
 .auto-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: .82em; margin: 4px 0 10px; }
 .auto-h { font-weight: 800; letter-spacing: .04em; text-transform: uppercase; font-size: .8em; color: var(--muted); margin: 2px 0 6px; }
 .auto-page .slider { grid-template-columns: calc(165px * var(--scale)) 1fr calc(84px * var(--scale)); }
+.net-badge { font-size: .7em; font-weight: 800; letter-spacing: .06em; padding: 4px 7px; border-radius: 5px; background: #1e3a5f; color: #93c5fd; align-self: center; }
+.dest-card { border: 1px solid var(--line, #2a2a2f); border-radius: 10px; padding: 10px; margin: 8px 0; }
+.dest-card.off { opacity: .65; }
