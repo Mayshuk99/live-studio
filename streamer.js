@@ -51,6 +51,15 @@ const cfr = (o, fps) => o.engine ? [] : ['-r', rate(fps), '-fps_mode', 'cfr'];
 const inputOf = o => o.engine ? [...engineInput(o), '-map', '1:v:0', '-map', '0:a:0'] : [...hwDecode(o), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?'];
 
 function streamArgs(o) {
+  // own encoder settings (Settings → Live stream → Stream encoder settings, like Wirecast's encoder presets)
+  if (o.adv && o.adv.on) return [
+    '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
+    '-fflags', '+genpts',
+    ...inputOf(o),
+    ...advOut(o, true),
+    '-flvflags', 'no_duration_filesize',
+    '-f', 'flv', o.url
+  ];
   const fps = o.fps || 30;
   const g = String(Math.round(fps * 2)); // keyframe every 2 seconds (YouTube requirement)
   const enc = ((o.safe && ENCODERS[o.encoder + '_safe']) || ENCODERS[o.encoder] || ENCODERS.x264)(o, g);
@@ -113,13 +122,31 @@ const capRate = f => [59.94, 29.97, 23.98, 60, 50, 30, 25, 24].find(x => Math.ab
 // FFmpeg rate: 59.94 / 29.97 are exactly 60000/1001 and 30000/1001
 const rate = fps => fps === 59.94 ? '60000/1001' : fps === 29.97 ? '30000/1001' : fps === 23.98 ? '24000/1001' : String(fps);
 
-/* Recording encoder settings, like Wirecast's encoder presets (Settings → Recording → Encoder settings):
+/* Own encoder settings for the stream and the recording, like Wirecast's encoder presets:
    o.adv = { on, w, h, fps, speed, profile, gop, cbr, aligned, x264, channels, rate } — 0 / '' = as the program / default.
-   o.encoder is the recording's encoder (already chosen by the window), o.timecode the start time of day. */
+   o.encoder is that output's encoder (already chosen by the window), o.timecode the recording's start time of day. */
 const recScale = o => { const A = o.adv || {}; return A.w > 0 && A.h > 0 && (A.w !== (o.width || 1920) || A.h !== (o.height || 1080)) ? [A.w & ~1, A.h & ~1] : null; };
-function recAdvVideo(o, enc, kbps, gop, outFps) {
+/* x264 options typed like Wirecast / the x264 program ("--bframes 0 --no-cabac") or like FFmpeg ("bframes=0:ref=2")
+   → FFmpeg's -x264-params ("bframes=0:no-cabac=1"). x264 itself skips a name it does not know. */
+function x264Opts(str) {
+  const s = String(str || '').replace(/["']/g, ' ').trim();
+  if (!s) return '';
+  const flag = t => /^--?[a-z]/i.test(t);
+  if (!s.split(/\s+/).some(flag)) return s.replace(/\s+/g, '').split(':').filter(x => /^[a-z0-9_-]+=./i.test(x)).join(':');
+  const out = [], t = s.split(/\s+/);
+  for (let i = 0; i < t.length; i++) {
+    const m = t[i].match(/^--?([a-z0-9][a-z0-9_-]*)(?:=(.*))?$/i);
+    if (!m) continue;
+    let v = m[2];
+    if (v === undefined) v = i + 1 < t.length && !flag(t[i + 1]) ? t[++i] : '1';
+    out.push(`${m[1]}=${v.replace(/:/g, ',')}`);
+  }
+  return out.join(':');
+}
+/* stream: the bitrate never goes above the average (YouTube and the upload need an even rate); the recording may peak */
+function recAdvVideo(o, enc, kbps, gop, outFps, stream) {
   const A = o.adv, k = `${kbps}k`, prof = ['baseline', 'main', 'high'].includes(A.profile) ? A.profile : 'high';
-  const peak = A.cbr ? k : `${Math.round(kbps * 1.5)}k`, buf = `${kbps * 2}k`;
+  const peak = A.cbr || stream ? k : `${Math.round(kbps * 1.5)}k`, buf = `${kbps * 2}k`;
   const forced = A.aligned ? ['-force_key_frames', `expr:gte(t,n_forced*${(gop / outFps).toFixed(4)})`] : [];
   if (enc === 'nvenc') return ['-c:v', 'h264_nvenc', '-preset', /^p[1-7]$/.test(A.speed) ? A.speed : 'p4', '-rc', A.cbr ? 'cbr' : 'vbr', '-profile:v', prof,
     '-b:v', k, '-maxrate', peak, '-bufsize', buf, '-g', String(gop), '-bf', prof === 'baseline' ? '0' : '2', ...(A.aligned ? ['-no-scenecut', '1', '-forced-idr', '1'] : []), ...forced];
@@ -127,25 +154,34 @@ function recAdvVideo(o, enc, kbps, gop, outFps) {
     '-b:v', k, '-maxrate', peak, '-bufsize', buf, '-g', String(gop), ...forced];
   if (enc === 'amf') return ['-c:v', 'h264_amf', '-quality', ['speed', 'balanced', 'quality'].includes(A.speed) ? A.speed : 'speed', '-rc', A.cbr ? 'cbr' : 'vbr_peak', '-profile:v', prof,
     '-b:v', k, '-maxrate', peak, '-bufsize', buf, '-g', String(gop), ...forced];
-  const xp = [A.cbr ? 'nal-hrd=cbr' : '', String(A.x264 || '').replace(/[\s"']/g, '')].filter(Boolean).join(':');
+  const xp = [A.cbr ? 'nal-hrd=cbr' : '', x264Opts(A.x264)].filter(Boolean).join(':');
   return ['-c:v', 'libx264', '-preset', ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].includes(A.speed) ? A.speed : 'veryfast', '-profile:v', prof,
-    '-b:v', k, ...(A.cbr ? ['-maxrate', k, '-bufsize', buf] : []), '-g', String(gop), '-keyint_min', String(A.aligned ? gop : Math.max(1, Math.round(gop / 10))),
+    '-b:v', k, ...(A.cbr || stream ? ['-maxrate', k, '-bufsize', buf] : []), '-g', String(gop), '-keyint_min', String(A.aligned ? gop : Math.max(1, Math.round(gop / 10))),
     ...(A.aligned ? ['-sc_threshold', '0'] : []), ...(xp ? ['-x264-params', xp] : []), ...forced];
+}
+// picture + sound with own encoder settings (after the input); stream: key frame every 2 s unless set, no timecode
+/* (60 with 59.94 cameras, 30 with 29.97: kept at the cameras' rate — converting would repeat a frame every 17 s,
+   a small jerk; YouTube and editors treat both the same) */
+function advOut(o, stream) {
+  const A = o.adv, fps = o.fps || 30, conv = A.fps > 0 && Math.abs(A.fps - fps) > 0.1, outFps = conv ? A.fps : fps, enc = o.encoder || 'x264';
+  const gop = A.gop > 0 ? Math.round(A.gop) : Math.round(outFps * (stream ? 2 : 1)), sc = recScale(o);
+  return [
+    ...(sc ? ['-vf', `scale=${sc[0]}:${sc[1]}:flags=bicubic`] : []),
+    ...recAdvVideo(o, enc, o.bitrate || (stream ? 8000 : 20000), gop, outFps, stream),
+    ...(zeroCopy(o) ? [] : ['-pix_fmt', 'yuv420p']),
+    ...(conv ? ['-r', rate(A.fps), '-fps_mode', 'cfr'] : cfr(o, fps)),
+    ...(!stream && o.timecode ? ['-timecode', o.timecode] : []),
+    '-c:a', 'aac', '-b:a', `${o.audioBitrate || (stream ? 160 : 192)}k`, '-ar', String(A.rate === 44100 ? 44100 : 48000), '-ac', String(A.channels === 1 ? 1 : 2)
+  ];
 }
 function recordArgs(o, partFile) {
   if (o.adv && o.adv.on) {
-    const A = o.adv, fps = o.fps || 30, outFps = A.fps > 0 ? A.fps : fps, enc = o.encoder || 'x264';
-    const gop = A.gop > 0 ? Math.round(A.gop) : Math.round(outFps), sc = recScale(o), hw = ['nvenc', 'qsv', 'amf'].includes(enc);
+    const hw = ['nvenc', 'qsv', 'amf'].includes(o.encoder || 'x264');
     return [
       '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
       '-fflags', '+genpts',
       ...(o.engine ? inputOf(o) : [...(hw ? hwDecode(o) : []), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?']),
-      ...(sc ? ['-vf', `scale=${sc[0]}:${sc[1]}:flags=bicubic`] : []),
-      ...recAdvVideo(o, enc, o.bitrate || 20000, gop, outFps),
-      ...(zeroCopy(o) ? [] : ['-pix_fmt', 'yuv420p']),
-      ...(A.fps > 0 && Math.abs(A.fps - fps) > 0.01 ? ['-r', rate(A.fps), '-fps_mode', 'cfr'] : cfr(o, fps)),
-      ...(o.timecode ? ['-timecode', o.timecode] : []),
-      '-c:a', 'aac', '-b:a', `${o.audioBitrate || 192}k`, '-ar', String(A.rate === 44100 ? 44100 : 48000), '-ac', String(A.channels === 1 ? 1 : 2),
+      ...advOut(o, false),
       '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
       '-f', 'mp4', '-y', partFile
     ];
@@ -414,4 +450,4 @@ async function probeDecode(ffmpegPath) {
   } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* */ } }
 }
 
-module.exports = { OutputManager, streamArgs, recordArgs, nativeArgs, captureArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode };
+module.exports = { OutputManager, streamArgs, recordArgs, x264Opts, nativeArgs, captureArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode };

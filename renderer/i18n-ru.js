@@ -1111,7 +1111,13 @@ window.I18N_RU = {
     "2 - Balanced": "2 - Баланс",
     "3 - Quality": "3 - Качество",
     "48.000 kHz": "48 кГц",
-    "44.100 kHz": "44,1 кГц"
+    "44.100 kHz": "44,1 кГц",
+    "Stream encoder settings": "Настройки кодировщика трансляции",
+    "Use my own encoder settings for the live stream (like Wirecast’s encoder presets)": "Свои настройки кодировщика для трансляции (как пресеты кодировщика в Wirecast)",
+    "Off: the stream uses the encoder from Video output and the bitrates above.": "Выключено: трансляция использует кодировщик из «Видеовыход» и битрейт выше.",
+    "x264 cannot stream 4K / 1440p in time — choose NVIDIA H.264.": "x264 не успевает транслировать 4K / 1440p — выберите NVIDIA H.264.",
+    "Wirecast “Pilgrim Live Services”": "Wirecast «Pilgrim Live Services»",
+    "e.g. --bframes 0": "например --bframes 0"
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
@@ -1265,6 +1271,7 @@ window.I18N_RU = {
     ["{0} · deinterlaced · native ({1})", "{0} · без чересстрочности · встроенный ({1})"],
     ["native ({0})", "встроенный ({0})"],
     ["Same as Video output — {0}", "Как в «Видеовыход» — {0}"],
-    ["Same as the program ({0})", "Как у программы ({0})"]
+    ["Same as the program ({0})", "Как у программы ({0})"],
+    ["YouTube needs a key frame at least every 4 seconds ({0} frames or fewer).", "YouTube требует ключевой кадр не реже раза в 4 секунды ({0} кадров или меньше)."]
   ]
 };
