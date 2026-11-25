@@ -98,7 +98,7 @@ jobs:
           Copy-Item vsthost/vst3sdk/LICENSE.txt resources/vst/VST3_LICENSE.txt -Force
           Get-Item resources/vst/ls-vst.exe
 
-      - name: Test the plug-in host (SDK sample plug-ins: echo, limiter, bypass, saved settings)
+      - name: "Test the plug-in host (SDK sample plug-ins: echo, limiter, bypass, saved settings)"
         run: node scripts/vst-selftest.js resources/vst/ls-vst.exe vsthost/build
 
       - name: Prepare the release
