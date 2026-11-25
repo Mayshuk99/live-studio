@@ -79,6 +79,19 @@
 
   const NEUTRAL = { exposure: 0, contrast: 1, saturation: 1, temp: 0, tint: 0, gamma: 1, black: 0 };
   const FILL = { zoom: 1, x: 0.5, y: 0.5 };
+  /* where the small picture of a shot goes: [x, y, w, h] as parts of the whole picture (0…1).
+     p.rect = { x, y, w, h } (anywhere, any size); p.keep !== false keeps the 16:9 shape (h follows w).
+     Older shows only have a corner and a size: same place as before. Always kept inside the picture. */
+  function pipRect(p, W, H) {
+    const A = (W / H) / (16 / 9);
+    if (p.rect && isFinite(p.rect.w)) {
+      const w = clamp(p.rect.w, 0.03, 1), h = p.keep !== false ? clamp(w * A, 0.03, 1) : clamp(p.rect.h, 0.03, 1);
+      return [clamp(p.rect.x || 0, 0, 1 - w), clamp(p.rect.y || 0, 0, 1 - h), w, h];
+    }
+    const s = clamp(p.size || 0.3, 0.1, 0.9), w = s, h = clamp(s * A, 0.03, 1);
+    const mx = 0.03, my = 0.03 * W / H, c = p.corner || 'tr';
+    return [c.includes('r') ? 1 - w - mx : mx, c.includes('t') ? my : 1 - h - my, w, h];
+  }
   /* green screen of a shot → key settings for drawing (null when off). Strength, softness and spill work like OBS's
      chroma key (similarity / smoothness / key colour spill reduction); the native engine gets the same numbers. */
   function keyCbCr(hex) {
@@ -126,6 +139,7 @@
       this.frames = new Map();    // smoothed framing per shot layer
       this.thumbs = new Map();    // shotId -> 2D canvas
       this.sourceViews = new Map(); // canvas -> sourceId (full uncropped source)
+      this.layerViews = new Map();  // canvas -> { shot, part: 'main' (the shot without its small picture) | 'pip' (only the small picture, cropped) }
       this.previewCanvas = null;
       this.previewCtx = null;
 
@@ -499,14 +513,7 @@
         key: g
       });
       const p = shot.pip;
-      if (p && p.enabled && p.source) {
-        const s = clamp(p.size || 0.3, 0.1, 0.9);
-        const w = s, h = s; // 16:9 box inside a 16:9 canvas
-        const mx = 0.03, my = 0.03 * W / H;
-        const x = (p.corner || 'tr').includes('r') ? 1 - w - mx : mx;
-        const y = (p.corner || 'tr').includes('t') ? my : 1 - h - my;
-        out.push({ source: p.source, frame: smooth ? this._smooth(shot.id + ':p', p.frame) : p.frame, rect: [x, y, w, h], border: true });
-      }
+      if (p && p.enabled && p.source) out.push({ source: p.source, frame: smooth ? this._smooth(shot.id + ':p', p.frame) : p.frame, rect: pipRect(p, W, H), border: p.border !== false });
       return out;
     }
 
@@ -622,6 +629,7 @@
       const views = [];
       for (const [id, cnv] of this.thumbs) if (this._onScreen(cnv)) views.push(['shot', id, cnv]);
       for (const [cnv, sid] of this.sourceViews) if (this._onScreen(cnv)) views.push(['src', sid, cnv]);
+      for (const [cnv, lv] of this.layerViews) if (this._onScreen(cnv)) views.push(['part', lv, cnv]);
       this._thumbAcc = Math.min(2, (this._thumbAcc || 0) + views.length * (1000 / this.fps) / this.thumbEvery);
       const due = [];
       for (let k = 0, tries = 0; views.length && this._thumbAcc >= 1 && tries < views.length; tries++) {
@@ -629,7 +637,7 @@
         if (v[0] === 'shot' && this._thumbStill(v[1], v[2], now)) continue; // unchanged still picture: skip it
         due.push(v); this._thumbAcc -= 1; if (++k >= 2) break;
       }
-      for (const [kind, id, cnv] of due) { if (kind === 'shot') addShot(shot(id)); else need.add(id); }
+      for (const [kind, id, cnv] of due) { if (kind === 'shot') addShot(shot(id)); else if (kind === 'part') addShot(shot(id.shot)); else need.add(id); }
       for (const id of need) this._upload(id);
       // thumbnails + source views (small, rendered into a corner then copied) — only the few due this frame
       if (due.length) {
@@ -637,6 +645,11 @@
         for (const [kind, id, cnv] of due) {
           this._viewport(tw, th);
           if (kind === 'shot') { const s = shot(id); if (s) this._drawShot(s, 1, false, false); }
+          else if (kind === 'part') {
+            const s = shot(id.shot);
+            if (s && id.part === 'main') this._drawShot(Object.assign({}, s, { pip: null }), 1, false, false);
+            else if (s && s.pip && s.pip.source) { const r = pipRect(s.pip, this.W, this.H); this._video(s.pip.source, [0, 0, 1, 1], this.uvFor(s.pip.source, s.pip.frame, (r[2] * this.W) / (r[3] * this.H)), 1, false); }
+          }
           else {
             const sz = this.sourceSize(id);
             if (sz) {
@@ -652,6 +665,7 @@
         }
       }
       for (const cnv of this.sourceViews.keys()) if (!cnv.isConnected) { this.sourceViews.delete(cnv); this._unwatch(cnv); }
+      for (const cnv of this.layerViews.keys()) if (!cnv.isConnected) { this.layerViews.delete(cnv); this._unwatch(cnv); }
 
       // preview monitor
       if (this.previewCtx) {
@@ -1142,5 +1156,5 @@
     return c;
   }
 
-  window.LiveEngine = { Engine, makeBars, keyCbCr, greenOf, GREEN_DEF, NEUTRAL, LABEL_PRESETS, LABEL_STYLES, LABEL_ANIMS, labelDesign, labelAnimMs, drawLabel };
+  window.LiveEngine = { Engine, makeBars, keyCbCr, greenOf, GREEN_DEF, pipRect, NEUTRAL, LABEL_PRESETS, LABEL_STYLES, LABEL_ANIMS, labelDesign, labelAnimMs, drawLabel };
 })();

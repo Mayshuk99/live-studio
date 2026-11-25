@@ -693,3 +693,16 @@ textarea { width: 100%; box-sizing: border-box; }
 /* green screen (shot editor) */
 .key-swatch { width: 34px; height: 26px; border-radius: 6px; border: 1px solid var(--line); display: inline-block; }
 .pad.picking { cursor: crosshair; outline: 2px dashed #4ade80; outline-offset: 2px; }
+
+/* picture-in-picture placement (shot editor) */
+.pip-area { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; overflow: hidden; user-select: none; touch-action: none; border: 1px solid var(--line); }
+.pip-area .pip-bg { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .75; }
+.pip-box { position: absolute; outline: 2px solid var(--accent); box-shadow: 0 0 0 1px #000, 0 4px 14px rgba(0,0,0,.5); cursor: move; touch-action: none; }
+.pip-box canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
+.pip-h { position: absolute; width: 16px; height: 16px; background: #fff; border: 2px solid var(--accent); border-radius: 4px; }
+.pip-h.tl { left: -8px; top: -8px; cursor: nwse-resize; }
+.pip-h.br { right: -8px; bottom: -8px; cursor: nwse-resize; }
+.pip-h.tr { right: -8px; top: -8px; cursor: nesw-resize; }
+.pip-h.bl { left: -8px; bottom: -8px; cursor: nesw-resize; }
+.pip-grid { display: grid; grid-template-columns: repeat(3, 38px); gap: 4px; }
+.pip-grid .btn { padding: 6px 0; font-size: 1.05em; }

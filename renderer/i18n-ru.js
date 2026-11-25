@@ -1036,7 +1036,17 @@ window.I18N_RU = {
     "stereo": "стерео",
     "mono": "моно",
     "♪ MUSIC PREVIEW": "♪ МУЗЫКА ПРЕДПРОСМОТР",
-    "♪ MUSIC ON AIR": "♪ МУЗЫКА В ЭФИРЕ"
+    "♪ MUSIC ON AIR": "♪ МУЗЫКА В ЭФИРЕ",
+    "Drag to move · pull a corner to resize · hold Alt to place freely without snapping": "Тяните, чтобы сдвинуть · тяните за угол, чтобы изменить размер · удерживайте Alt, чтобы ставить без прилипания",
+    "Move it here (keeps the size)": "Поставить сюда (размер сохраняется)",
+    "Full": "Весь",
+    "From left": "Слева",
+    "From top": "Сверху",
+    "Small picture": "Маленькая картинка",
+    "Where it goes — drag it, pull a corner to resize": "Где она будет — перетащите её или тяните за угол, чтобы изменить размер",
+    "Keep the 16:9 shape": "Сохранять форму 16:9",
+    "White border": "Белая рамка",
+    "To zoom into or move the picture inside the small box, use “Frame: small picture” at the top. Double-click a slider to reset it.": "Чтобы увеличить или сдвинуть картинку внутри маленького окна, используйте «Рамка: маленькая картинка» вверху. Двойной щелчок по ползунку сбрасывает его."
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
@@ -1182,6 +1192,7 @@ window.I18N_RU = {
     ["Font: {0}", "Шрифт: {0}"],
     ["{0} s", "{0} с"],
     ["🎥 Camera {0}", "🎥 Камера {0}"],
-    ["LIMIT −{0}", "ЛИМИТ −{0}"]
+    ["LIMIT −{0}", "ЛИМИТ −{0}"],
+    ["“{0}”: the small picture is not in the native engine yet", "«{0}»: маленькая картинка пока не во встроенном движке"]
   ]
 };

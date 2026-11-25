@@ -14,6 +14,14 @@ type Base struct {
 	Key, Src   string
 	Zoom, X, Y float64
 	Green      *Green // green screen: this picture keyed over Green.Bg
+	Pip        *Pip   // picture-in-picture on top
+}
+
+// the small picture: its own source and framing, a box anywhere on the picture (parts of the whole, 0…1)
+type Pip struct {
+	Base
+	RX, RY, RW, RH float64
+	Border         bool
 }
 
 type acqInfo struct {
@@ -86,6 +94,7 @@ type Engine struct {
 	pvCamW, pvCamH, pvCamEvery int
 	pvCams                     []string
 	kA, kS                     []byte // green screen: alpha and colour kept, per colour sample
+	pipFrame                   *Frame // the small picture, drawn at its own size
 
 	clockCam  string
 	lastCount uint64
@@ -166,6 +175,20 @@ func baseOf(m Msg) *Base {
 		b.Key = b.Src
 	}
 	b.Green = greenOf(m.obj("green"), b.Key)
+	if pm := m.obj("pip"); pm != nil {
+		if pb := baseOf(pm); pb != nil {
+			pb.Green, pb.Pip = nil, nil
+			if pb.Key == pb.Src {
+				pb.Key = b.Key + ":p"
+			}
+			p := &Pip{Base: *pb, RX: 0.67, RY: 0.05, RW: 0.3, RH: 0.3, Border: pm.boolean("border")}
+			if r, ok := pm["rect"].([]any); ok && len(r) == 4 {
+				f := func(i int) float64 { v, _ := r[i].(float64); return v }
+				p.RX, p.RY, p.RW, p.RH = f(0), f(1), f(2), f(3)
+			}
+			b.Pip = p
+		}
+	}
 	return b
 }
 
@@ -509,9 +532,86 @@ func (e *Engine) renderBase(dst *Frame, b *Base, n uint64) {
 			e.keyOver(dst, fg, b.Green, e.colors[b.Src])
 		}
 		e.unscratch(fg)
+		e.drawPip(dst, b.Pip, n)
 		return
 	}
 	e.renderPlain(dst, b, n, true)
+	if b != nil {
+		e.drawPip(dst, b.Pip, n)
+	}
+}
+
+// the small picture: drawn at its own size into a scratch picture, then copied into place (with a white border)
+func (e *Engine) drawPip(dst *Frame, p *Pip, n uint64) {
+	if p == nil {
+		return
+	}
+	W, H := dst.W, dst.H
+	pw := int(p.RW*float64(W)+0.5) &^ 1
+	ph := int(p.RH*float64(H)+0.5) &^ 1
+	if pw < 16 || ph < 16 {
+		return
+	}
+	if pw > W {
+		pw = W
+	}
+	if ph > H {
+		ph = H
+	}
+	px := int(p.RX*float64(W)+0.5) &^ 1
+	py := int(p.RY*float64(H)+0.5) &^ 1
+	px = max(0, min(px, W-pw))
+	py = max(0, min(py, H-ph))
+	sub := e.pipFrame
+	if sub == nil || sub.W != pw || sub.H != ph {
+		sub = newFrame(pw, ph)
+		e.pipFrame = sub
+	}
+	if !e.renderPlain(sub, &p.Base, n, true) {
+		fillColor(sub, 18, 20, 26) // (not ready yet: dark, like the window shows it)
+	}
+	if p.Border {
+		fillRect(dst, px-4, py-4, pw+8, ph+8, 235, 128, 128)
+	}
+	blit(dst, sub, px, py)
+}
+
+// a solid box (Y, U, V), clipped to the picture; even positions so the colour planes line up
+func fillRect(f *Frame, x, y, w, h int, Y, U, V uint8) {
+	x0, y0 := max(0, x)&^1, max(0, y)&^1
+	x1, y1 := min(f.W, x+w), min(f.H, y+h)
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+	fy := f.Y()
+	for r := y0; r < y1; r++ {
+		row := fy[r*f.W+x0 : r*f.W+x1]
+		for i := range row {
+			row[i] = Y
+		}
+	}
+	cw := f.W / 2
+	fu, fv := f.U(), f.V()
+	for r := y0 / 2; r < (y1+1)/2; r++ {
+		for c := x0 / 2; c < (x1+1)/2 && c < cw; c++ {
+			fu[r*cw+c], fv[r*cw+c] = U, V
+		}
+	}
+}
+
+// copies src into dst with its top-left corner at (x, y) (even)
+func blit(dst, src *Frame, x, y int) {
+	dy, sy := dst.Y(), src.Y()
+	for r := 0; r < src.H; r++ {
+		copy(dy[(y+r)*dst.W+x:(y+r)*dst.W+x+src.W], sy[r*src.W:(r+1)*src.W])
+	}
+	dcw, scw := dst.W/2, src.W/2
+	du, dv, su, sv := dst.U(), dst.V(), src.U(), src.V()
+	for r := 0; r < src.H/2; r++ {
+		o := (y/2+r)*dcw + x/2
+		copy(du[o:o+scw], su[r*scw:(r+1)*scw])
+		copy(dv[o:o+scw], sv[r*scw:(r+1)*scw])
+	}
 }
 
 // one picture filling the frame; false when there was nothing to draw (dst is then black)
@@ -538,7 +638,7 @@ func (e *Engine) renderPlain(dst *Frame, b *Base, n uint64, color bool) bool {
 			fillBlack(dst)
 			return false
 		}
-		drawFramed(dst, f, framing(f.W, f.H, e.W, e.H, sm.zoom, sm.x, sm.y))
+		drawFramed(dst, f, framing(f.W, f.H, dst.W, dst.H, sm.zoom, sm.x, sm.y))
 		c.release()
 	} else if v := e.videos[b.Src]; v != nil {
 		var f *Frame
@@ -554,12 +654,12 @@ func (e *Engine) renderPlain(dst *Frame, b *Base, n uint64, color bool) bool {
 			fillBlack(dst)
 			return false
 		}
-		drawFramed(dst, f, framing(f.W, f.H, e.W, e.H, sm.zoom, sm.x, sm.y))
+		drawFramed(dst, f, framing(f.W, f.H, dst.W, dst.H, sm.zoom, sm.x, sm.y))
 	} else if s := e.stills[b.Src]; s != nil {
-		r := framing(s.f.W, s.f.H, e.W, e.H, sm.zoom, sm.x, sm.y)
-		if !s.cached || s.cacheFor != r {
-			if s.cache == nil {
-				s.cache = newFrame(e.W, e.H)
+		r := framing(s.f.W, s.f.H, dst.W, dst.H, sm.zoom, sm.x, sm.y)
+		if !s.cached || s.cacheFor != r || s.cache.W != dst.W || s.cache.H != dst.H {
+			if s.cache == nil || s.cache.W != dst.W || s.cache.H != dst.H {
+				s.cache = newFrame(dst.W, dst.H)
 			}
 			drawFramed(s.cache, s.f, r)
 			s.cacheFor, s.cached = r, true

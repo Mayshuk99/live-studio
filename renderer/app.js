@@ -556,7 +556,6 @@
   function natBase(M, id) {
     const sh = id ? getShot(id) : null;
     if (!sh || !sh.main || !sh.main.source) return null;
-    if (sh.pip && sh.pip.enabled) natNote(M, 'pip' + sh.id, `“${sh.name}”: picture-in-picture is not in the native engine yet — only the main picture goes out`);
     const src = natSource(M, sh.main.source);
     if (!src) { natNote(M, 'src' + sh.id, `“${sh.name}”: its picture is not in the native engine yet`); return null; }
     const fr = sh.main.frame || {};
@@ -566,6 +565,14 @@
       const bg = natSource(M, g.bg);
       if (!bg && g.bg) natNote(M, 'gbg' + sh.id, `“${sh.name}”: the green screen background is not in the native engine yet — black for now`);
       b.green = { cb: +g.cb.toFixed(4), cr: +g.cr.toFixed(4), sim: +g.sim.toFixed(4), smooth: +g.smooth.toFixed(4), spill: +g.spill.toFixed(4), bg: bg ? { src: bg } : null };
+    }
+    const p = sh.pip;
+    if (p && p.enabled && p.source) {
+      const ps = natSource(M, p.source);
+      if (ps) {
+        const r = window.LiveEngine.pipRect(p, engine.W, engine.H), pf = p.frame || {};
+        b.pip = { key: sh.id + ':p', src: ps, zoom: pf.zoom || 1, x: pf.x ?? 0.5, y: pf.y ?? 0.5, rect: r.map(v => +v.toFixed(4)), border: p.border !== false };
+      } else natNote(M, 'pip' + sh.id, `“${sh.name}”: the small picture is not in the native engine yet`);
     }
     return b;
   }
@@ -2200,6 +2207,89 @@
   const padBox = el('div', { class: 'frame-box' });
   const pad = el('div', { class: 'pad', title: 'Drag to move the frame · scroll to zoom · click to centre' }, padCanvas, padBox);
   function padLayer(s) { return rt.padTarget === 'pip' && s.pip.enabled ? s.pip : s.main; }
+  const pipAspect = s => { const r = window.LiveEngine.pipRect(s.pip, engine.W, engine.H); return (r[2] * engine.W) / (r[3] * engine.H); };
+
+  /* picture-in-picture: put the small picture anywhere, any size — drag it, pull its corners, or use the buttons */
+  function pipPanel(s) {
+    const p = s.pip, W = engine.W, H = engine.H, A = (W / H) / (16 / 9), keep = () => p.keep !== false;
+    const mx = 0.03, my = 0.03 * W / H; // the margin the ready-made positions keep from the edges
+    const R = () => window.LiveEngine.pipRect(p, W, H);
+    if (!p.rect) { const r = R(); p.rect = { x: r[0], y: r[1], w: r[2], h: r[3] }; } // older shows: corner + size → a free position, same place
+    const bg = el('canvas', { width: 320, height: 180, class: 'pip-bg' }), img = el('canvas', { width: 320, height: 180 });
+    const handles = ['tl', 'tr', 'bl', 'br'].map(c => el('i', { class: `pip-h ${c}`, dataset: { c } }));
+    const box = el('div', { class: 'pip-box', title: 'Drag to move · pull a corner to resize · hold Alt to place freely without snapping' }, img, ...handles);
+    const area = el('div', { class: 'pip-area' }, bg, box);
+    engine.layerViews.set(bg, { shot: s.id, part: 'main' });
+    engine.layerViews.set(img, { shot: s.id, part: 'pip' });
+    let sl = {};
+    const pct = v => `${Math.round(v * 100)}%`;
+    function place() {
+      const r = R();
+      Object.assign(box.style, { left: pct(r[0]), top: pct(r[1]), width: `${r[2] * 100}%`, height: `${r[3] * 100}%` });
+      for (const [k, v] of [['w', r[2]], ['h', r[3]], ['x', r[0]], ['y', r[1]]]) {
+        const o = sl[k]; if (!o) continue;
+        const inp = o.querySelector('input'), val = o.querySelector('.val');
+        if (document.activeElement !== inp) inp.value = v;
+        val.textContent = pct(v);
+      }
+    }
+    // keeps it inside the picture; with the 16:9 shape on, the height follows the width
+    function setRect(x, y, w, h, quiet) {
+      w = clamp(w, 0.05, 1); h = keep() ? w * A : h;
+      if (h > 1) { h = 1; if (keep()) w = h / A; }
+      h = clamp(h, 0.05, 1);
+      p.rect = { x: clamp(x, 0, 1 - w), y: clamp(y, 0, 1 - h), w: +w.toFixed(4), h: +h.toFixed(4) };
+      p.rect.x = +p.rect.x.toFixed(4); p.rect.y = +p.rect.y.toFixed(4);
+      place(); if (!quiet) changed();
+    }
+    const snap = (v, cands) => { for (const c of cands) if (Math.abs(v - c) < 0.015) return c; return v; };
+    let drag = null;
+    box.addEventListener('pointerdown', e => {
+      e.preventDefault(); box.setPointerCapture(e.pointerId);
+      const r = R(), a = area.getBoundingClientRect();
+      drag = { c: e.target.dataset && e.target.dataset.c, px: e.clientX, py: e.clientY, r, aw: a.width, ah: a.height };
+    });
+    box.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const { r, c } = drag, dx = (e.clientX - drag.px) / drag.aw, dy = (e.clientY - drag.py) / drag.ah;
+      if (!c) { // move (snaps to the edges' margin and the centre lines; Alt = no snapping)
+        let x = r[0] + dx, y = r[1] + dy;
+        if (!e.altKey) { x = snap(x, [mx, 1 - r[2] - mx, (1 - r[2]) / 2, 0, 1 - r[2]]); y = snap(y, [my, 1 - r[3] - my, (1 - r[3]) / 2, 0, 1 - r[3]]); }
+        setRect(x, y, r[2], r[3]);
+        return;
+      }
+      // resize from a corner; the opposite corner stays where it is
+      const x1 = r[0] + r[2], y1 = r[1] + r[3];
+      let w = c.includes('l') ? r[2] - dx : r[2] + dx, h = c.includes('t') ? r[3] - dy : r[3] + dy;
+      if (keep()) { w = Math.max(w, h / A); h = w * A; }
+      w = clamp(w, 0.05, c.includes('l') ? x1 : 1 - r[0]); h = keep() ? w * A : clamp(h, 0.05, c.includes('t') ? y1 : 1 - r[1]);
+      if (keep() && h > (c.includes('t') ? y1 : 1 - r[1])) { h = c.includes('t') ? y1 : 1 - r[1]; w = h / A; }
+      setRect(c.includes('l') ? x1 - w : r[0], c.includes('t') ? y1 - h : r[1], w, h);
+    });
+    const end = () => { if (drag) { drag = null; logEvent('SHOT', `“${s.name}” small picture at ${JSON.stringify(p.rect)}`); } };
+    box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
+    // ready-made positions (keep the size)
+    const spots = [['tl', '↖'], ['tc', '↑'], ['tr', '↗'], ['ml', '←'], ['mc', '●'], ['mr', '→'], ['bl', '↙'], ['bc', '↓'], ['br', '↘']];
+    const goSpot = k => { const r = R(); const x = k[1] === 'l' ? mx : k[1] === 'r' ? 1 - r[2] - mx : (1 - r[2]) / 2, y = k[0] === 't' ? my : k[0] === 'b' ? 1 - r[3] - my : (1 - r[3]) / 2; setRect(x, y, r[2], r[3]); };
+    const grid = el('div', { class: 'pip-grid' }, spots.map(([k, t]) => el('button', { class: 'btn small', title: 'Move it here (keeps the size)', onclick: () => goSpot(k) }, t)));
+    const sizes = el('div', { class: 'row wrap', style: 'gap:4px' }, el('span', { class: 'muted', style: 'font-size:.85em' }, 'Size'),
+      [[0.25, '¼'], [1 / 3, '⅓'], [0.5, '½'], [1, 'Full']].map(([v, t]) => el('button', { class: 'btn small', onclick: () => { const r = R(); const cx = r[0] + r[2] / 2, cy = r[1] + r[3] / 2; const h = keep() ? v * A : v; setRect(cx - v / 2, cy - h / 2, v, h); } }, t)));
+    const r0 = R();
+    sl.w = slider({ label: 'Width', min: 0.05, max: 1, step: 0.005, value: r0[2], reset: 0.3, fmt: pct, onInput: v => { const r = R(); setRect(r[0], r[1], v, r[3]); } });
+    if (!keep()) sl.h = slider({ label: 'Height', min: 0.05, max: 1, step: 0.005, value: r0[3], reset: 0.3, fmt: pct, onInput: v => { const r = R(); setRect(r[0], r[1], r[2], v); } });
+    sl.x = slider({ label: 'From left', min: 0, max: 1, step: 0.005, value: r0[0], reset: mx, fmt: pct, onInput: v => { const r = R(); setRect(v, r[1], r[2], r[3]); } });
+    sl.y = slider({ label: 'From top', min: 0, max: 1, step: 0.005, value: r0[1], reset: my, fmt: pct, onInput: v => { const r = R(); setRect(r[0], v, r[2], r[3]); } });
+    requestAnimationFrame(place);
+    return el('div', { style: 'margin-top:8px' },
+      el('div', { class: 'field' }, el('span', null, 'Small picture'), select(sourceOptions(false), p.source, v => { p.source = v; changed(); refresh('editor'); })),
+      el('div', { class: 'field' }, el('span', null, 'Where it goes — drag it, pull a corner to resize'), area),
+      el('div', { class: 'row wrap', style: 'gap:14px;margin:8px 0;align-items:flex-start' }, grid,
+        el('div', { class: 'grow', style: 'min-width:220px' }, sizes, sl.w, sl.h || null, sl.x, sl.y)),
+      el('div', { class: 'row wrap', style: 'gap:16px' },
+        check(' Keep the 16:9 shape', keep(), v => { p.keep = v; const r = R(); setRect(r[0], r[1], r[2], v ? r[2] * A : r[3]); refresh('editor'); }),
+        check(' White border', p.border !== false, v => { p.border = v; changed(); })),
+      el('div', { class: 'muted', style: 'font-size:.85em;margin-top:6px' }, 'To zoom into or move the picture inside the small box, use “Frame: small picture” at the top. Double-click a slider to reset it.'));
+  }
   function padGeom(s) {
     const L = padLayer(s);
     const r = pad.getBoundingClientRect();
@@ -2208,7 +2298,7 @@
     let sr;
     if (sa > pa) { const h = r.width / sa; sr = { x: 0, y: (r.height - h) / 2, w: r.width, h }; }
     else { const w = r.height * sa; sr = { x: (r.width - w) / 2, y: 0, w, h: r.height }; }
-    const aspect = rt.padTarget === 'pip' ? 16 / 9 : engine.W / engine.H;
+    const aspect = rt.padTarget === 'pip' && s.pip.enabled ? pipAspect(s) : engine.W / engine.H;
     return { r, sr, L, uv: engine.uvFor(L.source, L.frame, aspect) };
   }
   function updatePadBox() {
@@ -2221,7 +2311,7 @@
     const L = padLayer(s);
     Object.assign(L.frame, patch);
     L.frame.zoom = clamp(L.frame.zoom, 1, 6);
-    const uv = engine.uvFor(L.source, L.frame, rt.padTarget === 'pip' ? 16 / 9 : engine.W / engine.H);
+    const uv = engine.uvFor(L.source, L.frame, rt.padTarget === 'pip' && s.pip.enabled ? pipAspect(s) : engine.W / engine.H);
     L.frame.x = uv[0] + uv[2] / 2; L.frame.y = uv[1] + uv[3] / 2; // keep inside the picture
     updatePadBox(); changed();
     const z = $('#zoomVal'); if (z) z.textContent = `${L.frame.zoom.toFixed(2)}×`;
@@ -2313,10 +2403,7 @@
 
       el('div', { class: 'section' }, el('h4', null, 'Picture-in-picture'),
         check(' Show a second, small picture', s.pip.enabled, v => { s.pip.enabled = v; if (v && !s.pip.source) s.pip.source = (show.cameras[1] || show.cameras[0] || { id: 'bars' }).id; if (!v) rt.padTarget = 'main'; changed(); refresh('editor'); }),
-        s.pip.enabled ? el('div', { class: 'row wrap', style: 'margin-top:8px' },
-          select(sourceOptions(false), s.pip.source, v => { s.pip.source = v; changed(); refresh('editor'); }),
-          el('div', { class: 'corner-pick' }, [['tl', '↖'], ['tr', '↗'], ['bl', '↙'], ['br', '↘']].map(([c, t]) => el('button', { class: 'btn small' + (s.pip.corner === c ? ' sel' : ''), onclick: () => { s.pip.corner = c; changed(); refresh('editor'); } }, t))),
-          el('label', { class: 'inline grow' }, 'Size', el('input', { type: 'range', min: 0.15, max: 0.5, step: 0.01, value: s.pip.size, class: 'grow', oninput: e => { s.pip.size = +e.target.value; changed(); } }))) : null),
+        s.pip.enabled ? pipPanel(s) : null),
 
       el('div', { class: 'section' }, el('h4', null, 'Green screen'),
         check(' Replace the green behind the picture with a background', !!(s.green && s.green.on), v => {
