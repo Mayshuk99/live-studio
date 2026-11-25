@@ -125,3 +125,57 @@ Progressive (1080p) or interlaced (1080i) signal from the camera. Interlaced is 
  (1080i only)	 (только 1080i)
 deinterlaced	без чересстрочности
 native ({0})	встроенный ({0})
+Recording encoder settings	Настройки кодировщика записи
+Use my own encoder settings for recordings (like Wirecast’s encoder presets)	Свои настройки кодировщика для записи (как пресеты кодировщика в Wirecast)
+Off: recordings use the encoder from Video output and the bitrates above.	Выключено: запись использует кодировщик из «Видеовыход» и битрейт выше.
+Encoder	Кодировщик
+Same as Video output — {0}	Как в «Видеовыход» — {0}
+x264 (software)	x264 (программный)
+NVIDIA H.264 (NVENC)	NVIDIA H.264 (NVENC)
+Intel H.264 (Quick Sync)	Intel H.264 (Quick Sync)
+AMD H.264 (AMF)	AMD H.264 (AMF)
+empty = the program size	пусто = размер программы
+Frames per second	Кадров в секунду
+Same as the program ({0})	Как у программы ({0})
+Average bit rate	Средний битрейт
+Quality	Качество
+x264 command line options	Параметры командной строки x264
+Profile	Профиль
+Key frame every	Ключевой кадр каждые
+frames	кадров
+Timecode (the time of day, for editing)	Таймкод (время суток, для монтажа)
+Strict constant bitrate	Строго постоянный битрейт
+Keyframe aligned	Выравнивание ключевых кадров
+Audio (AAC)	Звук (AAC)
+Channels	Каналы
+Stereo	Стерео
+Mono	Моно
+Target bit rate	Целевой битрейт
+Sample rate	Частота дискретизации
+kbits/sec	кбит/с
+x264 cannot record 4K / 1440p in time — choose NVIDIA H.264.	x264 не успевает записывать 4K / 1440p — выберите NVIDIA H.264.
+With the classic engine the recording is encoded once more with these settings (instead of being copied).	С классическим движком запись кодируется ещё раз с этими настройками (а не копируется).
+Wirecast “Default Record Pavel”	Wirecast «Default Record Pavel»
+1 - Ultra fast encoding	1 - Сверхбыстрое кодирование
+2 - Super fast encoding	2 - Очень быстрое кодирование
+3 - Very fast encoding	3 - Быстрое кодирование
+4 - Faster encoding	4 - Ускоренное кодирование
+5 - Fast encoding	5 - Скорое кодирование
+6 - Medium (best picture, most processor)	6 - Среднее (лучшая картинка, больше нагрузка)
+1 - Fastest	1 - Самый быстрый
+2 - Faster	2 - Быстрее
+3 - Fast	3 - Быстрый
+4 - Medium	4 - Средний
+5 - Slow (better picture)	5 - Медленный (лучше картинка)
+6 - Slower	6 - Медленнее
+7 - Slowest (best picture)	7 - Самый медленный (лучшая картинка)
+1 - Very fast	1 - Очень быстрый
+2 - Faster	2 - Быстрее
+4 - Medium	4 - Средний
+5 - Slow	5 - Медленный
+7 - Very slow (best picture)	7 - Очень медленный (лучшая картинка)
+1 - Speed	1 - Скорость
+2 - Balanced	2 - Баланс
+3 - Quality	3 - Качество
+48.000 kHz	48 кГц
+44.100 kHz	44,1 кГц

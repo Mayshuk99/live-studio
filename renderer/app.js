@@ -1416,20 +1416,43 @@
     }
   };
 
+  /* the recording's own encoder settings (Settings → Recording → Encoder settings, like Wirecast's encoder presets) */
+  const REC_DEF = () => ({ on: false, encoder: '', w: 0, h: 0, fps: 0, speed: '', profile: 'high', gop: 0, cbr: false, aligned: false, x264: '', channels: 2, rate: 48000, timecode: false });
+  const recAdv = () => { const r = settings.output.rec; return r && r.on ? Object.assign(REC_DEF(), r) : null; };
+  const SPEEDS = {
+    x264: [['ultrafast', '1 - Ultra fast encoding'], ['superfast', '2 - Super fast encoding'], ['veryfast', '3 - Very fast encoding'], ['faster', '4 - Faster encoding'], ['fast', '5 - Fast encoding'], ['medium', '6 - Medium (best picture, most processor)']],
+    nvenc: [['p1', '1 - Fastest'], ['p2', '2 - Faster'], ['p3', '3 - Fast'], ['p4', '4 - Medium'], ['p5', '5 - Slow (better picture)'], ['p6', '6 - Slower'], ['p7', '7 - Slowest (best picture)']],
+    qsv: [['veryfast', '1 - Very fast'], ['faster', '2 - Faster'], ['fast', '3 - Fast'], ['medium', '4 - Medium'], ['slow', '5 - Slow'], ['slower', '6 - Slower'], ['veryslow', '7 - Very slow (best picture)']],
+    amf: [['speed', '1 - Speed'], ['balanced', '2 - Balanced'], ['quality', '3 - Quality']]
+  };
+  const SPEED_DEF = { x264: 'veryfast', nvenc: 'p4', qsv: 'veryfast', amf: 'speed' };
+  function recAdvText(r, enc) {
+    const sp = (SPEEDS[enc] || []).find(x => x[0] === r.speed) || (SPEEDS[enc] || []).find(x => x[0] === SPEED_DEF[enc]) || ['', ''];
+    return [enc, r.w && r.h ? `${r.w}×${r.h}` : 'program size', r.fps ? `${r.fps} fps` : 'program fps', sp[1], r.profile, r.gop ? `key frame every ${r.gop}` : 'key frame every second',
+      r.cbr ? 'strict CBR' : 'average bitrate', r.aligned ? 'aligned key frames' : '', r.x264 && enc === 'x264' ? `x264 ${r.x264}` : '', r.channels === 1 ? 'mono' : 'stereo', `${r.rate === 44100 ? '44.1' : '48'} kHz`, r.timecode ? 'timecode' : ''].filter(Boolean).join(' · ');
+  }
+  // the time of day as a timecode (non-drop), so an editor shows when each moment was recorded
+  function timecodeNow(fps) {
+    const d = new Date(), z = n => String(n).padStart(2, '0'), r = Math.round(fps || 30);
+    return `${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}:${z(Math.min(r - 1, Math.floor(d.getMilliseconds() / 1000 * r)))}`;
+  }
+
   class Output {
     constructor(kind) { this.kind = kind; this.active = false; this.id = null; this.chain = Promise.resolve(); }
     async start() {
       const o = settings.output;
       if (rt.eng) { // native engine: it already has the finished picture and sound; FFmpeg is started next to it
         if (!rt.eng.ready) throw new Error('The native engine is still starting — try again in a moment.');
-        const fb = rt.encFallback && rt.encFallback.for === o.encoder ? rt.encFallback.level : 0;
-        const encoder = fb >= 2 ? 'x264' : o.encoder, safe = fb === 1;
+        const rec = this.kind === 'record' ? recAdv() : null, enc0 = rec && rec.encoder ? rec.encoder : o.encoder;
+        const fb = rt.encFallback && rt.encFallback.for === enc0 ? rt.encFallback.level : 0;
+        const encoder = fb >= 2 ? 'x264' : enc0, safe = fb === 1;
         const fx = vstMs(); // the master plug-ins put the sound this much behind: the picture waits for it
         const base = { engine: true, width: o.width, height: o.height, videoDelayMs: (o.videoDelayMs ?? 20) + fx, fps: o.fps, encoder, safe };
         if (fx) logEvent('ENCODER', `${this.kind}: picture delayed ${(o.videoDelayMs ?? 20) + fx} ms (sync ${o.videoDelayMs ?? 20} + plug-ins ${fx})`);
         const opts = this.kind === 'stream'
           ? Object.assign({ kind: 'stream', url: streamURL(), bitrate: o.bitrate, audioBitrate: o.audioBitrate }, base)
-          : Object.assign({ kind: 'record', dir: settings.recordDir, name: show.showName, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256 }, base);
+          : Object.assign({ kind: 'record', dir: settings.recordDir, name: show.showName, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, adv: rec, timecode: rec && rec.timecode ? timecodeNow(rec.fps || o.fps) : '' }, base);
+        if (rec) logEvent('ENCODER', `record: own encoder settings — ${recAdvText(rec, encoder)}`);
         const r = await S.outStart(opts);
         if (!r || r.error) throw new Error(r ? r.error : 'Encoder did not start');
         this.id = r.id; this.viaEngine = true; this.active = true;
@@ -1439,16 +1462,18 @@
       const mime = pickMime();
       if (!mime) throw new Error('This computer cannot encode video in the app.');
       // if the graphics-card encoder refused to start: 1 = plain settings, 2 = software encoder (for this session)
-      const fb = rt.encFallback && rt.encFallback.for === o.encoder ? rt.encFallback.level : 0;
-      const encoder = fb >= 2 ? 'x264' : o.encoder, safe = fb === 1;
+      const rec = this.kind === 'record' ? recAdv() : null, enc0 = rec && rec.encoder ? rec.encoder : o.encoder;
+      const fb = rt.encFallback && rt.encFallback.for === enc0 ? rt.encFallback.level : 0;
+      const encoder = fb >= 2 ? 'x264' : enc0, safe = fb === 1;
       const opts = this.kind === 'stream'
         ? { kind: 'stream', url: streamURL(), fps: o.fps, bitrate: o.bitrate, encoder, safe, audioBitrate: o.audioBitrate, inputCodec: codecOf(mime) }
-        : { kind: 'record', dir: settings.recordDir, name: show.showName, fps: o.fps, encoder, safe, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, inputCodec: codecOf(mime) };
+        : { kind: 'record', dir: settings.recordDir, name: show.showName, fps: o.fps, encoder, safe, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, inputCodec: codecOf(mime), adv: rec, timecode: rec && rec.timecode ? timecodeNow(rec.fps || o.fps) : '', width: engine.W, height: engine.H };
+      if (rec) logEvent('ENCODER', `record: own encoder settings — ${recAdvText(rec, encoder)}`);
       const r = await S.outStart(opts);
       if (!r || r.error) throw new Error(r ? r.error : 'Encoder did not start');
       this.id = r.id;
       // shared encoder: for everything FFmpeg encodes again (the stream; the recording with a graphics-card encoder)
-      const reencode = this.kind === 'stream' || ['nvenc', 'qsv', 'amf'].includes(encoder);
+      const reencode = this.kind === 'stream' || ['nvenc', 'qsv', 'amf'].includes(encoder) || !!rec;
       if (reencode && settings.sharedEncoder !== false && window.EbmlScanner && codecOf(mime) === 'h264') {
         this.shared = true;
         if (await Feed.join(this.id, mime)) { this.active = true; return; }
@@ -1459,7 +1484,7 @@
       const ms = new MediaStream([this.track, ...mixer.stream().getAudioTracks()]);
       // the picture handed to FFmpeg: when FFmpeg encodes it again (always for the stream; for the recording with a
       // graphics-card encoder) it gets a clean, high-quality copy, so the final file is not compressed twice at a low rate
-      const reenc = this.kind === 'stream' || ['nvenc', 'qsv', 'amf'].includes(encoder);
+      const reenc = this.kind === 'stream' || ['nvenc', 'qsv', 'amf'].includes(encoder) || !!rec;
       const vbps = this.kind === 'stream' ? clamp(o.bitrate * 2000, 8e6, 30e6) : reenc ? clamp(o.recordBitrate * 3000, 10e6, 100e6) : clamp(o.recordBitrate * 1000, 1e6, 100e6);
       this.rec = new MediaRecorder(ms, { mimeType: mime, videoBitsPerSecond: vbps, audioBitsPerSecond: 510000 });
       const id = this.id;
@@ -4421,27 +4446,67 @@
     /* picture + sound bitrate with ready-made and your own presets, separately for live and recording */
     const QUAL = {
       live: { v: 'bitrate', a: 'audioBitrate', vr: [1000, 51000], ar: [64, 384], builtin: [['YouTube 4K 60 fps', 35000, 192], ['YouTube 1440p 60 fps', 24000, 192], ['YouTube 1080p 60 fps', 12000, 192], ['YouTube 1080p 30 fps', 8000, 160], ['YouTube 720p', 5000, 128], ['Slow internet', 3000, 128]] },
-      rec: { v: 'recordBitrate', a: 'recordAudioBitrate', vr: [1000, 100000], ar: [96, 512], builtin: [['4K (for editing)', 80000, 320], ['Standard', 20000, 256], ['High (for editing)', 40000, 320], ['Small files', 10000, 192], ['Very small (like Wirecast)', 3600, 160]] }
+      rec: { v: 'recordBitrate', a: 'recordAudioBitrate', vr: [1000, 100000], ar: [96, 512], builtin: [['Wirecast “Default Record Pavel”', 4500, 192, { on: true, encoder: 'x264', w: 1920, h: 1080, fps: 60, speed: 'superfast', profile: 'baseline', gop: 60, cbr: false, aligned: false, x264: '', channels: 2, rate: 48000, timecode: false }], ['4K (for editing)', 80000, 320], ['Standard', 20000, 256], ['High (for editing)', 40000, 320], ['Small files', 10000, 192], ['Very small (like Wirecast)', 3600, 160]] }
     };
+    /* Recording → Encoder settings: the same choices as Wirecast's encoder presets */
+    function recAdvBlock(redraw) {
+      const R = o.rec || (o.rec = REC_DEF());
+      const save = () => { saveSettings(); redraw(); };
+      const enc = R.encoder || o.encoder || 'x264', encName = { x264: 'x264 (software)', nvenc: 'NVIDIA H.264', qsv: 'Intel H.264', amf: 'AMD H.264' };
+      const progW = rt.eng ? o.width : uiW(), progH = rt.eng ? o.height : uiH();
+      const num = (val, ph, on, attrs) => el('input', Object.assign({ type: 'number', value: val || '', placeholder: String(ph), disabled: live || null, style: 'width:120px', onchange: e => on(Math.max(0, Math.round(+e.target.value) || 0)) }, attrs || {}));
+      const row = (label, ...ctl) => [el('span', { class: 'rec-adv-l' }, label), el('div', { class: 'row', style: 'gap:8px' }, ...ctl)];
+      const body = R.on ? el('div', { class: 'rec-adv' },
+        ...row('Encoder', select([['', `Same as Video output — ${encName[o.encoder] || o.encoder}`], ['x264', 'x264 (software)'], ['nvenc', 'NVIDIA H.264 (NVENC)'], ['qsv', 'Intel H.264 (Quick Sync)'], ['amf', 'AMD H.264 (AMF)']], R.encoder || '', v => { R.encoder = v; R.speed = ''; save(); }, { disabled: live || null })),
+        ...row('Width', num(R.w, progW, v => { R.w = v & ~1; if (!v) R.h = 0; save(); }), el('span', { class: 'muted', style: 'font-size:.85em' }, 'empty = the program size')),
+        ...row('Height', num(R.h, progH, v => { R.h = v & ~1; if (!v) R.w = 0; save(); })),
+        ...row('Frames per second', select([[0, `Same as the program (${o.fps})`], [60, '60'], [59.94, '59.94'], [50, '50'], [30, '30'], [29.97, '29.97'], [25, '25'], [24, '24']], R.fps || 0, v => { R.fps = +v; save(); }, { disabled: live || null })),
+        ...row('Average bit rate', num(o.recordBitrate, 20000, v => { o.recordBitrate = clamp(v || 20000, 1000, 100000); save(); }, { step: 100 }), el('span', null, 'kbits/sec')),
+        ...row('Quality', select(SPEEDS[enc] || SPEEDS.x264, R.speed && (SPEEDS[enc] || []).some(x => x[0] === R.speed) ? R.speed : SPEED_DEF[enc], v => { R.speed = v; save(); }, { disabled: live || null })),
+        ...(enc === 'x264' ? row('x264 command line options', el('input', { type: 'text', value: R.x264 || '', placeholder: 'e.g. ref=2:bframes=0', disabled: live || null, class: 'grow', onchange: e => { R.x264 = e.target.value.trim(); save(); } })) : []),
+        ...row('Profile', select([['baseline', 'Baseline'], ['main', 'Main'], ['high', 'High']], R.profile || 'high', v => { R.profile = v; save(); }, { disabled: live || null })),
+        ...row('Key frame every', num(R.gop, Math.round(R.fps || o.fps || 30), v => { R.gop = v; save(); }), el('span', null, 'frames')),
+        el('span'), check(' Timecode (the time of day, for editing)', R.timecode, v => { R.timecode = v; save(); }),
+        el('span'), check(' Strict constant bitrate', R.cbr, v => { R.cbr = v; save(); }),
+        el('span'), check(' Keyframe aligned', R.aligned, v => { R.aligned = v; save(); }),
+        el('div', { class: 'rec-adv-h' }, 'Audio (AAC)'),
+        ...row('Channels', select([[2, 'Stereo'], [1, 'Mono']], R.channels === 1 ? 1 : 2, v => { R.channels = +v; save(); }, { disabled: live || null })),
+        ...row('Target bit rate', select([96, 128, 160, 192, 256, 320].map(v => [v, String(v)]).concat([96, 128, 160, 192, 256, 320].includes(o.recordAudioBitrate || 256) ? [] : [[o.recordAudioBitrate, String(o.recordAudioBitrate)]]), o.recordAudioBitrate || 256, v => { o.recordAudioBitrate = +v; save(); }, { disabled: live || null }), el('span', null, 'kbits/sec')),
+        ...row('Sample rate', select([[48000, '48.000 kHz'], [44100, '44.100 kHz']], R.rate === 44100 ? 44100 : 48000, v => { R.rate = +v; save(); }, { disabled: live || null })),
+        enc === 'x264' && (R.w > 1920 || (!R.w && progH > 1080)) ? el('div', { class: 'status-bad', style: 'grid-column:1/-1;font-size:.85em' }, 'x264 cannot record 4K / 1440p in time — choose NVIDIA H.264.') : null,
+        rt.eng ? null : el('div', { class: 'muted', style: 'grid-column:1/-1;font-size:.85em' }, 'With the classic engine the recording is encoded once more with these settings (instead of being copied).'))
+        : el('div', { class: 'muted', style: 'font-size:.85em' }, 'Off: recordings use the encoder from Video output and the bitrates above.');
+      return el('div', { class: 'section', style: 'margin-top:4px' },
+        el('h4', null, 'Recording encoder settings'),
+        check(' Use my own encoder settings for recordings (like Wirecast’s encoder presets)', R.on, v => { R.on = v; save(); }),
+        body);
+    }
     function qualityBlock(kind) {
       const Q = QUAL[kind], wrap = el('div');
       s.presets = s.presets || { live: [], rec: [] };
       const draw = () => {
         const mine = s.presets[kind] || (s.presets[kind] = []);
-        const all = [...Q.builtin.map(b => ({ name: b[0], v: b[1], a: b[2] })), ...mine.map(m => ({ ...m, mine: true }))];
-        const cur = all.findIndex(x => x.v === o[Q.v] && x.a === o[Q.a]);
-        const set = (v, a) => { o[Q.v] = clamp(Math.round(v) || Q.vr[0], Q.vr[0], Q.vr[1]); o[Q.a] = clamp(Math.round(a) || Q.ar[0], Q.ar[0], Q.ar[1]); saveSettings(); draw(); };
+        const all = [...Q.builtin.map(b => ({ name: b[0], v: b[1], a: b[2], adv: b[3] })), ...mine.map(m => ({ ...m, mine: true }))];
+        // (recordings: a preset can hold the whole encoder setup; then it only matches when those settings are on and the same)
+        const advOn = kind === 'rec' && o.rec && o.rec.on, sameAdv = x => JSON.stringify(Object.assign(REC_DEF(), x, { on: true })) === JSON.stringify(Object.assign(REC_DEF(), o.rec, { on: true }));
+        const cur = all.findIndex(x => x.v === o[Q.v] && x.a === o[Q.a] && (kind !== 'rec' || (x.adv ? advOn && sameAdv(x.adv) : !advOn)));
+        const set = (v, a, adv) => {
+          o[Q.v] = clamp(Math.round(v) || Q.vr[0], Q.vr[0], Q.vr[1]); o[Q.a] = clamp(Math.round(a) || Q.ar[0], Q.ar[0], Q.ar[1]);
+          if (kind === 'rec' && adv !== undefined) o.rec = adv ? Object.assign(REC_DEF(), clone(adv), { on: true }) : Object.assign(o.rec || REC_DEF(), { on: false });
+          saveSettings(); draw();
+        };
         const nameIn = el('input', { type: 'text', placeholder: 'Name for a new preset', style: 'flex:1;min-width:120px' });
         wrap.innerHTML = '';
         put(wrap,
           el('div', { class: 'grid2' },
-            el('div', { class: 'field' }, el('span', null, 'Preset'), select([...all.map((x, i) => [i, `${x.mine ? '★ ' : ''}${x.name} — ${x.v.toLocaleString()} / ${x.a} kbps`]), ...(cur < 0 ? [[-1, 'Custom (not saved)']] : [])], cur, v => { const x = all[+v]; if (x) set(x.v, x.a); })),
+            el('div', { class: 'field' }, el('span', null, 'Preset'), select([...all.map((x, i) => [i, `${x.mine ? '★ ' : ''}${x.name} — ${x.v.toLocaleString()} / ${x.a} kbps`]), ...(cur < 0 ? [[-1, 'Custom (not saved)']] : [])], cur, v => { const x = all[+v]; if (x) set(x.v, x.a, kind === 'rec' ? (x.adv || null) : undefined); })),
             el('div', { class: 'row', style: 'gap:10px;align-items:flex-end' },
               el('div', { class: 'field grow' }, el('span', null, 'Picture (kbps)'), el('input', { type: 'number', min: Q.vr[0], max: Q.vr[1], step: 100, value: o[Q.v], disabled: live || null, onchange: e => set(+e.target.value, o[Q.a]) })),
               el('div', { class: 'field grow' }, el('span', null, 'Sound (kbps)'), el('input', { type: 'number', min: Q.ar[0], max: Q.ar[1], step: 1, value: o[Q.a], disabled: live || null, onchange: e => set(o[Q.v], +e.target.value) })))),
           el('div', { class: 'row wrap', style: 'gap:8px;margin:-4px 0 10px' }, nameIn,
-            el('button', { class: 'btn small', onclick: () => { const n = nameIn.value.trim(); if (!n) { toast('Type a name for the preset first.', 'error'); return; } const i = mine.findIndex(m => m.name === n); const pr = { name: n, v: o[Q.v], a: o[Q.a] }; if (i >= 0) mine[i] = pr; else mine.push(pr); saveSettings(); draw(); toast(`Preset “${n}” saved.`); } }, '★ Save these numbers as a preset'),
-            cur >= 0 && all[cur].mine ? el('button', { class: 'btn small danger', onclick: () => { s.presets[kind] = mine.filter(m => m.name !== all[cur].name); saveSettings(); draw(); } }, 'Delete this preset') : null));
+            el('button', { class: 'btn small', onclick: () => { const n = nameIn.value.trim(); if (!n) { toast('Type a name for the preset first.', 'error'); return; } const i = mine.findIndex(m => m.name === n); const pr = { name: n, v: o[Q.v], a: o[Q.a] }; if (kind === 'rec' && o.rec && o.rec.on) pr.adv = clone(o.rec); if (i >= 0) mine[i] = pr; else mine.push(pr); saveSettings(); draw(); toast(`Preset “${n}” saved.`); } }, '★ Save these numbers as a preset'),
+            cur >= 0 && all[cur].mine ? el('button', { class: 'btn small danger', onclick: () => { s.presets[kind] = mine.filter(m => m.name !== all[cur].name); saveSettings(); draw(); } }, 'Delete this preset') : null),
+          kind === 'rec' ? recAdvBlock(draw) : null);
         if (live) wrap.querySelectorAll('select').forEach(x => { x.disabled = true; });
       };
       draw();

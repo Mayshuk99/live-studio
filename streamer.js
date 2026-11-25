@@ -33,7 +33,7 @@ const ENCODERS = {
 let decodeMode = 'auto';
 const getDecodeMode = () => decodeMode;
 const setDecodeMode = m => { decodeMode = m; };
-const zeroCopy = o => !o.engine && !o.safe && o.hwDecode !== false && decodeMode === 'cuda-zc' && o.encoder === 'nvenc';
+const zeroCopy = o => !o.engine && !o.safe && o.hwDecode !== false && decodeMode === 'cuda-zc' && o.encoder === 'nvenc' && !(o.adv && o.adv.on && recScale(o));
 const hwDecode = o => {
   if (o.engine || o.safe || o.hwDecode === false || decodeMode === 'none') return [];
   if (zeroCopy(o)) return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-extra_hw_frames', '8'];
@@ -113,7 +113,43 @@ const capRate = f => [59.94, 29.97, 23.98, 60, 50, 30, 25, 24].find(x => Math.ab
 // FFmpeg rate: 59.94 / 29.97 are exactly 60000/1001 and 30000/1001
 const rate = fps => fps === 59.94 ? '60000/1001' : fps === 29.97 ? '30000/1001' : fps === 23.98 ? '24000/1001' : String(fps);
 
+/* Recording encoder settings, like Wirecast's encoder presets (Settings → Recording → Encoder settings):
+   o.adv = { on, w, h, fps, speed, profile, gop, cbr, aligned, x264, channels, rate } — 0 / '' = as the program / default.
+   o.encoder is the recording's encoder (already chosen by the window), o.timecode the start time of day. */
+const recScale = o => { const A = o.adv || {}; return A.w > 0 && A.h > 0 && (A.w !== (o.width || 1920) || A.h !== (o.height || 1080)) ? [A.w & ~1, A.h & ~1] : null; };
+function recAdvVideo(o, enc, kbps, gop, outFps) {
+  const A = o.adv, k = `${kbps}k`, prof = ['baseline', 'main', 'high'].includes(A.profile) ? A.profile : 'high';
+  const peak = A.cbr ? k : `${Math.round(kbps * 1.5)}k`, buf = `${kbps * 2}k`;
+  const forced = A.aligned ? ['-force_key_frames', `expr:gte(t,n_forced*${(gop / outFps).toFixed(4)})`] : [];
+  if (enc === 'nvenc') return ['-c:v', 'h264_nvenc', '-preset', /^p[1-7]$/.test(A.speed) ? A.speed : 'p4', '-rc', A.cbr ? 'cbr' : 'vbr', '-profile:v', prof,
+    '-b:v', k, '-maxrate', peak, '-bufsize', buf, '-g', String(gop), '-bf', prof === 'baseline' ? '0' : '2', ...(A.aligned ? ['-no-scenecut', '1', '-forced-idr', '1'] : []), ...forced];
+  if (enc === 'qsv') return ['-c:v', 'h264_qsv', '-preset', ['veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'].includes(A.speed) ? A.speed : 'veryfast', '-profile:v', prof,
+    '-b:v', k, '-maxrate', peak, '-bufsize', buf, '-g', String(gop), ...forced];
+  if (enc === 'amf') return ['-c:v', 'h264_amf', '-quality', ['speed', 'balanced', 'quality'].includes(A.speed) ? A.speed : 'speed', '-rc', A.cbr ? 'cbr' : 'vbr_peak', '-profile:v', prof,
+    '-b:v', k, '-maxrate', peak, '-bufsize', buf, '-g', String(gop), ...forced];
+  const xp = [A.cbr ? 'nal-hrd=cbr' : '', String(A.x264 || '').replace(/[\s"']/g, '')].filter(Boolean).join(':');
+  return ['-c:v', 'libx264', '-preset', ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].includes(A.speed) ? A.speed : 'veryfast', '-profile:v', prof,
+    '-b:v', k, ...(A.cbr ? ['-maxrate', k, '-bufsize', buf] : []), '-g', String(gop), '-keyint_min', String(A.aligned ? gop : Math.max(1, Math.round(gop / 10))),
+    ...(A.aligned ? ['-sc_threshold', '0'] : []), ...(xp ? ['-x264-params', xp] : []), ...forced];
+}
 function recordArgs(o, partFile) {
+  if (o.adv && o.adv.on) {
+    const A = o.adv, fps = o.fps || 30, outFps = A.fps > 0 ? A.fps : fps, enc = o.encoder || 'x264';
+    const gop = A.gop > 0 ? Math.round(A.gop) : Math.round(outFps), sc = recScale(o), hw = ['nvenc', 'qsv', 'amf'].includes(enc);
+    return [
+      '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
+      '-fflags', '+genpts',
+      ...(o.engine ? inputOf(o) : [...(hw ? hwDecode(o) : []), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?']),
+      ...(sc ? ['-vf', `scale=${sc[0]}:${sc[1]}:flags=bicubic`] : []),
+      ...recAdvVideo(o, enc, o.bitrate || 20000, gop, outFps),
+      ...(zeroCopy(o) ? [] : ['-pix_fmt', 'yuv420p']),
+      ...(A.fps > 0 && Math.abs(A.fps - fps) > 0.01 ? ['-r', rate(A.fps), '-fps_mode', 'cfr'] : cfr(o, fps)),
+      ...(o.timecode ? ['-timecode', o.timecode] : []),
+      '-c:a', 'aac', '-b:a', `${o.audioBitrate || 192}k`, '-ar', String(A.rate === 44100 ? 44100 : 48000), '-ac', String(A.channels === 1 ? 1 : 2),
+      '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+      '-f', 'mp4', '-y', partFile
+    ];
+  }
   // With a hardware encoder: re-encode to constant frame rate (best for editing in DaVinci Resolve etc.)
   // With software encoding: copy the picture as-is to save processor power.
   const fps = o.fps || 30;
