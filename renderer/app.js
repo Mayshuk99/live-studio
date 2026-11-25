@@ -529,6 +529,7 @@
   // the engine's name for one of this window's sources (sent to it the first time)
   function natSource(M, src) {
     if (!src) return null;
+    if (/^#[0-9a-f]{6}$/i.test(src)) return src; // a plain colour
     if (camById(src)) return src;
     const f = fileById(src), m = f && rt.files.get(src);
     if (f && f.kind === 'video') {
@@ -554,7 +555,14 @@
     const src = natSource(M, sh.main.source);
     if (!src) { natNote(M, 'src' + sh.id, `“${sh.name}”: its picture is not in the native engine yet`); return null; }
     const fr = sh.main.frame || {};
-    return { key: sh.id, src, zoom: fr.zoom || 1, x: fr.x ?? 0.5, y: fr.y ?? 0.5 };
+    const b = { key: sh.id, src, zoom: fr.zoom || 1, x: fr.x ?? 0.5, y: fr.y ?? 0.5 };
+    const g = window.LiveEngine.greenOf(sh);
+    if (g) {
+      const bg = natSource(M, g.bg);
+      if (!bg && g.bg) natNote(M, 'gbg' + sh.id, `“${sh.name}”: the green screen background is not in the native engine yet — black for now`);
+      b.green = { cb: +g.cb.toFixed(4), cr: +g.cr.toFixed(4), sim: +g.sim.toFixed(4), smooth: +g.smooth.toFixed(4), spill: +g.spill.toFixed(4), bg: bg ? { src: bg } : null };
+    }
+    return b;
   }
   // the rows a caption covers (worked out once per caption, from its final look)
   function natBand(M, L) {
@@ -2101,6 +2109,7 @@
     refresh('shots'); editShot(s.id);
   }
   function editShot(id, quiet) {
+    if (id !== rt.editingId) { engine.matteId = null; rt.pickGreen = false; }
     rt.editingId = id; rt.padTarget = 'main';
     refresh('editor');
     if (!quiet && !rt.bodies.editor) { setView('setup'); return; }
@@ -2120,6 +2129,65 @@
     if (pv) pv.textContent = rt.armedSpk ? `Caption preview on the live shot — press TAKE to show` : ((getShot(rt.previewId) || {}).name || '');
     if (pg) pg.textContent = (getShot(engine.trans ? engine.trans.to : engine.programId) || {}).name || '';
     const f = $('#ftbBtn'); if (f) f.classList.toggle('on', engine.isBlack);
+  }
+
+  /* ================= green screen (per shot) ================= */
+  const GD = window.LiveEngine.GREEN_DEF;
+  function greenCfg(s) {
+    if (!s.green) s.green = { on: false, bg: '', color: GD.color, strength: GD.strength, soft: GD.soft, spill: GD.spill };
+    return s.green;
+  }
+  const hex2 = v => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, '0');
+  // the average colour of a small spot of the picture shown in the framing pad (the whole source, not cropped)
+  function greenSample(x, y) {
+    let d; try { d = padCanvas.getContext('2d').getImageData(Math.max(0, Math.round(x) - 3), Math.max(0, Math.round(y) - 3), 7, 7).data; } catch (e) { return null; }
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+    if (!n) return null;
+    r /= n; g /= n; b /= n;
+    const [cb, cr] = window.LiveEngine.keyCbCr('#' + hex2(r) + hex2(g) + hex2(b));
+    if (Math.hypot(cb, cr) < 0.04) return null; // grey / white / black: not a screen colour
+    return '#' + hex2(r) + hex2(g) + hex2(b);
+  }
+  // the screen's own colour, found in the picture: the middle value of all clearly green (or, failing that, blue) pixels
+  function greenAuto() {
+    let d; try { d = padCanvas.getContext('2d').getImageData(0, 0, padCanvas.width, padCanvas.height).data; } catch (e) { return null; }
+    for (const ch of [1, 2]) {
+      const R = [], G = [], B = [];
+      for (let i = 0; i < d.length; i += 4) {
+        const c = [d[i], d[i + 1], d[i + 2]], o = c.filter((v, k) => k !== ch);
+        if (c[ch] > 40 && c[ch] > Math.max(...o) * 1.3 + 12) { R.push(c[0]); G.push(c[1]); B.push(c[2]); }
+      }
+      if (R.length > d.length / 4 * 0.06) {
+        const med = a => a.sort((p, q) => p - q)[a.length >> 1];
+        return '#' + hex2(med(R)) + hex2(med(G)) + hex2(med(B));
+      }
+    }
+    return null;
+  }
+  function greenPanel(s) {
+    const g = greenCfg(s), up = () => { changed(); };
+    const isColor = /^#/.test(g.bg || '');
+    const bgSel = select([...sourceOptions(false).filter(o => o[0] !== s.main.source), ['#color', '🎨 A plain colour']], isColor ? '#color' : (g.bg || 'black'), v => {
+      g.bg = v === '#color' ? '#1e3a5f' : v; up(); refresh('editor');
+    }, { class: 'grow' });
+    return el('div', { style: 'margin-top:8px' },
+      el('div', { class: 'field' }, el('span', null, 'Background (shows where the green was)'),
+        el('div', { class: 'row', style: 'gap:6px' }, bgSel,
+          isColor ? el('input', { type: 'color', value: g.bg, oninput: e => { g.bg = e.target.value; up(); } }) : null,
+          el('button', { class: 'btn small', title: 'Import a picture or video for the background', onclick: async () => { const a = await addFiles(); const f = a.find(x => x.kind === 'image' || x.kind === 'video'); if (f) { g.bg = f.id; up(); refresh('editor'); } } }, 'Import…'))),
+      el('div', { class: 'field' }, el('span', null, 'Colour to remove'),
+        el('div', { class: 'row wrap', style: 'gap:6px;align-items:center' },
+          el('span', { class: 'key-swatch', style: `background:${g.color}`, title: g.color }),
+          el('button', { class: 'btn small', title: 'Find the screen colour in the picture', onclick: () => { const c = greenAuto(); if (c) { g.color = c; up(); toast(`Found the screen colour ${c}.`, 'ok'); } else toast('No green or blue screen found in the picture — use 🎯 Pick and click on the screen.', 'error'); refresh('editor'); } }, 'Auto'),
+          el('button', { class: 'btn small' + (rt.pickGreen ? ' sel' : ''), title: 'Then click on the green in the picture above', onclick: () => { rt.pickGreen = !rt.pickGreen; rt.padTarget = 'main'; pad.classList.toggle('picking', rt.pickGreen); if (rt.pickGreen) toast('Now click on the green screen in the picture above.'); refresh('editor'); } }, rt.pickGreen ? '🎯 Click the picture…' : '🎯 Pick'),
+          el('button', { class: 'btn small', onclick: () => { g.color = '#00ff00'; up(); refresh('editor'); } }, 'Green'),
+          el('button', { class: 'btn small', onclick: () => { g.color = '#0000ff'; up(); refresh('editor'); } }, 'Blue'))),
+      slider({ label: 'Strength', min: 0.1, max: 0.95, step: 0.01, value: g.strength ?? GD.strength, reset: GD.strength, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { g.strength = v; up(); } }),
+      slider({ label: 'Soft edges', min: 0.02, max: 0.6, step: 0.01, value: g.soft ?? GD.soft, reset: GD.soft, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { g.soft = v; up(); } }),
+      slider({ label: 'Green glow', min: 0.05, max: 1, step: 0.01, value: g.spill ?? GD.spill, reset: GD.spill, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { g.spill = v; up(); } }),
+      el('div', { class: 'row', style: 'margin-top:6px' }, check(' Show the cut-out on Preview (white = kept, black = removed)', engine.matteId === s.id, v => { engine.matteId = v ? s.id : null; if (v && rt.previewId !== s.id) setPreview(s.id); })),
+      el('div', { class: 'muted', style: 'font-size:.85em;margin-top:6px' }, 'Pick the screen colour first (Auto or 🎯), then raise Strength until the green is gone everywhere and lower it if parts of the person disappear. Soft edges smooths hair; Green glow takes the green tint off edges. Light the screen evenly, with no shadows. Double-click a slider to reset it.'));
   }
 
   /* ================= panel: shot framing ================= */
@@ -2157,6 +2225,13 @@
   let padDrag = null;
   pad.addEventListener('pointerdown', e => {
     const s = getShot(rt.editingId); if (!s) return;
+    if (rt.pickGreen) { // green screen: this click picks the colour to remove
+      const r = padCanvas.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * padCanvas.width, y = (e.clientY - r.top) / r.height * padCanvas.height;
+      const c = greenSample(x, y);
+      rt.pickGreen = false; pad.classList.remove('picking');
+      if (c) { greenCfg(s).color = c; changed(); toast(`Green screen colour ${c} picked.`, 'ok'); } else toast('Click on the green part of the picture.', 'error');
+      refresh('editor'); return;
+    }
     pad.setPointerCapture(e.pointerId);
     const L = padLayer(s);
     padDrag = { x: e.clientX, y: e.clientY, fx: L.frame.x, fy: L.frame.y, moved: false };
@@ -2237,6 +2312,16 @@
           select(sourceOptions(false), s.pip.source, v => { s.pip.source = v; changed(); refresh('editor'); }),
           el('div', { class: 'corner-pick' }, [['tl', '↖'], ['tr', '↗'], ['bl', '↙'], ['br', '↘']].map(([c, t]) => el('button', { class: 'btn small' + (s.pip.corner === c ? ' sel' : ''), onclick: () => { s.pip.corner = c; changed(); refresh('editor'); } }, t))),
           el('label', { class: 'inline grow' }, 'Size', el('input', { type: 'range', min: 0.15, max: 0.5, step: 0.01, value: s.pip.size, class: 'grow', oninput: e => { s.pip.size = +e.target.value; changed(); } }))) : null),
+
+      el('div', { class: 'section' }, el('h4', null, 'Green screen'),
+        check(' Replace the green behind the picture with a background', !!(s.green && s.green.on), v => {
+          const g = greenCfg(s); g.on = v;
+          if (v && !g.bg) { const pic = show.files.find(f => f.kind === 'image'); g.bg = pic ? pic.id : 'black'; }
+          if (v && !g.picked) { const c = greenAuto(); if (c) g.color = c; g.picked = true; }
+          if (!v && engine.matteId === s.id) engine.matteId = null;
+          changed(); refresh('editor');
+        }),
+        s.green && s.green.on ? greenPanel(s) : null),
 
       el('div', { class: 'section' }, el('h4', null, 'Pictures & web pages on this shot'),
         show.webs.length || show.pics.length ? el('div', { class: 'row wrap', style: 'gap:14px' }, [...show.pics.map(p2 => ({ id: p2.id, name: '🖼 ' + (p2.name || 'Picture') })), ...show.webs.map(w => ({ id: w.id, name: '🌐 ' + (w.name || 'Web page') }))].map(w => check(' ' + w.name, (s.webIds || []).includes(w.id), v => { s.webIds = (s.webIds || []).filter(i => i !== w.id); if (v) s.webIds.push(w.id); changed(); refreshWebs(); })))

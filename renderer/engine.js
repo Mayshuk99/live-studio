@@ -36,6 +36,10 @@
   uniform vec3 u_keyColor;
   uniform float u_keyTol;
   uniform int u_bgra;        // web-page pictures arrive as BGRA with premultiplied alpha
+  uniform int u_ck;          // green screen: remove the key colour from a camera / video (like OBS's chroma key)
+  uniform vec2 u_ckC;        // key colour as Cb, Cr (BT.709)
+  uniform vec3 u_ckP;        // strength (similarity), edge softness, spill
+  uniform int u_matte;       // show the cut-out in black & white (setting up the green screen, Preview only)
   void main() {
     if (u_mode == 2) { o = vec4(u_solid.rgb, u_solid.a * u_opacity); return; }
     vec4 t = texture(u_tex, v_uv);
@@ -46,6 +50,15 @@
       o = vec4(t.rgb, a * u_opacity); return;
     }
     vec3 c = t.rgb;
+    float ka = 1.0;
+    if (u_ck == 1) {
+      vec2 cc = vec2(dot(c, vec3(-0.1146, -0.3854, 0.5)), dot(c, vec3(0.5, -0.4542, -0.0458)));
+      float base = distance(cc, u_ckC) - u_ckP.x;
+      ka = pow(clamp(base / max(u_ckP.y, 0.0001), 0.0, 1.0), 1.5);
+      float sp = pow(clamp(base / max(u_ckP.z, 0.0001), 0.0, 1.0), 1.5);
+      c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, sp);
+      if (u_matte == 1) { o = vec4(vec3(ka), u_opacity); return; }
+    }
     vec3 lin = pow(max(c, 0.0), vec3(2.2));
     lin *= exp2(u_exposure);
     lin *= vec3(1.0 + u_temp * 0.22, 1.0 - u_tint * 0.16, 1.0 - u_temp * 0.22);
@@ -61,10 +74,31 @@
       float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
       if (lum > 0.95 && mod(gl_FragCoord.x + gl_FragCoord.y, 14.0) < 7.0) c = mix(c, vec3(0.0), 0.65);
     }
-    o = vec4(c, u_opacity);
+    o = vec4(c, u_opacity * ka);
   }`;
 
   const NEUTRAL = { exposure: 0, contrast: 1, saturation: 1, temp: 0, tint: 0, gamma: 1, black: 0 };
+  const FILL = { zoom: 1, x: 0.5, y: 0.5 };
+  /* green screen of a shot → key settings for drawing (null when off). Strength, softness and spill work like OBS's
+     chroma key (similarity / smoothness / key colour spill reduction); the native engine gets the same numbers. */
+  function keyCbCr(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''), n = m ? parseInt(m[1], 16) : 0x00ff00;
+    const r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255;
+    return [-0.1146 * r - 0.3854 * g + 0.5 * b, 0.5 * r - 0.4542 * g - 0.0458 * b];
+  }
+  const GREEN_DEF = { color: '#00ff00', strength: 0.55, soft: 0.2, spill: 0.35 };
+  const ccCache = new WeakMap();
+  function greenOf(shot) {
+    const g = shot && shot.green;
+    if (!g || !g.on || !shot.main || !shot.main.source) return null;
+    let c = ccCache.get(g);
+    if (!c || c.color !== g.color) { c = { color: g.color, cc: keyCbCr(g.color) }; ccCache.set(g, c); }
+    const cc = c.cc;
+    // the sliders are fractions of the way from the key colour to grey, so they mean the same for a bright
+    // pure green and for the duller green a real screen has (picked from the picture)
+    const R = Math.max(0.05, Math.hypot(cc[0], cc[1]));
+    return { bg: g.bg || 'black', cb: cc[0], cr: cc[1], sim: R * clamp(g.strength ?? GREEN_DEF.strength, 0, 1), smooth: R * clamp(g.soft ?? GREEN_DEF.soft, 0.01, 1), spill: R * clamp(g.spill ?? GREEN_DEF.spill, 0.01, 1) };
+  }
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
@@ -138,7 +172,7 @@
       gl.useProgram(p);
       this.u = {};
       ['u_dst', 'u_src', 'u_tex', 'u_mode', 'u_solid', 'u_opacity', 'u_exposure', 'u_contrast', 'u_saturation',
-        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra', 'u_keyOn', 'u_keyColor', 'u_keyTol', 'u_bgra'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
+        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra', 'u_keyOn', 'u_keyColor', 'u_keyTol', 'u_bgra', 'u_ck', 'u_ckC', 'u_ckP', 'u_matte'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
       const vao = gl.createVertexArray();
       gl.bindVertexArray(vao);
       const buf = gl.createBuffer();
@@ -456,10 +490,13 @@
       const out = [];
       if (!shot || !shot.main) return out;
       const W = this.W, H = this.H;
+      const g = greenOf(shot);
+      if (g) out.push({ source: g.bg, frame: FILL, rect: [0, 0, 1, 1], bg: true }); // what shows where the green was
       out.push({
         source: shot.main.source,
         frame: smooth ? this._smooth(shot.id + ':m', shot.main.frame) : shot.main.frame,
-        rect: [0, 0, 1, 1]
+        rect: [0, 0, 1, 1],
+        key: g
       });
       const p = shot.pip;
       if (p && p.enabled && p.source) {
@@ -483,10 +520,11 @@
       gl.uniform4fv(this.u.u_src, [0, 0, 1, 1]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
-    _video(sourceId, rect, uv, opacity, zebra) {
+    _video(sourceId, rect, uv, opacity, zebra, key, matte) {
       const gl = this.gl;
+      if (/^#[0-9a-f]{6}$/i.test(sourceId || '')) { const n = parseInt(sourceId.slice(1), 16); this._solid(rect, [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255, 1], opacity); return; }
       const s = this.sources.get(sourceId);
-      if (!s || !s.ready) { this._solid(rect, [0.07, 0.08, 0.1, 1], opacity); return; }
+      if (!s || !s.ready) { if (!key) this._solid(rect, [0.07, 0.08, 0.1, 1], opacity); return; }
       const c = this.bypass.has(sourceId) ? NEUTRAL : (this.colors.get(sourceId) || NEUTRAL);
       gl.bindTexture(gl.TEXTURE_2D, s.tex);
       gl.uniform1i(this.u.u_mode, 0);
@@ -499,20 +537,24 @@
       gl.uniform1f(this.u.u_gamma, c.gamma);
       gl.uniform1f(this.u.u_black, c.black);
       gl.uniform1i(this.u.u_zebra, zebra ? 1 : 0);
+      gl.uniform1i(this.u.u_ck, key ? 1 : 0);
+      if (key) { gl.uniform2f(this.u.u_ckC, key.cb, key.cr); gl.uniform3f(this.u.u_ckP, key.sim, key.smooth, key.spill); gl.uniform1i(this.u.u_matte, matte ? 1 : 0); }
       gl.uniform4fv(this.u.u_dst, rect);
       gl.uniform4fv(this.u.u_src, uv);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      if (key) { gl.uniform1i(this.u.u_ck, 0); gl.uniform1i(this.u.u_matte, 0); }
     }
-    _drawShot(shot, opacity, smooth, zebra) {
+    _drawShot(shot, opacity, smooth, zebra, matte) {
       const W = this.W, H = this.H;
       for (const L of this._layers(shot, smooth)) {
+        if (matte && L.bg) { this._solid(L.rect, [0, 0, 0, 1], opacity); continue; } // the cut-out on black
         const r = L.rect;
         if (L.border) {
           const bx = 4 / W, by = 4 / H;
           this._solid([r[0] - bx, r[1] - by, r[2] + bx * 2, r[3] + by * 2], [1, 1, 1, 1], opacity);
         }
         const uv = this.uvFor(L.source, L.frame, (r[2] * W) / (r[3] * H));
-        this._video(L.source, r, uv, opacity, zebra);
+        this._video(L.source, r, uv, opacity, zebra && !L.bg, L.key, matte);
       }
     }
     _drawLabels(now, dt) {
@@ -623,10 +665,10 @@
         const cw0 = this.previewCue && this.previewCue.webId && this.webs.get(this.previewCue.webId);
         // a still picture (holding slide, logo, colour bars…) is not redrawn 60 times a second: only when it changes
         const pvKey = !ps || cw0 || (PL && PL.data && PL.dirty) || !this._still(ps) ? null
-          : [psId, cued ? 1 : 0, pw, this.zebra ? 1 : 0, PL && PL.data ? JSON.stringify(PL.data) : '', ...this._layers(ps, false).map(L => { const so = this.sources.get(L.source); return so ? so.ver || 0 : -1; }), JSON.stringify(ps.main), JSON.stringify(ps.pip || null)].join('|');
+          : [psId, cued ? 1 : 0, pw, this.zebra ? 1 : 0, PL && PL.data ? JSON.stringify(PL.data) : '', ...this._layers(ps, false).map(L => { const so = this.sources.get(L.source); return so ? so.ver || 0 : -1; }), JSON.stringify(ps.main), JSON.stringify(ps.pip || null), JSON.stringify(ps.green || null), this.matteId === psId ? 1 : 0].join('|');
         if (pvKey && pvKey === this._pvKey && now - this._pvAt < 2000) { /* unchanged */ } else {
         this._pvKey = pvKey; this._pvAt = now; this.stats.pvDraws = (this.stats.pvDraws || 0) + 1;
-        if (ps) this._drawShot(ps, 1, true, this.zebra);
+        if (ps) this._drawShot(ps, 1, true, this.zebra, !!this.matteId && this.matteId === psId);
         if (PL && PL.data) { // a caption that is cued up (not on air yet) is shown on the Preview only
           const gl = this.gl;
           if (PL.dirty) { drawLabel(PL.ctx, this.W, this.H, PL.data); gl.bindTexture(gl.TEXTURE_2D, PL.tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, PL.canvas); PL.dirty = false; }
@@ -693,7 +735,7 @@
       const id = this.trans ? this.trans.to : this.programId;
       const sh = id ? this.getShot(id) : null;
       if (!sh) return null;
-      for (const L of this._layers(sh, false)) {
+      for (const L of this._layers(sh, false).sort((a, b) => (a.bg ? 1 : 0) - (b.bg ? 1 : 0))) {
         const so = this.sources.get(L.source);
         if (so && so.kind === 'video' && so.el && so.el.srcObject && so.rvfc) return so;
       }
@@ -728,7 +770,7 @@
     _thumbStill(id, cnv, now) {
       const sh = this.getShot(id);
       if (!sh || !this._still(sh)) { cnv._key = null; return false; }
-      const key = JSON.stringify(sh.main) + JSON.stringify(sh.pip || null) + this._layers(sh, false).map(L => (this.sources.get(L.source) || {}).ver || 0).join(',');
+      const key = JSON.stringify(sh.main) + JSON.stringify(sh.pip || null) + JSON.stringify(sh.green || null) + this._layers(sh, false).map(L => (this.sources.get(L.source) || {}).ver || 0).join(',');
       if (cnv._key === key && now - (cnv._at || 0) < 5000) return true;
       cnv._key = key; return false;
     }
@@ -1100,5 +1142,5 @@
     return c;
   }
 
-  window.LiveEngine = { Engine, makeBars, NEUTRAL, LABEL_PRESETS, LABEL_STYLES, LABEL_ANIMS, labelDesign, labelAnimMs, drawLabel };
+  window.LiveEngine = { Engine, makeBars, keyCbCr, greenOf, GREEN_DEF, NEUTRAL, LABEL_PRESETS, LABEL_STYLES, LABEL_ANIMS, labelDesign, labelAnimMs, drawLabel };
 })();

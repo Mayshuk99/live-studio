@@ -13,6 +13,7 @@ import (
 type Base struct {
 	Key, Src   string
 	Zoom, X, Y float64
+	Green      *Green // green screen: this picture keyed over Green.Bg
 }
 
 type acqInfo struct {
@@ -84,6 +85,7 @@ type Engine struct {
 	pvPgmW, pvPgmH, pvPgmEvery int
 	pvCamW, pvCamH, pvCamEvery int
 	pvCams                     []string
+	kA, kS                     []byte // green screen: alpha and colour kept, per colour sample
 
 	clockCam  string
 	lastCount uint64
@@ -163,6 +165,7 @@ func baseOf(m Msg) *Base {
 	if b.Key == "" {
 		b.Key = b.Src
 	}
+	b.Green = greenOf(m.obj("green"), b.Key)
 	return b
 }
 
@@ -499,9 +502,23 @@ func (e *Engine) smoothFor(b *Base, n uint64) *smoothState {
 }
 
 func (e *Engine) renderBase(dst *Frame, b *Base, n uint64) {
+	if b != nil && b.Green != nil {
+		e.renderPlain(dst, b.Green.Bg, n, true) // the background (black when there is none)
+		fg := e.scratch()
+		if e.renderPlain(fg, b, n, false) {
+			e.keyOver(dst, fg, b.Green, e.colors[b.Src])
+		}
+		e.unscratch(fg)
+		return
+	}
+	e.renderPlain(dst, b, n, true)
+}
+
+// one picture filling the frame; false when there was nothing to draw (dst is then black)
+func (e *Engine) renderPlain(dst *Frame, b *Base, n uint64, color bool) bool {
 	if b == nil {
 		fillBlack(dst)
-		return
+		return false
 	}
 	if strings.HasPrefix(b.Src, "#") && len(b.Src) == 7 { // a plain colour
 		var c [3]uint8
@@ -510,7 +527,7 @@ func (e *Engine) renderBase(dst *Frame, b *Base, n uint64) {
 			c[i] = uint8(v)
 		}
 		fillColor(dst, c[0], c[1], c[2])
-		return
+		return true
 	}
 	sm := e.smoothFor(b, n)
 	if c := e.cams[b.Src]; c != nil {
@@ -519,7 +536,7 @@ func (e *Engine) renderBase(dst *Frame, b *Base, n uint64) {
 		if f == nil {
 			c.release()
 			fillBlack(dst)
-			return
+			return false
 		}
 		drawFramed(dst, f, framing(f.W, f.H, e.W, e.H, sm.zoom, sm.x, sm.y))
 		c.release()
@@ -535,7 +552,7 @@ func (e *Engine) renderBase(dst *Frame, b *Base, n uint64) {
 		}
 		if f == nil {
 			fillBlack(dst)
-			return
+			return false
 		}
 		drawFramed(dst, f, framing(f.W, f.H, e.W, e.H, sm.zoom, sm.x, sm.y))
 	} else if s := e.stills[b.Src]; s != nil {
@@ -550,11 +567,12 @@ func (e *Engine) renderBase(dst *Frame, b *Base, n uint64) {
 		copy(dst.Buf, s.cache.Buf)
 	} else {
 		fillBlack(dst)
-		return
+		return false
 	}
-	if lut := e.colors[b.Src]; lut != nil {
+	if lut := e.colors[b.Src]; color && lut != nil {
 		applyColor(dst, lut)
 	}
+	return true
 }
 
 func hexVal(c byte) int {

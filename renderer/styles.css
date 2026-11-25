@@ -689,3 +689,7 @@ textarea { width: 100%; box-sizing: border-box; }
 .gfx-body .tile-row .gtile.chip .spk-air { top: auto; bottom: 4px; right: 8px; }
 .gfx-body .tile-row .gtile.add { height: auto; flex: 0 0 calc(44px * var(--scale)); padding: 0; font-size: 1.4em; }
 .native-stats { margin-top: 10px; padding: 12px 14px; border-radius: 8px; background: #0b0f14; border: 1px solid #27272a; font-size: 1.05em; }
+
+/* green screen (shot editor) */
+.key-swatch { width: 34px; height: 26px; border-radius: 6px; border: 1px solid var(--line); display: inline-block; }
+.pad.picking { cursor: crosshair; outline: 2px dashed #4ade80; outline-offset: 2px; }

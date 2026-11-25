@@ -75,6 +75,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path resources/engine | Out-Null
           go -C engine vet ./...
+          go -C engine test ./...
+          if ($LASTEXITCODE -ne 0) { throw 'engine tests failed' }
           go -C engine build -trimpath -ldflags "-s -w" -o ../resources/engine/ls-engine.exe .
           Get-Item resources/engine/ls-engine.exe
 
