@@ -1,0 +1,6037 @@
+[
+ {
+  "s": "toast {0}",
+  "kind": "tpl",
+  "at": "app.js:41"
+ },
+ {
+  "s": "Double-click to reset",
+  "kind": "str",
+  "at": "app.js:61"
+ },
+ {
+  "s": "Drag up / down · Shift = fine · double-click = reset",
+  "kind": "str",
+  "at": "app.js:71"
+ },
+ {
+  "s": "Type a value and press Enter",
+  "kind": "str",
+  "at": "app.js:72"
+ },
+ {
+  "s": "Video",
+  "kind": "str",
+  "at": "app.js:94"
+ },
+ {
+  "s": "left = preview (next) · right = live",
+  "kind": "str",
+  "at": "app.js:94"
+ },
+ {
+  "s": "Audio",
+  "kind": "str",
+  "at": "app.js:95"
+ },
+ {
+  "s": "what the stream hears",
+  "kind": "str",
+  "at": "app.js:95"
+ },
+ {
+  "s": "Shots",
+  "kind": "str",
+  "at": "app.js:96"
+ },
+ {
+  "s": "click = next · double-click = on air",
+  "kind": "str",
+  "at": "app.js:96"
+ },
+ {
+  "s": "Service",
+  "kind": "str",
+  "at": "app.js:97"
+ },
+ {
+  "s": "start and end the service",
+  "kind": "str",
+  "at": "app.js:97"
+ },
+ {
+  "s": "People",
+  "kind": "str",
+  "at": "app.js:98"
+ },
+ {
+  "s": "click = preview, then TAKE · double-click = on screen now",
+  "kind": "str",
+  "at": "app.js:98"
+ },
+ {
+  "s": "Titles & Graphics",
+  "kind": "str",
+  "at": "app.js:99"
+ },
+ {
+  "s": "click = Preview, then TAKE · double-click = on air now",
+  "kind": "str",
+  "at": "app.js:99"
+ },
+ {
+  "s": "Cameras & Files",
+  "kind": "str",
+  "at": "app.js:100"
+ },
+ {
+  "s": "Shot Framing",
+  "kind": "str",
+  "at": "app.js:101"
+ },
+ {
+  "s": "zoom and move the picture",
+  "kind": "str",
+  "at": "app.js:101"
+ },
+ {
+  "s": "Color & Exposure",
+  "kind": "str",
+  "at": "app.js:102"
+ },
+ {
+  "s": "Live Show",
+  "kind": "str",
+  "at": "app.js:126"
+ },
+ {
+  "s": "Color Bars",
+  "kind": "str",
+  "at": "app.js:128"
+ },
+ {
+  "s": "Black",
+  "kind": "str",
+  "at": "app.js:128"
+ },
+ {
+  "s": "Welcome",
+  "kind": "str",
+  "at": "app.js:130"
+ },
+ {
+  "s": "We are glad you are here",
+  "kind": "str",
+  "at": "app.js:130"
+ },
+ {
+  "s": "LIVE",
+  "kind": "str",
+  "at": "app.js:131"
+ },
+ {
+  "s": "Pilgrim Baptist Church · Spokane, WA",
+  "kind": "str",
+  "at": "app.js:136"
+ },
+ {
+  "s": "Service will begin shortly",
+  "kind": "str",
+  "at": "app.js:136"
+ },
+ {
+  "s": "Pastor Name",
+  "kind": "str",
+  "at": "app.js:143"
+ },
+ {
+  "s": "Senior Pastor",
+  "kind": "str",
+  "at": "app.js:143"
+ },
+ {
+  "s": "Worship Leader",
+  "kind": "str",
+  "at": "app.js:144"
+ },
+ {
+  "s": "Worship Team",
+  "kind": "str",
+  "at": "app.js:144"
+ },
+ {
+  "s": "💾 Save •",
+  "kind": "str",
+  "at": "app.js:193"
+ },
+ {
+  "s": "💾 Save",
+  "kind": "str",
+  "at": "app.js:193"
+ },
+ {
+  "s": "You have unsaved changes — click to save them (Ctrl+Shift+S)",
+  "kind": "str",
+  "at": "app.js:194"
+ },
+ {
+  "s": "Everything is saved (Ctrl+Shift+S)",
+  "kind": "str",
+  "at": "app.js:194"
+ },
+ {
+  "s": "Color bars",
+  "kind": "str",
+  "at": "app.js:253"
+ },
+ {
+  "s": "— none —",
+  "kind": "str",
+  "at": "app.js:256"
+ },
+ {
+  "s": "Camera",
+  "kind": "str",
+  "at": "app.js:301"
+ },
+ {
+  "s": "Audio input",
+  "kind": "str",
+  "at": "app.js:302"
+ },
+ {
+  "s": "Sound output",
+  "kind": "str",
+  "at": "app.js:303"
+ },
+ {
+  "s": "“{0}” not found — using the Windows default for now",
+  "kind": "tpl",
+  "at": "app.js:319"
+ },
+ {
+  "s": "Could not switch the sound output: ",
+  "kind": "str",
+  "at": "app.js:320"
+ },
+ {
+  "s": "“{0}” not found — program playback is off until it is plugged in",
+  "kind": "tpl",
+  "at": "app.js:330"
+ },
+ {
+  "s": "Could not switch the program playback: ",
+  "kind": "str",
+  "at": "app.js:331"
+ },
+ {
+  "s": "Choose a device",
+  "kind": "str",
+  "at": "app.js:353"
+ },
+ {
+  "s": "Connecting…",
+  "kind": "str",
+  "at": "app.js:360"
+ },
+ {
+  "s": " — the card did not offer {0}p at {1} fps",
+  "kind": "tpl",
+  "at": "app.js:371"
+ },
+ {
+  "s": "{0}×{1} · {2} fps{3}",
+  "kind": "tpl",
+  "at": "app.js:381"
+ },
+ {
+  "s": "Disconnected — retrying…",
+  "kind": "str",
+  "at": "app.js:384"
+ },
+ {
+  "s": "Device busy (close other apps using it)",
+  "kind": "str",
+  "at": "app.js:388"
+ },
+ {
+  "s": "Starting the native engine…",
+  "kind": "str",
+  "at": "app.js:429"
+ },
+ {
+  "s": "No free capture card with {0}×{1} at {2} fps — choose one below",
+  "kind": "tpl",
+  "at": "app.js:431"
+ },
+ {
+  "s": "Connecting to {0} {1}…",
+  "kind": "tpl",
+  "at": "app.js:435"
+ },
+ {
+  "s": "{0}×{1} · {2} fps · native{3}",
+  "kind": "tpl",
+  "at": "app.js:448"
+ },
+ {
+  "s": "The native engine stopped — restarting it…",
+  "kind": "str",
+  "at": "app.js:458"
+ },
+ {
+  "s": "no answer",
+  "kind": "str",
+  "at": "app.js:466"
+ },
+ {
+  "s": "Loading…",
+  "kind": "str",
+  "at": "app.js:656"
+ },
+ {
+  "s": "♪ music · {0}",
+  "kind": "tpl",
+  "at": "app.js:676"
+ },
+ {
+  "s": "{0} Click “Convert to MP4”.",
+  "kind": "tpl",
+  "at": "app.js:695"
+ },
+ {
+  "s": "Re-add this file (browser mode)",
+  "kind": "str",
+  "at": "app.js:696"
+ },
+ {
+  "s": "Automatic — videos & music: their own sound · everything else: sound desk",
+  "kind": "str",
+  "at": "app.js:719"
+ },
+ {
+  "s": "Only the video / music",
+  "kind": "str",
+  "at": "app.js:719"
+ },
+ {
+  "s": "Only the sound desk / cameras",
+  "kind": "str",
+  "at": "app.js:719"
+ },
+ {
+  "s": "Both together",
+  "kind": "str",
+  "at": "app.js:719"
+ },
+ {
+  "s": "Holding screen",
+  "kind": "str",
+  "at": "app.js:865"
+ },
+ {
+  "s": "Opening video",
+  "kind": "str",
+  "at": "app.js:871"
+ },
+ {
+  "s": "Closing video",
+  "kind": "str",
+  "at": "app.js:871"
+ },
+ {
+  "s": "Closing slide",
+  "kind": "str",
+  "at": "app.js:873"
+ },
+ {
+  "s": "Add a camera first (Setup → Cameras).",
+  "kind": "str",
+  "at": "app.js:891"
+ },
+ {
+  "s": "Church name",
+  "kind": "str",
+  "at": "app.js:964"
+ },
+ {
+  "s": "Accent line",
+  "kind": "str",
+  "at": "app.js:965"
+ },
+ {
+  "s": "Title",
+  "kind": "str",
+  "at": "app.js:966"
+ },
+ {
+  "s": "Title (2nd language)",
+  "kind": "str",
+  "at": "app.js:966"
+ },
+ {
+  "s": "Message",
+  "kind": "str",
+  "at": "app.js:967"
+ },
+ {
+  "s": "Message (2nd language)",
+  "kind": "str",
+  "at": "app.js:967"
+ },
+ {
+  "s": "Clock",
+  "kind": "str",
+  "at": "app.js:968"
+ },
+ {
+  "s": "\"{0}\", \"Segoe UI\", Inter, system-ui, sans-serif",
+  "kind": "tpl",
+  "at": "app.js:1013"
+ },
+ {
+  "s": "Service starts in",
+  "kind": "str",
+  "at": "app.js:1018"
+ },
+ {
+  "s": "Starting now",
+  "kind": "str",
+  "at": "app.js:1018"
+ },
+ {
+  "s": "picture not found",
+  "kind": "str",
+  "at": "app.js:1044"
+ },
+ {
+  "s": "{0} {1}px {2}",
+  "kind": "tpl",
+  "at": "app.js:1063"
+ },
+ {
+  "s": "✏ Text & items",
+  "kind": "str",
+  "at": "app.js:1106"
+ },
+ {
+  "s": "🖼 Background",
+  "kind": "str",
+  "at": "app.js:1106"
+ },
+ {
+  "s": "🕘 Clock",
+  "kind": "str",
+  "at": "app.js:1106"
+ },
+ {
+  "s": "Show / hide",
+  "kind": "str",
+  "at": "app.js:1111"
+ },
+ {
+  "s": "Text line",
+  "kind": "str",
+  "at": "app.js:1113"
+ },
+ {
+  "s": "New text",
+  "kind": "str",
+  "at": "app.js:1113"
+ },
+ {
+  "s": "+ Add text line",
+  "kind": "str",
+  "at": "app.js:1113"
+ },
+ {
+  "s": "That file is not a picture. Use PNG or JPG (PNG keeps a see-through background).",
+  "kind": "str",
+  "at": "app.js:1116"
+ },
+ {
+  "s": "+ Add picture / logo",
+  "kind": "str",
+  "at": "app.js:1119"
+ },
+ {
+  "s": "Text",
+  "kind": "str",
+  "at": "app.js:1121"
+ },
+ {
+  "s": "Picture",
+  "kind": "str",
+  "at": "app.js:1123"
+ },
+ {
+  "s": "Size",
+  "kind": "str",
+  "at": "app.js:1124"
+ },
+ {
+  "s": "See-through",
+  "kind": "str",
+  "at": "app.js:1125"
+ },
+ {
+  "s": "Round corners",
+  "kind": "str",
+  "at": "app.js:1126"
+ },
+ {
+  "s": " Shadow",
+  "kind": "str",
+  "at": "app.js:1127"
+ },
+ {
+  "s": "Length",
+  "kind": "str",
+  "at": "app.js:1129"
+ },
+ {
+  "s": "Thickness",
+  "kind": "str",
+  "at": "app.js:1130"
+ },
+ {
+  "s": "Left ↔ right",
+  "kind": "str",
+  "at": "app.js:1131"
+ },
+ {
+  "s": "Up ↕ down",
+  "kind": "str",
+  "at": "app.js:1132"
+ },
+ {
+  "s": "Align left",
+  "kind": "str",
+  "at": "app.js:1134"
+ },
+ {
+  "s": "Centre",
+  "kind": "str",
+  "at": "app.js:1134"
+ },
+ {
+  "s": "Align right",
+  "kind": "str",
+  "at": "app.js:1134"
+ },
+ {
+  "s": "Light",
+  "kind": "str",
+  "at": "app.js:1135"
+ },
+ {
+  "s": "Regular",
+  "kind": "str",
+  "at": "app.js:1135"
+ },
+ {
+  "s": "Semi-bold",
+  "kind": "str",
+  "at": "app.js:1135"
+ },
+ {
+  "s": "Bold",
+  "kind": "str",
+  "at": "app.js:1135"
+ },
+ {
+  "s": "Extra bold",
+  "kind": "str",
+  "at": "app.js:1135"
+ },
+ {
+  "s": "Colour",
+  "kind": "str",
+  "at": "app.js:1136"
+ },
+ {
+  "s": " ALL CAPS",
+  "kind": "str",
+  "at": "app.js:1137"
+ },
+ {
+  "s": "Letter spacing",
+  "kind": "str",
+  "at": "app.js:1138"
+ },
+ {
+  "s": " Box behind the clock",
+  "kind": "str",
+  "at": "app.js:1139"
+ },
+ {
+  "s": " Date / “starts in” line",
+  "kind": "str",
+  "at": "app.js:1139"
+ },
+ {
+  "s": "Remove this picture",
+  "kind": "str",
+  "at": "app.js:1140"
+ },
+ {
+  "s": "Delete this line",
+  "kind": "str",
+  "at": "app.js:1140"
+ },
+ {
+  "s": "Whole slide",
+  "kind": "str",
+  "at": "app.js:1141"
+ },
+ {
+  "s": "Arrange: text on left",
+  "kind": "str",
+  "at": "app.js:1143"
+ },
+ {
+  "s": "Trebuchet MS",
+  "kind": "str",
+  "at": "app.js:1145"
+ },
+ {
+  "s": "Accent",
+  "kind": "str",
+  "at": "app.js:1146"
+ },
+ {
+  "s": "Background picture",
+  "kind": "str",
+  "at": "app.js:1150"
+ },
+ {
+  "s": "— none (use colours) —",
+  "kind": "str",
+  "at": "app.js:1151"
+ },
+ {
+  "s": "That file is not a picture. Use JPG or PNG.",
+  "kind": "str",
+  "at": "app.js:1152"
+ },
+ {
+  "s": "Import picture…",
+  "kind": "str",
+  "at": "app.js:1152"
+ },
+ {
+  "s": "✓ Picture loaded ({0})",
+  "kind": "tpl",
+  "at": "app.js:1153"
+ },
+ {
+  "s": "✗ Picture file not found — import it again",
+  "kind": "str",
+  "at": "app.js:1153"
+ },
+ {
+  "s": "Picture style",
+  "kind": "str",
+  "at": "app.js:1155"
+ },
+ {
+  "s": "Picture on the right, dark panel behind text",
+  "kind": "str",
+  "at": "app.js:1155"
+ },
+ {
+  "s": "Picture fills the whole slide",
+  "kind": "str",
+  "at": "app.js:1155"
+ },
+ {
+  "s": "Darken",
+  "kind": "str",
+  "at": "app.js:1156"
+ },
+ {
+  "s": "Blur",
+  "kind": "str",
+  "at": "app.js:1157"
+ },
+ {
+  "s": "Zoom",
+  "kind": "str",
+  "at": "app.js:1158"
+ },
+ {
+  "s": "Move left / right",
+  "kind": "str",
+  "at": "app.js:1159"
+ },
+ {
+  "s": "Move up / down",
+  "kind": "str",
+  "at": "app.js:1160"
+ },
+ {
+  "s": "Edge fade",
+  "kind": "str",
+  "at": "app.js:1161"
+ },
+ {
+  "s": "Colours (when there is no picture)",
+  "kind": "str",
+  "at": "app.js:1162"
+ },
+ {
+  "s": "Colour 1",
+  "kind": "str",
+  "at": "app.js:1163"
+ },
+ {
+  "s": "Colour 2",
+  "kind": "str",
+  "at": "app.js:1163"
+ },
+ {
+  "s": "The clock shows",
+  "kind": "str",
+  "at": "app.js:1166"
+ },
+ {
+  "s": "The time now",
+  "kind": "str",
+  "at": "app.js:1166"
+ },
+ {
+  "s": "Countdown to a start time",
+  "kind": "str",
+  "at": "app.js:1166"
+ },
+ {
+  "s": "Countdown to the YouTube event time",
+  "kind": "str",
+  "at": "app.js:1166"
+ },
+ {
+  "s": "Service starts at",
+  "kind": "str",
+  "at": "app.js:1167"
+ },
+ {
+  "s": " Press START SERVICE automatically when the countdown ends",
+  "kind": "str",
+  "at": "app.js:1168"
+ },
+ {
+  "s": "Date and countdown words",
+  "kind": "str",
+  "at": "app.js:1169"
+ },
+ {
+  "s": "English only",
+  "kind": "str",
+  "at": "app.js:1169"
+ },
+ {
+  "s": "English and Russian (switch every 6 s)",
+  "kind": "str",
+  "at": "app.js:1169"
+ },
+ {
+  "s": "English and Ukrainian (switch every 6 s)",
+  "kind": "str",
+  "at": "app.js:1169"
+ },
+ {
+  "s": " Mute the cameras / sound desk while the holding slide is on air (its music still plays)",
+  "kind": "str",
+  "at": "app.js:1170"
+ },
+ {
+  "s": "Sound fades in when leaving the slide",
+  "kind": "str",
+  "at": "app.js:1171"
+ },
+ {
+  "s": "Quick — 0.3 s",
+  "kind": "str",
+  "at": "app.js:1171"
+ },
+ {
+  "s": "1 second",
+  "kind": "str",
+  "at": "app.js:1171"
+ },
+ {
+  "s": "1.5 seconds",
+  "kind": "str",
+  "at": "app.js:1171"
+ },
+ {
+  "s": "2 seconds",
+  "kind": "str",
+  "at": "app.js:1171"
+ },
+ {
+  "s": "3 seconds",
+  "kind": "str",
+  "at": "app.js:1171"
+ },
+ {
+  "s": "5 seconds",
+  "kind": "str",
+  "at": "app.js:1171"
+ },
+ {
+  "s": "To move or resize the clock, click it on the slide (Text & items tab).",
+  "kind": "str",
+  "at": "app.js:1172"
+ },
+ {
+  "s": "Done",
+  "kind": "str",
+  "at": "app.js:1174"
+ },
+ {
+  "s": "Design the holding slide",
+  "kind": "str",
+  "at": "app.js:1177"
+ },
+ {
+  "s": "Click an item on the slide to select it, then drag it to move it.",
+  "kind": "str",
+  "at": "app.js:1177"
+ },
+ {
+  "s": "__speaker",
+  "kind": "str",
+  "at": "app.js:1208"
+ },
+ {
+  "s": "ON AIR · {0} s",
+  "kind": "tpl",
+  "at": "app.js:1221"
+ },
+ {
+  "s": "Hide · {0} s",
+  "kind": "tpl",
+  "at": "app.js:1225"
+ },
+ {
+  "s": "Hide",
+  "kind": "str",
+  "at": "app.js:1225"
+ },
+ {
+  "s": "Add your YouTube stream key first.",
+  "kind": "str",
+  "at": "app.js:1411"
+ },
+ {
+  "s": "STARTING…",
+  "kind": "str",
+  "at": "app.js:1413"
+ },
+ {
+  "s": "Stream ended after {0}.",
+  "kind": "tpl",
+  "at": "app.js:1431"
+ },
+ {
+  "s": "Stream is running again.",
+  "kind": "str",
+  "at": "app.js:1460"
+ },
+ {
+  "s": "Show",
+  "kind": "str",
+  "at": "app.js:1466"
+ },
+ {
+  "s": "The {0} encoder refused these settings — trying its plain settings…",
+  "kind": "tpl",
+  "at": "app.js:1475"
+ },
+ {
+  "s": "The {0} encoder will not start on this PC — using the software encoder instead. ({1})",
+  "kind": "tpl",
+  "at": "app.js:1475"
+ },
+ {
+  "s": "You are already live — the header shows how the stream is doing.",
+  "kind": "str",
+  "at": "app.js:1494"
+ },
+ {
+  "s": "Paste your stream key first.",
+  "kind": "str",
+  "at": "app.js:1495"
+ },
+ {
+  "s": "The graphics-card encoder will not start on this PC. In Settings → Encoder choose “Software”, or update the graphics driver. This is not a YouTube or key problem.",
+  "kind": "str",
+  "at": "app.js:1500"
+ },
+ {
+  "s": "This PC cannot find YouTube — check the internet connection.",
+  "kind": "str",
+  "at": "app.js:1501"
+ },
+ {
+  "s": "Could not reach YouTube’s server. A firewall or the network may be blocking it — try the “primary (RTMP)” server in Settings, or another network.",
+  "kind": "str",
+  "at": "app.js:1502"
+ },
+ {
+  "s": "YouTube opened the connection and then closed it. That almost always means the stream key is wrong or was replaced — copy it again from YouTube Studio → Go live → Stream.",
+  "kind": "str",
+  "at": "app.js:1503"
+ },
+ {
+  "s": "The stream stopped before it got going.",
+  "kind": "str",
+  "at": "app.js:1504"
+ },
+ {
+  "s": "Close",
+  "kind": "str",
+  "at": "app.js:1507"
+ },
+ {
+  "s": "Stop test",
+  "kind": "str",
+  "at": "app.js:1508"
+ },
+ {
+  "s": "This sends about 12 seconds of your live picture and sound to YouTube with your real settings. If your YouTube stream is public and set to start by itself, viewers could see those seconds.",
+  "kind": "str",
+  "at": "app.js:1510"
+ },
+ {
+  "s": "Test the stream key",
+  "kind": "str",
+  "at": "app.js:1512"
+ },
+ {
+  "s": " ({0} characters)",
+  "kind": "tpl",
+  "at": "app.js:1516"
+ },
+ {
+  "s": "(in the custom address)",
+  "kind": "str",
+  "at": "app.js:1516"
+ },
+ {
+  "s": "  ⚠ contains a space",
+  "kind": "str",
+  "at": "app.js:1516"
+ },
+ {
+  "s": "Connecting to YouTube…",
+  "kind": "str",
+  "at": "app.js:1520"
+ },
+ {
+  "s": "✗ Could not start",
+  "kind": "str",
+  "at": "app.js:1522"
+ },
+ {
+  "s": "✓ YouTube accepted the stream",
+  "kind": "str",
+  "at": "app.js:1527"
+ },
+ {
+  "s": "{0} frames were sent and the connection stayed open. The key and the internet connection work.",
+  "kind": "tpl",
+  "at": "app.js:1528"
+ },
+ {
+  "s": "receiving the stream ✓",
+  "kind": "str",
+  "at": "app.js:1530"
+ },
+ {
+  "s": "not receiving yet (",
+  "kind": "str",
+  "at": "app.js:1530"
+ },
+ {
+  "s": "no status yet",
+  "kind": "str",
+  "at": "app.js:1530"
+ },
+ {
+  "s": "✗ Nothing reached YouTube",
+  "kind": "str",
+  "at": "app.js:1531"
+ },
+ {
+  "s": "The encoder ran but no frames went out in 12 seconds. Check the internet connection and the key.",
+  "kind": "str",
+  "at": "app.js:1531"
+ },
+ {
+  "s": " Mb/s",
+  "kind": "str",
+  "at": "app.js:1533"
+ },
+ {
+  "s": "Sending… {0} frames, {1}",
+  "kind": "tpl",
+  "at": "app.js:1533"
+ },
+ {
+  "s": "✗ The stream stopped after {0} s",
+  "kind": "tpl",
+  "at": "app.js:1537"
+ },
+ {
+  "s": "no details",
+  "kind": "str",
+  "at": "app.js:1539"
+ },
+ {
+  "s": "Picture engine (the program window)",
+  "kind": "str",
+  "at": "app.js:1549"
+ },
+ {
+  "s": "Graphics process",
+  "kind": "str",
+  "at": "app.js:1549"
+ },
+ {
+  "s": "Camera capture",
+  "kind": "str",
+  "at": "app.js:1549"
+ },
+ {
+  "s": "Sound",
+  "kind": "str",
+  "at": "app.js:1549"
+ },
+ {
+  "s": "Web graphics",
+  "kind": "str",
+  "at": "app.js:1550"
+ },
+ {
+  "s": "YouTube encoder (FFmpeg)",
+  "kind": "str",
+  "at": "app.js:1550"
+ },
+ {
+  "s": "Recording encoder (FFmpeg)",
+  "kind": "str",
+  "at": "app.js:1550"
+ },
+ {
+  "s": "Native test (FFmpeg)",
+  "kind": "str",
+  "at": "app.js:1550"
+ },
+ {
+  "s": "Cameras + other FFmpeg",
+  "kind": "str",
+  "at": "app.js:1551"
+ },
+ {
+  "s": "Native engine",
+  "kind": "str",
+  "at": "app.js:1551"
+ },
+ {
+  "s": "Audio plug-ins (VST3)",
+  "kind": "str",
+  "at": "app.js:1551"
+ },
+ {
+  "s": "Live Studio main process",
+  "kind": "str",
+  "at": "app.js:1551"
+ },
+ {
+  "s": "Other Live Studio helpers",
+  "kind": "str",
+  "at": "app.js:1551"
+ },
+ {
+  "s": "PC monitor",
+  "kind": "str",
+  "at": "app.js:1551"
+ },
+ {
+  "s": "Other programs and Windows",
+  "kind": "str",
+  "at": "app.js:1551"
+ },
+ {
+  "s": "graphics card — the picture stays on the card (lowest processor load)",
+  "kind": "str",
+  "at": "app.js:1553"
+ },
+ {
+  "s": "graphics card (NVIDIA), copied back",
+  "kind": "str",
+  "at": "app.js:1553"
+ },
+ {
+  "s": "graphics card (Windows D3D11)",
+  "kind": "str",
+  "at": "app.js:1553"
+ },
+ {
+  "s": "graphics card (Windows DXVA2)",
+  "kind": "str",
+  "at": "app.js:1553"
+ },
+ {
+  "s": "processor — graphics-card decoding does not work on this PC",
+  "kind": "str",
+  "at": "app.js:1553"
+ },
+ {
+  "s": "Stop the stream and the recording first — the test uses the capture card on its own.",
+  "kind": "str",
+  "at": "app.js:1556"
+ },
+ {
+  "s": "no {0}×{1} formats",
+  "kind": "tpl",
+  "at": "app.js:1574"
+ },
+ {
+  "s": " — NO {0}",
+  "kind": "tpl",
+  "at": "app.js:1574"
+ },
+ {
+  "s": "{0}×{1} at {2} fps ({3}){4}",
+  "kind": "tpl",
+  "at": "app.js:1574"
+ },
+ {
+  "s": " — card {0}",
+  "kind": "tpl",
+  "at": "app.js:1575"
+ },
+ {
+  "s": "{0} fps · repeated {1} · dropped {2} · speed {3}× · {4} Mb/s",
+  "kind": "tpl",
+  "at": "app.js:1578"
+ },
+ {
+  "s": "starting…",
+  "kind": "str",
+  "at": "app.js:1578"
+ },
+ {
+  "s": "Not running",
+  "kind": "str",
+  "at": "app.js:1578"
+ },
+ {
+  "s": "v210 (10-bit)",
+  "kind": "str",
+  "at": "app.js:1579"
+ },
+ {
+  "s": "{0}×{1} · {2} fps · {3}",
+  "kind": "tpl",
+  "at": "app.js:1579"
+ },
+ {
+  "s": "the card’s own format",
+  "kind": "str",
+  "at": "app.js:1579"
+ },
+ {
+  "s": " · slowest {0}×",
+  "kind": "tpl",
+  "at": "app.js:1584"
+ },
+ {
+  "s": "{0}{1} s · {2} frames · repeated {3} · dropped {4}{5}",
+  "kind": "tpl",
+  "at": "app.js:1584"
+ },
+ {
+  "s": "Add your YouTube stream key first (Settings → YouTube).",
+  "kind": "str",
+  "at": "app.js:1592"
+ },
+ {
+  "s": "could not start",
+  "kind": "str",
+  "at": "app.js:1602"
+ },
+ {
+  "s": "Streams one camera straight from the capture card through FFmpeg and the graphics card — without the Chrome engine — to see if an OBS-style engine runs perfectly smooth on this PC. Live Studio lets go of the cameras while the test runs and takes them back afterwards. Use an unlisted / private YouTube event.",
+  "kind": "str",
+  "at": "app.js:1625"
+ },
+ {
+  "s": "Looking for capture cards…",
+  "kind": "str",
+  "at": "app.js:1626"
+ },
+ {
+  "s": "This test only works on the Windows PC.",
+  "kind": "str",
+  "at": "app.js:1627"
+ },
+ {
+  "s": "No capture cards found.",
+  "kind": "str",
+  "at": "app.js:1627"
+ },
+ {
+  "s": " — your “{0}”",
+  "kind": "tpl",
+  "at": "app.js:1630"
+ },
+ {
+  "s": " — no {0} fps",
+  "kind": "tpl",
+  "at": "app.js:1630"
+ },
+ {
+  "s": "Camera card",
+  "kind": "str",
+  "at": "app.js:1632"
+ },
+ {
+  "s": "This card lists no {0}×{1} formats — it will use its own.",
+  "kind": "tpl",
+  "at": "app.js:1634"
+ },
+ {
+  "s": "⚠ Not {0} fps — this would not be a fair test. Pick another card (usually “Decklink Video Capture”).",
+  "kind": "tpl",
+  "at": "app.js:1635"
+ },
+ {
+  "s": "Silence",
+  "kind": "str",
+  "at": "app.js:1636"
+ },
+ {
+  "s": "Send to",
+  "kind": "str",
+  "at": "app.js:1637"
+ },
+ {
+  "s": "YouTube (your stream key)",
+  "kind": "str",
+  "at": "app.js:1637"
+ },
+ {
+  "s": "A test file (recordings folder)",
+  "kind": "str",
+  "at": "app.js:1637"
+ },
+ {
+  "s": "“Repeated” or “dropped” going up means the card did not deliver frames evenly. Watch the stream on YouTube for hitches. Everything is written to the log.",
+  "kind": "str",
+  "at": "app.js:1639"
+ },
+ {
+  "s": "■ Stop test",
+  "kind": "str",
+  "at": "app.js:1641"
+ },
+ {
+  "s": "▶ Start test",
+  "kind": "str",
+  "at": "app.js:1641"
+ },
+ {
+  "s": "Stop the test first.",
+  "kind": "str",
+  "at": "app.js:1642"
+ },
+ {
+  "s": "Native engine test (OBS-style)",
+  "kind": "str",
+  "at": "app.js:1645"
+ },
+ {
+  "s": "Program output",
+  "kind": "str",
+  "at": "app.js:1697"
+ },
+ {
+  "s": "Frames made",
+  "kind": "str",
+  "at": "app.js:1698"
+ },
+ {
+  "s": "Frame rate now / target",
+  "kind": "str",
+  "at": "app.js:1699"
+ },
+ {
+  "s": "{0} / {1} fps",
+  "kind": "tpl",
+  "at": "app.js:1699"
+ },
+ {
+  "s": "Frames missed by this computer",
+  "kind": "str",
+  "at": "app.js:1700"
+ },
+ {
+  "s": "…in the last minute",
+  "kind": "str",
+  "at": "app.js:1701"
+ },
+ {
+  "s": "Longest hiccup",
+  "kind": "str",
+  "at": "app.js:1702"
+ },
+ {
+  "s": "{0} ms",
+  "kind": "tpl",
+  "at": "app.js:1702"
+ },
+ {
+  "s": "Program thread busy > 50 ms (last minute)",
+  "kind": "str",
+  "at": "app.js:1704"
+ },
+ {
+  "s": "{0}× · longest {1} ms",
+  "kind": "tpl",
+  "at": "app.js:1704"
+ },
+ {
+  "s": "Screen updates (meters, playbars)",
+  "kind": "str",
+  "at": "app.js:1705"
+ },
+ {
+  "s": "{0} ms each",
+  "kind": "tpl",
+  "at": "app.js:1705"
+ },
+ {
+  "s": "Time to draw one frame",
+  "kind": "str",
+  "at": "app.js:1706"
+ },
+ {
+  "s": "{0} ms of {1} ms",
+  "kind": "tpl",
+  "at": "app.js:1706"
+ },
+ {
+  "s": "This computer",
+  "kind": "str",
+  "at": "app.js:1707"
+ },
+ {
+  "s": "Processor (CPU) — {0}",
+  "kind": "tpl",
+  "at": "app.js:1709"
+ },
+ {
+  "s": "Encoders decode the picture on",
+  "kind": "str",
+  "at": "app.js:1711"
+ },
+ {
+  "s": "graphics card ✓",
+  "kind": "str",
+  "at": "app.js:1711"
+ },
+ {
+  "s": "CPU temperature",
+  "kind": "str",
+  "at": "app.js:1712"
+ },
+ {
+  "s": "not reported by this PC",
+  "kind": "str",
+  "at": "app.js:1712"
+ },
+ {
+  "s": "Graphics (GPU){0}",
+  "kind": "tpl",
+  "at": "app.js:1713"
+ },
+ {
+  "s": "not available",
+  "kind": "str",
+  "at": "app.js:1713"
+ },
+ {
+  "s": "GPU temperature",
+  "kind": "str",
+  "at": "app.js:1714"
+ },
+ {
+  "s": "only available for NVIDIA cards",
+  "kind": "str",
+  "at": "app.js:1714"
+ },
+ {
+  "s": "Memory in use",
+  "kind": "str",
+  "at": "app.js:1715"
+ },
+ {
+  "s": "Reading…",
+  "kind": "str",
+  "at": "app.js:1715"
+ },
+ {
+  "s": "Camera on air",
+  "kind": "str",
+  "at": "app.js:1716"
+ },
+ {
+  "s": "Timing",
+  "kind": "str",
+  "at": "app.js:1717"
+ },
+ {
+  "s": "frame sync — every camera frame used once (queue {0})",
+  "kind": "tpl",
+  "at": "app.js:1717"
+ },
+ {
+  "s": "following the camera",
+  "kind": "str",
+  "at": "app.js:1717"
+ },
+ {
+  "s": "following the screen refresh",
+  "kind": "str",
+  "at": "app.js:1717"
+ },
+ {
+  "s": "no live camera on air",
+  "kind": "str",
+  "at": "app.js:1717"
+ },
+ {
+  "s": "Camera picture shown twice",
+  "kind": "str",
+  "at": "app.js:1718"
+ },
+ {
+  "s": "Camera frames skipped",
+  "kind": "str",
+  "at": "app.js:1719"
+ },
+ {
+  "s": "Cameras",
+  "kind": "str",
+  "at": "app.js:1720"
+ },
+ {
+  "s": "{0} — late frames (last minute) · longest gap",
+  "kind": "tpl",
+  "at": "app.js:1721"
+ },
+ {
+  "s": "{0} ({1}) · {2} ms",
+  "kind": "tpl",
+  "at": "app.js:1721"
+ },
+ {
+  "s": "{0} — frames arriving",
+  "kind": "tpl",
+  "at": "app.js:1730"
+ },
+ {
+  "s": " of {0}",
+  "kind": "tpl",
+  "at": "app.js:1730"
+ },
+ {
+  "s": "⚠ low",
+  "kind": "str",
+  "at": "app.js:1730"
+ },
+ {
+  "s": "{0} fps{1} {2}",
+  "kind": "tpl",
+  "at": "app.js:1730"
+ },
+ {
+  "s": "measuring…",
+  "kind": "str",
+  "at": "app.js:1730"
+ },
+ {
+  "s": "No cameras.",
+  "kind": "str",
+  "at": "app.js:1731"
+ },
+ {
+  "s": "YouTube stream encoder",
+  "kind": "str",
+  "at": "app.js:1732"
+ },
+ {
+  "s": "Frames sent",
+  "kind": "str",
+  "at": "app.js:1733"
+ },
+ {
+  "s": "Dropped by the encoder",
+  "kind": "str",
+  "at": "app.js:1733"
+ },
+ {
+  "s": "Repeated to fill gaps",
+  "kind": "str",
+  "at": "app.js:1733"
+ },
+ {
+  "s": "Encoder speed",
+  "kind": "str",
+  "at": "app.js:1733"
+ },
+ {
+  "s": "Not live.",
+  "kind": "str",
+  "at": "app.js:1733"
+ },
+ {
+  "s": "Recording",
+  "kind": "str",
+  "at": "app.js:1734"
+ },
+ {
+  "s": "Frames written",
+  "kind": "str",
+  "at": "app.js:1734"
+ },
+ {
+  "s": "Dropped",
+  "kind": "str",
+  "at": "app.js:1734"
+ },
+ {
+  "s": "If frames are being missed: close other programs, use a hardware encoder (Settings → Encoder), or lower the frame rate or resolution.",
+  "kind": "str",
+  "at": "app.js:1735"
+ },
+ {
+  "s": "No dropped frames. ✓",
+  "kind": "str",
+  "at": "app.js:1735"
+ },
+ {
+  "s": "Service log",
+  "kind": "str",
+  "at": "app.js:1736"
+ },
+ {
+  "s": "Everything is written to a log file while Live Studio runs. Press F9 when you see a glitch — it marks the moment. After the service send the log file for checking.",
+  "kind": "str",
+  "at": "app.js:1737"
+ },
+ {
+  "s": "📄 Show log file",
+  "kind": "str",
+  "at": "app.js:1739"
+ },
+ {
+  "s": "⚑ Mark a glitch (F9)",
+  "kind": "str",
+  "at": "app.js:1739"
+ },
+ {
+  "s": "🧪 Native engine test",
+  "kind": "str",
+  "at": "app.js:1739"
+ },
+ {
+  "s": "Reset counters",
+  "kind": "str",
+  "at": "app.js:1740"
+ },
+ {
+  "s": "Frame counter & PC monitor",
+  "kind": "str",
+  "at": "app.js:1742"
+ },
+ {
+  "s": "✓ Saved",
+  "kind": "str",
+  "at": "app.js:1754"
+ },
+ {
+  "s": "Could not save: ",
+  "kind": "str",
+  "at": "app.js:1757"
+ },
+ {
+  "s": "CLICK AGAIN TO END",
+  "kind": "str",
+  "at": "app.js:1772"
+ },
+ {
+  "s": "END STREAM",
+  "kind": "str",
+  "at": "app.js:1772"
+ },
+ {
+  "s": "GO LIVE",
+  "kind": "str",
+  "at": "app.js:1772"
+ },
+ {
+  "s": "CLICK TO STOP",
+  "kind": "str",
+  "at": "app.js:1775"
+ },
+ {
+  "s": "■ STOP REC",
+  "kind": "str",
+  "at": "app.js:1775"
+ },
+ {
+  "s": "● REC",
+  "kind": "str",
+  "at": "app.js:1775"
+ },
+ {
+  "s": "RECONNECTING…",
+  "kind": "str",
+  "at": "app.js:1782"
+ },
+ {
+  "s": "LIVE {0}",
+  "kind": "tpl",
+  "at": "app.js:1782"
+ },
+ {
+  "s": "OFF AIR",
+  "kind": "str",
+  "at": "app.js:1783"
+ },
+ {
+  "s": "pill rec on",
+  "kind": "str",
+  "at": "app.js:1784"
+ },
+ {
+  "s": "REC {0}",
+  "kind": "tpl",
+  "at": "app.js:1784"
+ },
+ {
+  "s": "NOT RECORDING",
+  "kind": "str",
+  "at": "app.js:1785"
+ },
+ {
+  "s": "{0} Mb/s",
+  "kind": "tpl",
+  "at": "app.js:1789"
+ },
+ {
+  "s": "{0} fps",
+  "kind": "tpl",
+  "at": "app.js:1790"
+ },
+ {
+  "s": "<span class=\"bad\">⚠ Computer or internet can't keep up — lower bitrate or use a hardware encoder</span>",
+  "kind": "str",
+  "at": "app.js:1793"
+ },
+ {
+  "s": "native engine {0} fps",
+  "kind": "tpl",
+  "at": "app.js:1806"
+ },
+ {
+  "s": "<span class=\"bad\">native engine starting…</span>",
+  "kind": "str",
+  "at": "app.js:1806"
+ },
+ {
+  "s": "engine {0} fps",
+  "kind": "tpl",
+  "at": "app.js:1807"
+ },
+ {
+  "s": "<span class=\"{0}\">CPU {1}%{2}</span>",
+  "kind": "tpl",
+  "at": "app.js:1811"
+ },
+ {
+  "s": "<span class=\"{0}\">GPU {1}%{2}</span>",
+  "kind": "tpl",
+  "at": "app.js:1812"
+ },
+ {
+  "s": "<span class=\"bad\">⚠ {0} hitches</span>",
+  "kind": "tpl",
+  "at": "app.js:1815"
+ },
+ {
+  "s": "<span class=\"good\">0 hitches</span>",
+  "kind": "str",
+  "at": "app.js:1815"
+ },
+ {
+  "s": "frame {0}",
+  "kind": "tpl",
+  "at": "app.js:1817"
+ },
+ {
+  "s": "<span class=\"bad\">⚠ {0} dropped</span>",
+  "kind": "tpl",
+  "at": "app.js:1818"
+ },
+ {
+  "s": "<span class=\"good\">0 dropped</span>",
+  "kind": "str",
+  "at": "app.js:1818"
+ },
+ {
+  "s": "Click for frame statistics",
+  "kind": "str",
+  "at": "app.js:1821"
+ },
+ {
+  "s": "Frames are being dropped ({0} so far). Click the frame counter at the top for details.",
+  "kind": "tpl",
+  "at": "app.js:1823"
+ },
+ {
+  "s": "Narrower",
+  "kind": "str",
+  "at": "app.js:1867"
+ },
+ {
+  "s": "Wider",
+  "kind": "str",
+  "at": "app.js:1868"
+ },
+ {
+  "s": "Shorter",
+  "kind": "str",
+  "at": "app.js:1869"
+ },
+ {
+  "s": "Taller",
+  "kind": "str",
+  "at": "app.js:1870"
+ },
+ {
+  "s": "Hide panel",
+  "kind": "str",
+  "at": "app.js:1871"
+ },
+ {
+  "s": "+ Show hidden panel…",
+  "kind": "str",
+  "at": "app.js:1895"
+ },
+ {
+  "s": "Drag to jump to another part of the video",
+  "kind": "str",
+  "at": "app.js:1912"
+ },
+ {
+  "s": "Play / pause",
+  "kind": "str",
+  "at": "app.js:1914"
+ },
+ {
+  "s": "Back to the beginning",
+  "kind": "str",
+  "at": "app.js:1922"
+ },
+ {
+  "s": "−10 s",
+  "kind": "str",
+  "at": "app.js:1923"
+ },
+ {
+  "s": "Back 10 seconds",
+  "kind": "str",
+  "at": "app.js:1923"
+ },
+ {
+  "s": "+10 s",
+  "kind": "str",
+  "at": "app.js:1923"
+ },
+ {
+  "s": "Forward 10 seconds",
+  "kind": "str",
+  "at": "app.js:1923"
+ },
+ {
+  "s": "+1 min",
+  "kind": "str",
+  "at": "app.js:1923"
+ },
+ {
+  "s": "Forward 1 minute",
+  "kind": "str",
+  "at": "app.js:1923"
+ },
+ {
+  "s": "🎞 PREVIEW",
+  "kind": "str",
+  "at": "app.js:1925"
+ },
+ {
+  "s": "🎞 ON AIR",
+  "kind": "str",
+  "at": "app.js:1925"
+ },
+ {
+  "s": "tl-bar {0} hidden",
+  "kind": "tpl",
+  "at": "app.js:1926"
+ },
+ {
+  "s": "♪ MUSIC",
+  "kind": "str",
+  "at": "app.js:1933"
+ },
+ {
+  "s": "PREVIEW",
+  "kind": "str",
+  "at": "app.js:1933"
+ },
+ {
+  "s": "ON AIR",
+  "kind": "str",
+  "at": "app.js:1933"
+ },
+ {
+  "s": "Loudness of the stream (YouTube aims for −14 LUFS)",
+  "kind": "str",
+  "at": "app.js:1942"
+ },
+ {
+  "s": "— LUFS",
+  "kind": "str",
+  "at": "app.js:1942"
+ },
+ {
+  "s": "Listen to the Preview shot on this computer before showing it. The stream does not hear this.",
+  "kind": "str",
+  "at": "app.js:1947"
+ },
+ {
+  "s": "🎧 Listen",
+  "kind": "str",
+  "at": "app.js:1947"
+ },
+ {
+  "s": "🎧 Listening",
+  "kind": "str",
+  "at": "app.js:1963"
+ },
+ {
+  "s": "600 {0}px Consolas, ui-monospace, monospace",
+  "kind": "tpl",
+  "at": "app.js:1993"
+ },
+ {
+  "s": "700 {0}px Consolas, ui-monospace, monospace",
+  "kind": "tpl",
+  "at": "app.js:2023"
+ },
+ {
+  "s": "LIM",
+  "kind": "str",
+  "at": "app.js:2025"
+ },
+ {
+  "s": "Cut",
+  "kind": "str",
+  "at": "app.js:2043"
+ },
+ {
+  "s": "Fade 0.3 s",
+  "kind": "str",
+  "at": "app.js:2043"
+ },
+ {
+  "s": "Smooth 0.6 s",
+  "kind": "str",
+  "at": "app.js:2043"
+ },
+ {
+  "s": "Fade 1 s",
+  "kind": "str",
+  "at": "app.js:2043"
+ },
+ {
+  "s": "Fade 2 s",
+  "kind": "str",
+  "at": "app.js:2043"
+ },
+ {
+  "s": "Preview sound — what the Preview shot will sound like on air. Numbers are dB (0 = maximum); number underneath = loudest recent peak",
+  "kind": "str",
+  "at": "app.js:2046"
+ },
+ {
+  "s": "Preview",
+  "kind": "str",
+  "at": "app.js:2047"
+ },
+ {
+  "s": "Live",
+  "kind": "str",
+  "at": "app.js:2048"
+ },
+ {
+  "s": "Program sound — what the stream hears. Numbers are dB (0 = maximum). Number underneath = loudest recent peak. Dot = phase (green good, red out of phase). LIM bar = how much the limiter is turning the sound down right now (orange; red above 6 dB)",
+  "kind": "str",
+  "at": "app.js:2049"
+ },
+ {
+  "s": "CUT",
+  "kind": "str",
+  "at": "app.js:2052"
+ },
+ {
+  "s": "TAKE ➜",
+  "kind": "str",
+  "at": "app.js:2054"
+ },
+ {
+  "s": "FADE TO BLACK",
+  "kind": "str",
+  "at": "app.js:2056"
+ },
+ {
+  "s": "Click = preview · double-click = on air · drag to reorder",
+  "kind": "str",
+  "at": "app.js:2079"
+ },
+ {
+  "s": "Edit shot",
+  "kind": "str",
+  "at": "app.js:2083"
+ },
+ {
+  "s": "Show this shot again",
+  "kind": "str",
+  "at": "app.js:2084"
+ },
+ {
+  "s": "Hide this shot from the list",
+  "kind": "str",
+  "at": "app.js:2084"
+ },
+ {
+  "s": "👁 Show",
+  "kind": "str",
+  "at": "app.js:2084"
+ },
+ {
+  "s": "+ New shot",
+  "kind": "str",
+  "at": "app.js:2100"
+ },
+ {
+  "s": "Done — hide them again",
+  "kind": "str",
+  "at": "app.js:2101"
+ },
+ {
+  "s": "Show {0} hidden shot{1}…",
+  "kind": "tpl",
+  "at": "app.js:2101"
+ },
+ {
+  "s": "Shot {0}",
+  "kind": "tpl",
+  "at": "app.js:2107"
+ },
+ {
+  "s": "NEXT",
+  "kind": "str",
+  "at": "app.js:2126"
+ },
+ {
+  "s": "Caption preview on the live shot — press TAKE to show",
+  "kind": "str",
+  "at": "app.js:2129"
+ },
+ {
+  "s": "🎨 A plain colour",
+  "kind": "str",
+  "at": "app.js:2171"
+ },
+ {
+  "s": "Background (shows where the green was)",
+  "kind": "str",
+  "at": "app.js:2175"
+ },
+ {
+  "s": "Import a picture or video for the background",
+  "kind": "str",
+  "at": "app.js:2178"
+ },
+ {
+  "s": "Import…",
+  "kind": "str",
+  "at": "app.js:2178"
+ },
+ {
+  "s": "Colour to remove",
+  "kind": "str",
+  "at": "app.js:2179"
+ },
+ {
+  "s": "Find the screen colour in the picture",
+  "kind": "str",
+  "at": "app.js:2182"
+ },
+ {
+  "s": "Found the screen colour {0}.",
+  "kind": "tpl",
+  "at": "app.js:2182"
+ },
+ {
+  "s": "No green or blue screen found in the picture — use 🎯 Pick and click on the screen.",
+  "kind": "str",
+  "at": "app.js:2182"
+ },
+ {
+  "s": "Auto",
+  "kind": "str",
+  "at": "app.js:2182"
+ },
+ {
+  "s": "Then click on the green in the picture above",
+  "kind": "str",
+  "at": "app.js:2183"
+ },
+ {
+  "s": "Now click on the green screen in the picture above.",
+  "kind": "str",
+  "at": "app.js:2183"
+ },
+ {
+  "s": "🎯 Click the picture…",
+  "kind": "str",
+  "at": "app.js:2183"
+ },
+ {
+  "s": "🎯 Pick",
+  "kind": "str",
+  "at": "app.js:2183"
+ },
+ {
+  "s": "Green",
+  "kind": "str",
+  "at": "app.js:2184"
+ },
+ {
+  "s": "Blue",
+  "kind": "str",
+  "at": "app.js:2185"
+ },
+ {
+  "s": "Strength",
+  "kind": "str",
+  "at": "app.js:2186"
+ },
+ {
+  "s": "Soft edges",
+  "kind": "str",
+  "at": "app.js:2187"
+ },
+ {
+  "s": "Green glow",
+  "kind": "str",
+  "at": "app.js:2188"
+ },
+ {
+  "s": " Show the cut-out on Preview (white = kept, black = removed)",
+  "kind": "str",
+  "at": "app.js:2189"
+ },
+ {
+  "s": "Pick the screen colour first (Auto or 🎯), then raise Strength until the green is gone everywhere and lower it if parts of the person disappear. Soft edges smooths hair; Green glow takes the green tint off edges. Light the screen evenly, with no shadows. Double-click a slider to reset it.",
+  "kind": "str",
+  "at": "app.js:2190"
+ },
+ {
+  "s": "Drag to move the frame · scroll to zoom · click to centre",
+  "kind": "str",
+  "at": "app.js:2196"
+ },
+ {
+  "s": "Green screen colour {0} picked.",
+  "kind": "tpl",
+  "at": "app.js:2232"
+ },
+ {
+  "s": "Click on the green part of the picture.",
+  "kind": "str",
+  "at": "app.js:2232"
+ },
+ {
+  "s": "Click a shot to edit it.",
+  "kind": "str",
+  "at": "app.js:2266"
+ },
+ {
+  "s": "This is the holding slide (clock / welcome). Its picture, text and clock are set in the slide designer.",
+  "kind": "str",
+  "at": "app.js:2273"
+ },
+ {
+  "s": "🎨 Design the slide…",
+  "kind": "str",
+  "at": "app.js:2274"
+ },
+ {
+  "s": "Music before the service",
+  "kind": "str",
+  "at": "app.js:2275"
+ },
+ {
+  "s": "Take this shot",
+  "kind": "str",
+  "at": "app.js:2276"
+ },
+ {
+  "s": "Move left",
+  "kind": "str",
+  "at": "app.js:2289"
+ },
+ {
+  "s": "Move right",
+  "kind": "str",
+  "at": "app.js:2290"
+ },
+ {
+  "s": "Background picture of the holding slide",
+  "kind": "str",
+  "at": "app.js:2293"
+ },
+ {
+  "s": "— none (colours) —",
+  "kind": "str",
+  "at": "app.js:2294"
+ },
+ {
+  "s": "🎨 Design the slide (text, clock, picture)…",
+  "kind": "str",
+  "at": "app.js:2295"
+ },
+ {
+  "s": "Picture source",
+  "kind": "str",
+  "at": "app.js:2296"
+ },
+ {
+  "s": "Frame: main picture",
+  "kind": "str",
+  "at": "app.js:2298"
+ },
+ {
+  "s": "Frame: small picture",
+  "kind": "str",
+  "at": "app.js:2299"
+ },
+ {
+  "s": "Reset",
+  "kind": "str",
+  "at": "app.js:2305"
+ },
+ {
+  "s": "Changes to a shot that is LIVE move smoothly on air, like a camera operator. Speed is in Settings.",
+  "kind": "str",
+  "at": "app.js:2307"
+ },
+ {
+  "s": "Picture-in-picture",
+  "kind": "str",
+  "at": "app.js:2309"
+ },
+ {
+  "s": " Show a second, small picture",
+  "kind": "str",
+  "at": "app.js:2310"
+ },
+ {
+  "s": "Green screen",
+  "kind": "str",
+  "at": "app.js:2316"
+ },
+ {
+  "s": " Replace the green behind the picture with a background",
+  "kind": "str",
+  "at": "app.js:2317"
+ },
+ {
+  "s": "Pictures & web pages on this shot",
+  "kind": "str",
+  "at": "app.js:2326"
+ },
+ {
+  "s": "Web page",
+  "kind": "str",
+  "at": "app.js:2327"
+ },
+ {
+  "s": "Add a logo with “+ Picture” or live translation with “+ Web page” in Titles & Graphics.",
+  "kind": "str",
+  "at": "app.js:2328"
+ },
+ {
+  "s": "Ticked pages appear automatically while this shot is live.",
+  "kind": "str",
+  "at": "app.js:2329"
+ },
+ {
+  "s": "+ Add picture",
+  "kind": "str",
+  "at": "app.js:2330"
+ },
+ {
+  "s": "+ Add web page",
+  "kind": "str",
+  "at": "app.js:2330"
+ },
+ {
+  "s": "Automatic label",
+  "kind": "str",
+  "at": "app.js:2332"
+ },
+ {
+  "s": "No label",
+  "kind": "str",
+  "at": "app.js:2333"
+ },
+ {
+  "s": "Shown when this shot goes live, hidden when you switch away.",
+  "kind": "str",
+  "at": "app.js:2334"
+ },
+ {
+  "s": "When the video ends",
+  "kind": "str",
+  "at": "app.js:2336"
+ },
+ {
+  "s": "Hold the last frame",
+  "kind": "str",
+  "at": "app.js:2337"
+ },
+ {
+  "s": "Fade to black",
+  "kind": "str",
+  "at": "app.js:2337"
+ },
+ {
+  "s": "Fade to black and end the stream",
+  "kind": "str",
+  "at": "app.js:2337"
+ },
+ {
+  "s": "Go to “{0}”",
+  "kind": "tpl",
+  "at": "app.js:2337"
+ },
+ {
+  "s": "Music under this shot",
+  "kind": "str",
+  "at": "app.js:2341"
+ },
+ {
+  "s": "— no music —",
+  "kind": "str",
+  "at": "app.js:2343"
+ },
+ {
+  "s": "Plays from the start each time this shot goes live — e.g. a slide with background music. Tick “Loop” on the music file in Inputs to repeat it.",
+  "kind": "str",
+  "at": "app.js:2345"
+ },
+ {
+  "s": "Sound while this shot is live",
+  "kind": "str",
+  "at": "app.js:2347"
+ },
+ {
+  "s": "only the video / music",
+  "kind": "str",
+  "at": "app.js:2349"
+ },
+ {
+  "s": "only the sound desk / cameras",
+  "kind": "str",
+  "at": "app.js:2349"
+ },
+ {
+  "s": "video sound and sound desk together",
+  "kind": "str",
+  "at": "app.js:2349"
+ },
+ {
+  "s": "Duplicate",
+  "kind": "str",
+  "at": "app.js:2353"
+ },
+ {
+  "s": "Delete shot",
+  "kind": "str",
+  "at": "app.js:2356"
+ },
+ {
+  "s": "This shot is live — switch to another shot first.",
+  "kind": "str",
+  "at": "app.js:2366"
+ },
+ {
+  "s": "The holding screen can’t be deleted.",
+  "kind": "str",
+  "at": "app.js:2368"
+ },
+ {
+  "s": "{0}{1} dB",
+  "kind": "tpl",
+  "at": "app.js:2379"
+ },
+ {
+  "s": "♪ Music",
+  "kind": "str",
+  "at": "app.js:2382"
+ },
+ {
+  "s": "🎞 Video sound",
+  "kind": "str",
+  "at": "app.js:2383"
+ },
+ {
+  "s": "🎚 Sound desk",
+  "kind": "str",
+  "at": "app.js:2384"
+ },
+ {
+  "s": "🎛 Volume while this shot is live",
+  "kind": "str",
+  "at": "app.js:2388"
+ },
+ {
+  "s": "No sound for this shot.",
+  "kind": "str",
+  "at": "app.js:2389"
+ },
+ {
+  "s": "Double-click a slider to go back to 0 dB. To hear it before it goes live, put the shot in Preview and press 🎧 Listen.",
+  "kind": "str",
+  "at": "app.js:2390"
+ },
+ {
+  "s": "That is not a music file (MP3, WAV, M4A).",
+  "kind": "str",
+  "at": "app.js:2398"
+ },
+ {
+  "s": " Repeat the music",
+  "kind": "str",
+  "at": "app.js:2399"
+ },
+ {
+  "s": "While the holding slide is up, only this music is heard (cameras / sound desk are muted).",
+  "kind": "str",
+  "at": "app.js:2400"
+ },
+ {
+  "s": "The holding slide is set to also let the cameras / sound desk through.",
+  "kind": "str",
+  "at": "app.js:2400"
+ },
+ {
+  "s": "Exposure",
+  "kind": "str",
+  "at": "app.js:2406"
+ },
+ {
+  "s": "Contrast",
+  "kind": "str",
+  "at": "app.js:2407"
+ },
+ {
+  "s": "Mid-tones",
+  "kind": "str",
+  "at": "app.js:2408"
+ },
+ {
+  "s": "Black level",
+  "kind": "str",
+  "at": "app.js:2409"
+ },
+ {
+  "s": "Saturation",
+  "kind": "str",
+  "at": "app.js:2410"
+ },
+ {
+  "s": "Warmth",
+  "kind": "str",
+  "at": "app.js:2411"
+ },
+ {
+  "s": "Tint",
+  "kind": "str",
+  "at": "app.js:2412"
+ },
+ {
+  "s": "Add a camera in the Inputs panel to adjust its picture.",
+  "kind": "str",
+  "at": "app.js:2417"
+ },
+ {
+  "s": "Hold to compare",
+  "kind": "str",
+  "at": "app.js:2430"
+ },
+ {
+  "s": "Copied to all cameras.",
+  "kind": "str",
+  "at": "app.js:2436"
+ },
+ {
+  "s": "Copy to all cameras",
+  "kind": "str",
+  "at": "app.js:2436"
+ },
+ {
+  "s": " Zebra stripes on Preview (shows over-bright areas)",
+  "kind": "str",
+  "at": "app.js:2438"
+ },
+ {
+  "s": "Zebra stripes on the Preview screen show parts that are too bright. Double-click a slider to reset it.",
+  "kind": "str",
+  "at": "app.js:2439"
+ },
+ {
+  "s": "Bottom third",
+  "kind": "str",
+  "at": "app.js:2446"
+ },
+ {
+  "s": "Bottom quarter",
+  "kind": "str",
+  "at": "app.js:2447"
+ },
+ {
+  "s": "Top third",
+  "kind": "str",
+  "at": "app.js:2448"
+ },
+ {
+  "s": "Full screen",
+  "kind": "str",
+  "at": "app.js:2449"
+ },
+ {
+  "s": "Right third",
+  "kind": "str",
+  "at": "app.js:2450"
+ },
+ {
+  "s": "Left third",
+  "kind": "str",
+  "at": "app.js:2451"
+ },
+ {
+  "s": "Custom…",
+  "kind": "str",
+  "at": "app.js:2452"
+ },
+ {
+  "s": "Translation",
+  "kind": "str",
+  "at": "app.js:2454"
+ },
+ {
+  "s": "RU → EN",
+  "kind": "str",
+  "at": "app.js:2558"
+ },
+ {
+  "s": "EN → RU",
+  "kind": "str",
+  "at": "app.js:2558"
+ },
+ {
+  "s": "Christmas",
+  "kind": "str",
+  "at": "app.js:2559"
+ },
+ {
+  "s": "TAKE HIDES",
+  "kind": "str",
+  "at": "app.js:2570"
+ },
+ {
+  "s": "IN PREVIEW",
+  "kind": "str",
+  "at": "app.js:2570"
+ },
+ {
+  "s": "Choose what this button shows",
+  "kind": "str",
+  "at": "app.js:2576"
+ },
+ {
+  "s": "Click = Preview, then TAKE (Ctrl+G) · double-click = on air now (or off)",
+  "kind": "str",
+  "at": "app.js:2579"
+ },
+ {
+  "s": "Logo",
+  "kind": "str",
+  "at": "app.js:2586"
+ },
+ {
+  "s": "Choose which web page / picture each button shows",
+  "kind": "str",
+  "at": "app.js:2588"
+ },
+ {
+  "s": "Button name",
+  "kind": "str",
+  "at": "app.js:2595"
+ },
+ {
+  "s": "— choose the translation page —",
+  "kind": "str",
+  "at": "app.js:2596"
+ },
+ {
+  "s": "— choose the logo picture —",
+  "kind": "str",
+  "at": "app.js:2596"
+ },
+ {
+  "s": "Edit",
+  "kind": "str",
+  "at": "app.js:2597"
+ },
+ {
+  "s": "✎ Edit",
+  "kind": "str",
+  "at": "app.js:2597"
+ },
+ {
+  "s": "Translation {0}",
+  "kind": "tpl",
+  "at": "app.js:2598"
+ },
+ {
+  "s": "Logo — {0}",
+  "kind": "tpl",
+  "at": "app.js:2598"
+ },
+ {
+  "s": "+ New",
+  "kind": "str",
+  "at": "app.js:2598"
+ },
+ {
+  "s": "Remove this button",
+  "kind": "str",
+  "at": "app.js:2599"
+ },
+ {
+  "s": "🌐 Translation",
+  "kind": "str",
+  "at": "app.js:2603"
+ },
+ {
+  "s": "Each button shows one web page (the live translation captions). Only one is on at a time — pressing the other switches over.",
+  "kind": "str",
+  "at": "app.js:2604"
+ },
+ {
+  "s": "🖼 Logo",
+  "kind": "str",
+  "at": "app.js:2606"
+ },
+ {
+  "s": "Each button shows one logo picture — e.g. the regular logo and a Christmas one. Only one is on at a time.",
+  "kind": "str",
+  "at": "app.js:2607"
+ },
+ {
+  "s": "Easter",
+  "kind": "str",
+  "at": "app.js:2609"
+ },
+ {
+  "s": "+ Add a third logo button",
+  "kind": "str",
+  "at": "app.js:2609"
+ },
+ {
+  "s": "Quick buttons — translation & logo",
+  "kind": "str",
+  "at": "app.js:2613"
+ },
+ {
+  "s": "Enter the web address of the page",
+  "kind": "str",
+  "at": "app.js:2624"
+ },
+ {
+  "s": "Name",
+  "kind": "str",
+  "at": "app.js:2628"
+ },
+ {
+  "s": "Web address (link)",
+  "kind": "str",
+  "at": "app.js:2629"
+ },
+ {
+  "s": "↻ Reload",
+  "kind": "str",
+  "at": "app.js:2631"
+ },
+ {
+  "s": "Position on screen",
+  "kind": "str",
+  "at": "app.js:2636"
+ },
+ {
+  "s": "Left",
+  "kind": "str",
+  "at": "app.js:2637"
+ },
+ {
+  "s": "Top",
+  "kind": "str",
+  "at": "app.js:2637"
+ },
+ {
+  "s": "Width",
+  "kind": "str",
+  "at": "app.js:2637"
+ },
+ {
+  "s": "Height",
+  "kind": "str",
+  "at": "app.js:2637"
+ },
+ {
+  "s": "Text size",
+  "kind": "str",
+  "at": "app.js:2638"
+ },
+ {
+  "s": "Opacity",
+  "kind": "str",
+  "at": "app.js:2639"
+ },
+ {
+  "s": " See-through page background",
+  "kind": "str",
+  "at": "app.js:2641"
+ },
+ {
+  "s": " Remove a colour",
+  "kind": "str",
+  "at": "app.js:2642"
+ },
+ {
+  "s": "Colour to remove (e.g. the page’s black or green background)",
+  "kind": "str",
+  "at": "app.js:2643"
+ },
+ {
+  "s": "Removal strength",
+  "kind": "str",
+  "at": "app.js:2644"
+ },
+ {
+  "s": "Fade in / out",
+  "kind": "str",
+  "at": "app.js:2645"
+ },
+ {
+  "s": "Instant",
+  "kind": "str",
+  "at": "app.js:2645"
+ },
+ {
+  "s": "Fast",
+  "kind": "str",
+  "at": "app.js:2645"
+ },
+ {
+  "s": "Normal",
+  "kind": "str",
+  "at": "app.js:2645"
+ },
+ {
+  "s": "Smooth",
+  "kind": "str",
+  "at": "app.js:2645"
+ },
+ {
+  "s": "Slow",
+  "kind": "str",
+  "at": "app.js:2645"
+ },
+ {
+  "s": "Auto hide",
+  "kind": "str",
+  "at": "app.js:2646"
+ },
+ {
+  "s": "Stay on until hidden",
+  "kind": "str",
+  "at": "app.js:2646"
+ },
+ {
+  "s": "Hide after 5 s",
+  "kind": "str",
+  "at": "app.js:2646"
+ },
+ {
+  "s": "Hide after 10 s",
+  "kind": "str",
+  "at": "app.js:2646"
+ },
+ {
+  "s": "Hide after 15 s",
+  "kind": "str",
+  "at": "app.js:2646"
+ },
+ {
+  "s": "Hide after 30 s",
+  "kind": "str",
+  "at": "app.js:2646"
+ },
+ {
+  "s": "Hide after 1 min",
+  "kind": "str",
+  "at": "app.js:2646"
+ },
+ {
+  "s": "Hide after 2 min",
+  "kind": "str",
+  "at": "app.js:2646"
+ },
+ {
+  "s": "Hide after 5 min",
+  "kind": "str",
+  "at": "app.js:2646"
+ },
+ {
+  "s": "Updates per second",
+  "kind": "str",
+  "at": "app.js:2647"
+ },
+ {
+  "s": "5 (very light)",
+  "kind": "str",
+  "at": "app.js:2647"
+ },
+ {
+  "s": "15 (captions)",
+  "kind": "str",
+  "at": "app.js:2647"
+ },
+ {
+  "s": "30 (animations)",
+  "kind": "str",
+  "at": "app.js:2647"
+ },
+ {
+  "s": "Advanced",
+  "kind": "str",
+  "at": "app.js:2648"
+ },
+ {
+  "s": " Page size follows position",
+  "kind": "str",
+  "at": "app.js:2649"
+ },
+ {
+  "s": "Custom CSS (to restyle the page)",
+  "kind": "str",
+  "at": "app.js:2652"
+ },
+ {
+  "s": "Delete",
+  "kind": "str",
+  "at": "app.js:2654"
+ },
+ {
+  "s": "Show / hide on air",
+  "kind": "str",
+  "at": "app.js:2656"
+ },
+ {
+  "s": "Add web page overlay",
+  "kind": "str",
+  "at": "app.js:2662"
+ },
+ {
+  "s": "Web page — {0}",
+  "kind": "tpl",
+  "at": "app.js:2662"
+ },
+ {
+  "s": "Top left",
+  "kind": "str",
+  "at": "app.js:2667"
+ },
+ {
+  "s": "Top right",
+  "kind": "str",
+  "at": "app.js:2667"
+ },
+ {
+  "s": "Bottom left",
+  "kind": "str",
+  "at": "app.js:2667"
+ },
+ {
+  "s": "Bottom right",
+  "kind": "str",
+  "at": "app.js:2667"
+ },
+ {
+  "s": "Top centre",
+  "kind": "str",
+  "at": "app.js:2667"
+ },
+ {
+  "s": "Bottom centre",
+  "kind": "str",
+  "at": "app.js:2667"
+ },
+ {
+  "s": "Full screen (frame / border)",
+  "kind": "str",
+  "at": "app.js:2667"
+ },
+ {
+  "s": "— choose a picture —",
+  "kind": "str",
+  "at": "app.js:2702"
+ },
+ {
+  "s": "— no pictures yet —",
+  "kind": "str",
+  "at": "app.js:2702"
+ },
+ {
+  "s": "Use a PNG with a transparent background for logos and decorations. The dashed box shows where it goes on the live picture.",
+  "kind": "str",
+  "at": "app.js:2704"
+ },
+ {
+  "s": "Position",
+  "kind": "str",
+  "at": "app.js:2708"
+ },
+ {
+  "s": "From edge",
+  "kind": "str",
+  "at": "app.js:2710"
+ },
+ {
+  "s": "Add picture (logo / decoration)",
+  "kind": "str",
+  "at": "app.js:2724"
+ },
+ {
+  "s": "Picture — {0}",
+  "kind": "tpl",
+  "at": "app.js:2724"
+ },
+ {
+  "s": "John Smith",
+  "kind": "str",
+  "at": "app.js:2739"
+ },
+ {
+  "s": "Use the “",
+  "kind": "str",
+  "at": "app.js:2790"
+ },
+ {
+  "s": "” design (point at it to see it animate)",
+  "kind": "str",
+  "at": "app.js:2790"
+ },
+ {
+  "s": "Design",
+  "kind": "str",
+  "at": "app.js:2804"
+ },
+ {
+  "s": "point at one to see it animate, click to use it",
+  "kind": "str",
+  "at": "app.js:2804"
+ },
+ {
+  "s": "▶ Test in & out",
+  "kind": "str",
+  "at": "app.js:2806"
+ },
+ {
+  "s": "How it comes in",
+  "kind": "str",
+  "at": "app.js:2808"
+ },
+ {
+  "s": "Speed",
+  "kind": "str",
+  "at": "app.js:2811"
+ },
+ {
+  "s": "Instant — no animation",
+  "kind": "str",
+  "at": "app.js:2811"
+ },
+ {
+  "s": "Relaxed",
+  "kind": "str",
+  "at": "app.js:2811"
+ },
+ {
+  "s": "Very slow",
+  "kind": "str",
+  "at": "app.js:2811"
+ },
+ {
+  "s": "How it leaves",
+  "kind": "str",
+  "at": "app.js:2812"
+ },
+ {
+  "s": "The same way, backwards",
+  "kind": "str",
+  "at": "app.js:2812"
+ },
+ {
+  "s": "Just fade out",
+  "kind": "str",
+  "at": "app.js:2812"
+ },
+ {
+  "s": "Font",
+  "kind": "str",
+  "at": "app.js:2816"
+ },
+ {
+  "s": " Bold",
+  "kind": "str",
+  "at": "app.js:2819"
+ },
+ {
+  "s": " Italic",
+  "kind": "str",
+  "at": "app.js:2819"
+ },
+ {
+  "s": "Main text",
+  "kind": "str",
+  "at": "app.js:2821"
+ },
+ {
+  "s": "Second line",
+  "kind": "str",
+  "at": "app.js:2821"
+ },
+ {
+  "s": " CAPS",
+  "kind": "str",
+  "at": "app.js:2826"
+ },
+ {
+  "s": " In accent colour",
+  "kind": "str",
+  "at": "app.js:2826"
+ },
+ {
+  "s": "Shape",
+  "kind": "str",
+  "at": "app.js:2828"
+ },
+ {
+  "s": "Layout",
+  "kind": "str",
+  "at": "app.js:2829"
+ },
+ {
+  "s": "A box for each line",
+  "kind": "str",
+  "at": "app.js:2829"
+ },
+ {
+  "s": "One panel",
+  "kind": "str",
+  "at": "app.js:2829"
+ },
+ {
+  "s": "Small tag above the name",
+  "kind": "str",
+  "at": "app.js:2829"
+ },
+ {
+  "s": "Side by side, one line",
+  "kind": "str",
+  "at": "app.js:2829"
+ },
+ {
+  "s": "Full-width band",
+  "kind": "str",
+  "at": "app.js:2829"
+ },
+ {
+  "s": "Second line box",
+  "kind": "str",
+  "at": "app.js:2830"
+ },
+ {
+  "s": "Automatic",
+  "kind": "str",
+  "at": "app.js:2830"
+ },
+ {
+  "s": "Accent colour",
+  "kind": "str",
+  "at": "app.js:2830"
+ },
+ {
+  "s": "Same as the name box",
+  "kind": "str",
+  "at": "app.js:2830"
+ },
+ {
+  "s": "No box",
+  "kind": "str",
+  "at": "app.js:2830"
+ },
+ {
+  "s": " Fade the panel out to the side",
+  "kind": "str",
+  "at": "app.js:2831"
+ },
+ {
+  "s": "Box colour",
+  "kind": "str",
+  "at": "app.js:2833"
+ },
+ {
+  "s": "Box opacity",
+  "kind": "str",
+  "at": "app.js:2835"
+ },
+ {
+  "s": "no box",
+  "kind": "str",
+  "at": "app.js:2835"
+ },
+ {
+  "s": "Slant",
+  "kind": "str",
+  "at": "app.js:2837"
+ },
+ {
+  "s": "Dot at the start",
+  "kind": "str",
+  "at": "app.js:2838"
+ },
+ {
+  "s": "Bar on the side",
+  "kind": "str",
+  "at": "app.js:2838"
+ },
+ {
+  "s": "Line underneath",
+  "kind": "str",
+  "at": "app.js:2838"
+ },
+ {
+  "s": "Line on top",
+  "kind": "str",
+  "at": "app.js:2838"
+ },
+ {
+  "s": "None",
+  "kind": "str",
+  "at": "app.js:2838"
+ },
+ {
+  "s": "Accent thickness",
+  "kind": "str",
+  "at": "app.js:2839"
+ },
+ {
+  "s": "Reset this design",
+  "kind": "str",
+  "at": "app.js:2844"
+ },
+ {
+  "s": "This look is now used for all labels and speaker names.",
+  "kind": "str",
+  "at": "app.js:2849"
+ },
+ {
+  "s": "Use this look for all labels and speakers",
+  "kind": "str",
+  "at": "app.js:2850"
+ },
+ {
+  "s": "Design the label look",
+  "kind": "str",
+  "at": "app.js:2856"
+ },
+ {
+  "s": "(empty)",
+  "kind": "str",
+  "at": "app.js:2863"
+ },
+ {
+  "s": "New title",
+  "kind": "str",
+  "at": "app.js:2884"
+ },
+ {
+  "s": "Add to Titles & Graphics",
+  "kind": "str",
+  "at": "app.js:2887"
+ },
+ {
+  "s": "T  Title / caption",
+  "kind": "str",
+  "at": "app.js:2888"
+ },
+ {
+  "s": "🖼  Picture (logo)",
+  "kind": "str",
+  "at": "app.js:2889"
+ },
+ {
+  "s": "🌐  Web page (translation…)",
+  "kind": "str",
+  "at": "app.js:2890"
+ },
+ {
+  "s": "⚙  Quick buttons (translation & logo)",
+  "kind": "str",
+  "at": "app.js:2891"
+ },
+ {
+  "s": "gtile chip {0}",
+  "kind": "tpl",
+  "at": "app.js:2905"
+ },
+ {
+  "s": "On air · click to cue hiding it, then TAKE (Ctrl+G) · double-click to hide right away · drag to reorder",
+  "kind": "str",
+  "at": "app.js:2906"
+ },
+ {
+  "s": "Click to put it in Preview, then TAKE (Ctrl+G) · double-click to show right away · drag to reorder",
+  "kind": "str",
+  "at": "app.js:2906"
+ },
+ {
+  "s": "Add a title, picture or web page",
+  "kind": "str",
+  "at": "app.js:2924"
+ },
+ {
+  "s": "Edit title / graphic",
+  "kind": "str",
+  "at": "app.js:2932"
+ },
+ {
+  "s": "Second line (optional)",
+  "kind": "str",
+  "at": "app.js:2934"
+ },
+ {
+  "s": "🎨 Design look…",
+  "kind": "str",
+  "at": "app.js:2936"
+ },
+ {
+  "s": "Converting needs the installed app.",
+  "kind": "str",
+  "at": "app.js:2960"
+ },
+ {
+  "s": "Converting to MP4… 0%",
+  "kind": "str",
+  "at": "app.js:2961"
+ },
+ {
+  "s": "Converting to MP4… {0}%",
+  "kind": "tpl",
+  "at": "app.js:2963"
+ },
+ {
+  "s": "Converted “{0}”.",
+  "kind": "tpl",
+  "at": "app.js:2966"
+ },
+ {
+  "s": "Convert to MP4",
+  "kind": "str",
+  "at": "app.js:2974"
+ },
+ {
+  "s": "WAITING",
+  "kind": "str",
+  "at": "app.js:2977"
+ },
+ {
+  "s": "OPENING VIDEO",
+  "kind": "str",
+  "at": "app.js:2978"
+ },
+ {
+  "s": "then fades to the camera",
+  "kind": "str",
+  "at": "app.js:2978"
+ },
+ {
+  "s": "IN SERVICE",
+  "kind": "str",
+  "at": "app.js:2979"
+ },
+ {
+  "s": "CLOSING VIDEO",
+  "kind": "str",
+  "at": "app.js:2980"
+ },
+ {
+  "s": "ENDED",
+  "kind": "str",
+  "at": "app.js:2981"
+ },
+ {
+  "s": "play “{0}”",
+  "kind": "tpl",
+  "at": "app.js:2987"
+ },
+ {
+  "s": "fade to {0}",
+  "kind": "tpl",
+  "at": "app.js:2987"
+ },
+ {
+  "s": " with “{0}”",
+  "kind": "tpl",
+  "at": "app.js:2988"
+ },
+ {
+  "s": "show “{0}”{1}",
+  "kind": "tpl",
+  "at": "app.js:2988"
+ },
+ {
+  "s": "back to holding screen",
+  "kind": "str",
+  "at": "app.js:2988"
+ },
+ {
+  "s": "fade to black",
+  "kind": "str",
+  "at": "app.js:2988"
+ },
+ {
+  "s": "end stream after {0} s",
+  "kind": "tpl",
+  "at": "app.js:2988"
+ },
+ {
+  "s": "▶ START SERVICE",
+  "kind": "str",
+  "at": "app.js:2998"
+ },
+ {
+  "s": "■ END SERVICE",
+  "kind": "str",
+  "at": "app.js:2999"
+ },
+ {
+  "s": "🕘 Holding screen",
+  "kind": "str",
+  "at": "app.js:3001"
+ },
+ {
+  "s": "🎨 Design slide",
+  "kind": "str",
+  "at": "app.js:3002"
+ },
+ {
+  "s": "⚙ Edit",
+  "kind": "str",
+  "at": "app.js:3004"
+ },
+ {
+  "s": " Stream ends in {0} s.",
+  "kind": "tpl",
+  "at": "app.js:3011"
+ },
+ {
+  "s": "Keep streaming",
+  "kind": "str",
+  "at": "app.js:3014"
+ },
+ {
+  "s": "CLOSING SLIDE",
+  "kind": "str",
+  "at": "app.js:3019"
+ },
+ {
+  "s": " · press END SERVICE again to finish now",
+  "kind": "str",
+  "at": "app.js:3022"
+ },
+ {
+  "s": "That is not a picture.",
+  "kind": "str",
+  "at": "app.js:3038"
+ },
+ {
+  "s": "— no video —",
+  "kind": "str",
+  "at": "app.js:3040"
+ },
+ {
+  "s": "🕘 Holding slide (shown before the service)",
+  "kind": "str",
+  "at": "app.js:3046"
+ },
+ {
+  "s": "Background picture, every line of text, the clock, colours and positions.",
+  "kind": "str",
+  "at": "app.js:3048"
+ },
+ {
+  "s": "♪ Music before the service (while the holding slide is up)",
+  "kind": "str",
+  "at": "app.js:3051"
+ },
+ {
+  "s": "▶ When I press START SERVICE",
+  "kind": "str",
+  "at": "app.js:3055"
+ },
+ {
+  "s": " Go live on YouTube (if not live yet)",
+  "kind": "str",
+  "at": "app.js:3057"
+ },
+ {
+  "s": " Start recording",
+  "kind": "str",
+  "at": "app.js:3058"
+ },
+ {
+  "s": "Play this video first",
+  "kind": "str",
+  "at": "app.js:3059"
+ },
+ {
+  "s": "Then fade into",
+  "kind": "str",
+  "at": "app.js:3062"
+ },
+ {
+  "s": "Fade into",
+  "kind": "str",
+  "at": "app.js:3062"
+ },
+ {
+  "s": "— add a camera —",
+  "kind": "str",
+  "at": "app.js:3062"
+ },
+ {
+  "s": "Fade length",
+  "kind": "str",
+  "at": "app.js:3063"
+ },
+ {
+  "s": "0.5 second",
+  "kind": "str",
+  "at": "app.js:3063"
+ },
+ {
+  "s": " Start the YouTube event automatically once YouTube is receiving the stream",
+  "kind": "str",
+  "at": "app.js:3064"
+ },
+ {
+  "s": "■ When I press END SERVICE",
+  "kind": "str",
+  "at": "app.js:3066"
+ },
+ {
+  "s": "First show",
+  "kind": "str",
+  "at": "app.js:3067"
+ },
+ {
+  "s": "A closing video",
+  "kind": "str",
+  "at": "app.js:3067"
+ },
+ {
+  "s": "A slide with music",
+  "kind": "str",
+  "at": "app.js:3067"
+ },
+ {
+  "s": "Play this video",
+  "kind": "str",
+  "at": "app.js:3069"
+ },
+ {
+  "s": "Slide (a picture)",
+  "kind": "str",
+  "at": "app.js:3073"
+ },
+ {
+  "s": "Music",
+  "kind": "str",
+  "at": "app.js:3074"
+ },
+ {
+  "s": " Keep the music going (repeat) until I press END SERVICE again",
+  "kind": "str",
+  "at": "app.js:3077"
+ },
+ {
+  "s": "Or finish by itself after",
+  "kind": "str",
+  "at": "app.js:3080"
+ },
+ {
+  "s": "Show the slide for",
+  "kind": "str",
+  "at": "app.js:3080"
+ },
+ {
+  "s": "30 seconds",
+  "kind": "str",
+  "at": "app.js:3080"
+ },
+ {
+  "s": "1 minute",
+  "kind": "str",
+  "at": "app.js:3080"
+ },
+ {
+  "s": "2 minutes",
+  "kind": "str",
+  "at": "app.js:3080"
+ },
+ {
+  "s": "5 minutes",
+  "kind": "str",
+  "at": "app.js:3080"
+ },
+ {
+  "s": "10 minutes",
+  "kind": "str",
+  "at": "app.js:3080"
+ },
+ {
+  "s": "30 minutes",
+  "kind": "str",
+  "at": "app.js:3080"
+ },
+ {
+  "s": "Until I press END SERVICE again",
+  "kind": "str",
+  "at": "app.js:3080"
+ },
+ {
+  "s": "The slide stays up while the music plays, then the service finishes. Press END SERVICE again to finish sooner.",
+  "kind": "str",
+  "at": "app.js:3081"
+ },
+ {
+  "s": "Then show",
+  "kind": "str",
+  "at": "app.js:3083"
+ },
+ {
+  "s": "The holding screen",
+  "kind": "str",
+  "at": "app.js:3083"
+ },
+ {
+  "s": " Stop recording",
+  "kind": "str",
+  "at": "app.js:3086"
+ },
+ {
+  "s": " End the stream",
+  "kind": "str",
+  "at": "app.js:3087"
+ },
+ {
+  "s": "1 min",
+  "kind": "str",
+  "at": "app.js:3088"
+ },
+ {
+  "s": "2 min",
+  "kind": "str",
+  "at": "app.js:3088"
+ },
+ {
+  "s": "5 min",
+  "kind": "str",
+  "at": "app.js:3088"
+ },
+ {
+  "s": " End the YouTube event too",
+  "kind": "str",
+  "at": "app.js:3089"
+ },
+ {
+  "s": "Edit service — what Start and End do",
+  "kind": "str",
+  "at": "app.js:3094"
+ },
+ {
+  "s": "Live Studio",
+  "kind": "str",
+  "at": "app.js:3133"
+ },
+ {
+  "s": "YouTube event “{0}” selected — stream key filled in.",
+  "kind": "tpl",
+  "at": "app.js:3142"
+ },
+ {
+  "s": "Waiting for YouTube to receive the stream, then starting the event…",
+  "kind": "str",
+  "at": "app.js:3182"
+ },
+ {
+  "s": "YouTube event is live ✓",
+  "kind": "str",
+  "at": "app.js:3192"
+ },
+ {
+  "s": "YouTube could not start the event: ",
+  "kind": "str",
+  "at": "app.js:3194"
+ },
+ {
+  "s": " — you can start it in YouTube Studio.",
+  "kind": "str",
+  "at": "app.js:3194"
+ },
+ {
+  "s": "YouTube event ended.",
+  "kind": "str",
+  "at": "app.js:3200"
+ },
+ {
+  "s": "YouTube: receiving — good",
+  "kind": "str",
+  "at": "app.js:3203"
+ },
+ {
+  "s": "YouTube: receiving — OK",
+  "kind": "str",
+  "at": "app.js:3203"
+ },
+ {
+  "s": "YouTube: receiving — poor",
+  "kind": "str",
+  "at": "app.js:3203"
+ },
+ {
+  "s": "YouTube: not receiving yet",
+  "kind": "str",
+  "at": "app.js:3203"
+ },
+ {
+  "s": "YouTube: waiting for your stream…",
+  "kind": "str",
+  "at": "app.js:3207"
+ },
+ {
+  "s": "▶ YouTube",
+  "kind": "str",
+  "at": "app.js:3214"
+ },
+ {
+  "s": "Not connected — stream key only",
+  "kind": "str",
+  "at": "app.js:3215"
+ },
+ {
+  "s": "Connect…",
+  "kind": "str",
+  "at": "app.js:3215"
+ },
+ {
+  "s": "{0} upcoming event{1}",
+  "kind": "tpl",
+  "at": "app.js:3217"
+ },
+ {
+  "s": "Choose event…",
+  "kind": "str",
+  "at": "app.js:3217"
+ },
+ {
+  "s": " · LIVE",
+  "kind": "str",
+  "at": "app.js:3219"
+ },
+ {
+  "s": "Change",
+  "kind": "str",
+  "at": "app.js:3222"
+ },
+ {
+  "s": "YouTube connection works in the installed app.",
+  "kind": "str",
+  "at": "app.js:3232"
+ },
+ {
+  "s": "Connecting lets Live Studio show your upcoming YouTube events, fill in the stream key for you, start and end the event, and check that YouTube is receiving your stream well.",
+  "kind": "str",
+  "at": "app.js:3236"
+ },
+ {
+  "s": "One-time setup (about 10 minutes)",
+  "kind": "str",
+  "at": "app.js:3237"
+ },
+ {
+  "s": "Go to ",
+  "kind": "str",
+  "at": "app.js:3239"
+ },
+ {
+  "s": ", sign in with the Google account that owns your YouTube channel, and create a project named “Live Studio”.",
+  "kind": "str",
+  "at": "app.js:3239"
+ },
+ {
+  "s": "Open ",
+  "kind": "str",
+  "at": "app.js:3240"
+ },
+ {
+  "s": "APIs & Services → Library",
+  "kind": "str",
+  "at": "app.js:3240"
+ },
+ {
+  "s": ", search for ",
+  "kind": "str",
+  "at": "app.js:3240"
+ },
+ {
+  "s": "YouTube Data API v3",
+  "kind": "str",
+  "at": "app.js:3240"
+ },
+ {
+  "s": " and click ",
+  "kind": "str",
+  "at": "app.js:3240"
+ },
+ {
+  "s": "Enable",
+  "kind": "str",
+  "at": "app.js:3240"
+ },
+ {
+  "s": "OAuth consent screen",
+  "kind": "str",
+  "at": "app.js:3241"
+ },
+ {
+  "s": ": choose ",
+  "kind": "str",
+  "at": "app.js:3241"
+ },
+ {
+  "s": "External",
+  "kind": "str",
+  "at": "app.js:3241"
+ },
+ {
+  "s": ", fill in the app name and your email, then under ",
+  "kind": "str",
+  "at": "app.js:3241"
+ },
+ {
+  "s": "Audience",
+  "kind": "str",
+  "at": "app.js:3241"
+ },
+ {
+  "s": "Publish app",
+  "kind": "str",
+  "at": "app.js:3241"
+ },
+ {
+  "s": " (so the sign-in doesn’t expire every 7 days).",
+  "kind": "str",
+  "at": "app.js:3241"
+ },
+ {
+  "s": "Credentials → Create credentials → OAuth client ID",
+  "kind": "str",
+  "at": "app.js:3242"
+ },
+ {
+  "s": ", choose ",
+  "kind": "str",
+  "at": "app.js:3242"
+ },
+ {
+  "s": "Desktop app",
+  "kind": "str",
+  "at": "app.js:3242"
+ },
+ {
+  "s": ", and create it.",
+  "kind": "str",
+  "at": "app.js:3242"
+ },
+ {
+  "s": "Copy the ",
+  "kind": "str",
+  "at": "app.js:3243"
+ },
+ {
+  "s": "Client ID",
+  "kind": "str",
+  "at": "app.js:3243"
+ },
+ {
+  "s": "Client secret",
+  "kind": "str",
+  "at": "app.js:3243"
+ },
+ {
+  "s": " into the boxes below, then click ",
+  "kind": "str",
+  "at": "app.js:3243"
+ },
+ {
+  "s": "Sign in with Google",
+  "kind": "str",
+  "at": "app.js:3243"
+ },
+ {
+  "s": "Advanced → Go to Live Studio",
+  "kind": "str",
+  "at": "app.js:3243"
+ },
+ {
+  "s": "Finish signing in in your browser…",
+  "kind": "str",
+  "at": "app.js:3248"
+ },
+ {
+  "s": "YouTube sign-in: ",
+  "kind": "str",
+  "at": "app.js:3251"
+ },
+ {
+  "s": "Connected to {0} ✓",
+  "kind": "tpl",
+  "at": "app.js:3251"
+ },
+ {
+  "s": "Loading events…",
+  "kind": "str",
+  "at": "app.js:3256"
+ },
+ {
+  "s": "YouTube account",
+  "kind": "str",
+  "at": "app.js:3262"
+ },
+ {
+  "s": "Connected",
+  "kind": "str",
+  "at": "app.js:3262"
+ },
+ {
+  "s": "↻ Refresh",
+  "kind": "str",
+  "at": "app.js:3263"
+ },
+ {
+  "s": "Disconnect",
+  "kind": "str",
+  "at": "app.js:3264"
+ },
+ {
+  "s": "Checklist",
+  "kind": "str",
+  "at": "app.js:3265"
+ },
+ {
+  "s": "✅ Connected to YouTube",
+  "kind": "str",
+  "at": "app.js:3267"
+ },
+ {
+  "s": "⬜ Choose the event for this service below",
+  "kind": "str",
+  "at": "app.js:3268"
+ },
+ {
+  "s": "✅ Stream key filled in",
+  "kind": "str",
+  "at": "app.js:3269"
+ },
+ {
+  "s": "⬜ Stream key",
+  "kind": "str",
+  "at": "app.js:3269"
+ },
+ {
+  "s": "⬜ YouTube receiving the stream",
+  "kind": "str",
+  "at": "app.js:3270"
+ },
+ {
+  "s": "This event starts by itself when YouTube receives your stream.",
+  "kind": "str",
+  "at": "app.js:3271"
+ },
+ {
+  "s": "Live Studio will start this event on YouTube after you press START SERVICE.",
+  "kind": "str",
+  "at": "app.js:3271"
+ },
+ {
+  "s": "Upcoming events",
+  "kind": "str",
+  "at": "app.js:3272"
+ },
+ {
+  "s": "Schedule events in YouTube Studio → Create → Go live → Manage → Schedule stream. They show up here.",
+  "kind": "str",
+  "at": "app.js:3274"
+ },
+ {
+  "s": "No upcoming events. Schedule one in YouTube Studio, then click Refresh.",
+  "kind": "str",
+  "at": "app.js:3277"
+ },
+ {
+  "s": " · LIVE NOW",
+  "kind": "str",
+  "at": "app.js:3280"
+ },
+ {
+  "s": "SELECTED",
+  "kind": "str",
+  "at": "app.js:3281"
+ },
+ {
+  "s": "Use this",
+  "kind": "str",
+  "at": "app.js:3281"
+ },
+ {
+  "s": "Click to preview, then TAKE (Ctrl+G) · double-click to show / hide right away",
+  "kind": "str",
+  "at": "app.js:3293"
+ },
+ {
+  "s": "(no name)",
+  "kind": "str",
+  "at": "app.js:3294"
+ },
+ {
+  "s": "+ Add person",
+  "kind": "str",
+  "at": "app.js:3299"
+ },
+ {
+  "s": "🎨 Look",
+  "kind": "str",
+  "at": "app.js:3302"
+ },
+ {
+  "s": "Stay on",
+  "kind": "str",
+  "at": "app.js:3303"
+ },
+ {
+  "s": "Hide after 8 s",
+  "kind": "str",
+  "at": "app.js:3303"
+ },
+ {
+  "s": "Add person",
+  "kind": "str",
+  "at": "app.js:3346"
+ },
+ {
+  "s": "Edit person",
+  "kind": "str",
+  "at": "app.js:3346"
+ },
+ {
+  "s": "Title / role",
+  "kind": "str",
+  "at": "app.js:3348"
+ },
+ {
+  "s": "◂ Move",
+  "kind": "str",
+  "at": "app.js:3351"
+ },
+ {
+  "s": "Move ▸",
+  "kind": "str",
+  "at": "app.js:3352"
+ },
+ {
+  "s": "Save",
+  "kind": "str",
+  "at": "app.js:3354"
+ },
+ {
+  "s": "Volume — double-click for 0 dB",
+  "kind": "str",
+  "at": "app.js:3362"
+ },
+ {
+  "s": "Mute",
+  "kind": "str",
+  "at": "app.js:3373"
+ },
+ {
+  "s": "Listen on this computer (headphones / speakers)",
+  "kind": "str",
+  "at": "app.js:3388"
+ },
+ {
+  "s": "MONO",
+  "kind": "str",
+  "at": "app.js:3389"
+ },
+ {
+  "s": "Listen in mono to check phase — only your headphones, not the stream",
+  "kind": "str",
+  "at": "app.js:3389"
+ },
+ {
+  "s": "LIMIT",
+  "kind": "str",
+  "at": "app.js:3390"
+ },
+ {
+  "s": "YouTube-safe limiter: keeps peaks at or below the Out ceiling (set in DYN). Turns orange and shows how many dB it is turning the sound down while it works (red above 6 dB = too much — lower the level)",
+  "kind": "str",
+  "at": "app.js:3390"
+ },
+ {
+  "s": "Compressor & limiter: threshold, ratio, attack, release, knee, out gain, ceiling",
+  "kind": "str",
+  "at": "app.js:3391"
+ },
+ {
+  "s": "DYN",
+  "kind": "str",
+  "at": "app.js:3391"
+ },
+ {
+  "s": "Plug-ins (VST3, e.g. Waves) on the master — inserts before the compressor and limiter",
+  "kind": "str",
+  "at": "app.js:3392"
+ },
+ {
+  "s": "AUTO −14",
+  "kind": "str",
+  "at": "app.js:3393"
+ },
+ {
+  "s": "Auto level: slowly turns the overall volume up or down to sit at YouTube’s −14 LUFS",
+  "kind": "str",
+  "at": "app.js:3393"
+ },
+ {
+  "s": "Sound card, volumes, mute, sync test, output",
+  "kind": "str",
+  "at": "app.js:3394"
+ },
+ {
+  "s": "🎚 Mixer",
+  "kind": "str",
+  "at": "app.js:3394"
+ },
+ {
+  "s": "🔌 Connect sound card",
+  "kind": "str",
+  "at": "app.js:3394"
+ },
+ {
+  "s": "Stereo / phase",
+  "kind": "str",
+  "at": "app.js:3409"
+ },
+ {
+  "s": "−1 out of phase",
+  "kind": "str",
+  "at": "app.js:3410"
+ },
+ {
+  "s": "+1 mono",
+  "kind": "str",
+  "at": "app.js:3410"
+ },
+ {
+  "s": " — reconnecting…",
+  "kind": "str",
+  "at": "app.js:3425"
+ },
+ {
+  "s": " — not found, waiting for it…",
+  "kind": "str",
+  "at": "app.js:3425"
+ },
+ {
+  "s": "device missing — click ⚙",
+  "kind": "str",
+  "at": "app.js:3425"
+ },
+ {
+  "s": " · {0} ms",
+  "kind": "tpl",
+  "at": "app.js:3425"
+ },
+ {
+  "s": "Choose sound card / input, delay",
+  "kind": "str",
+  "at": "app.js:3426"
+ },
+ {
+  "s": "Videos",
+  "kind": "str",
+  "at": "app.js:3428"
+ },
+ {
+  "s": "opening / closing videos",
+  "kind": "str",
+  "at": "app.js:3428"
+ },
+ {
+  "s": "Sound cards & inputs",
+  "kind": "str",
+  "at": "app.js:3430"
+ },
+ {
+  "s": "No sound card connected yet. Click “+ Connect sound card”.",
+  "kind": "str",
+  "at": "app.js:3431"
+ },
+ {
+  "s": "+ Connect sound card / input",
+  "kind": "str",
+  "at": "app.js:3434"
+ },
+ {
+  "s": "Found {0} audio devices.",
+  "kind": "tpl",
+  "at": "app.js:3435"
+ },
+ {
+  "s": "↻ Rescan devices",
+  "kind": "str",
+  "at": "app.js:3435"
+ },
+ {
+  "s": "⏱ Sync test",
+  "kind": "str",
+  "at": "app.js:3436"
+ },
+ {
+  "s": "Click ⚙ on an input to pick which sound card and which channels it uses (capture card, SSL, etc.).",
+  "kind": "str",
+  "at": "app.js:3437"
+ },
+ {
+  "s": "Program playback (e.g. SSL 2 → TC Electronic meter)",
+  "kind": "str",
+  "at": "app.js:3438"
+ },
+ {
+  "s": "Play the program on",
+  "kind": "str",
+  "at": "app.js:3439"
+ },
+ {
+  "s": "Off",
+  "kind": "str",
+  "at": "app.js:3440"
+ },
+ {
+  "s": "Playback level",
+  "kind": "str",
+  "at": "app.js:3444"
+ },
+ {
+  "s": "{0} dB",
+  "kind": "tpl",
+  "at": "app.js:3444"
+ },
+ {
+  "s": "Like Wirecast’s “Audio Playback”: the finished program sound (after the limiter) plays here all the time, whatever you do with 🎧 or Listen. Keep it at 0 dB so the meter reads the same as YouTube. The stream and the recording are not affected.",
+  "kind": "str",
+  "at": "app.js:3445"
+ },
+ {
+  "s": "Headphones / monitor output",
+  "kind": "str",
+  "at": "app.js:3446"
+ },
+ {
+  "s": "Send the sound to",
+  "kind": "str",
+  "at": "app.js:3447"
+ },
+ {
+  "s": "Windows default output",
+  "kind": "str",
+  "at": "app.js:3448"
+ },
+ {
+  "s": " Send the program sound there all the time (same as 🎧)",
+  "kind": "str",
+  "at": "app.js:3453"
+ },
+ {
+  "s": "Output level",
+  "kind": "str",
+  "at": "app.js:3454"
+ },
+ {
+  "s": "Your headphones. 🎧 (program) and Listen (Preview) go here. Pick a different device than Program playback, so listening to the Preview never reaches the meter.",
+  "kind": "str",
+  "at": "app.js:3455"
+ },
+ {
+  "s": "Headphones and Program playback are the same device — choose your headphones here.",
+  "kind": "str",
+  "at": "app.js:3457"
+ },
+ {
+  "s": "Master volume",
+  "kind": "str",
+  "at": "app.js:3458"
+ },
+ {
+  "s": "MASTER",
+  "kind": "str",
+  "at": "app.js:3459"
+ },
+ {
+  "s": "Normally leave these at 0 and mix on your sound desk. LIMIT keeps peaks under the Out ceiling (DYN); AUTO −14 holds the overall loudness at YouTube’s level.",
+  "kind": "str",
+  "at": "app.js:3460"
+ },
+ {
+  "s": "Audio mixer & sound card",
+  "kind": "str",
+  "at": "app.js:3462"
+ },
+ {
+  "s": "FX {0}{1}",
+  "kind": "tpl",
+  "at": "app.js:3472"
+ },
+ {
+  "s": "FX",
+  "kind": "str",
+  "at": "app.js:3472"
+ },
+ {
+  "s": "The plug-in delay changed — sound/picture sync is corrected the next time you go live or record.",
+  "kind": "str",
+  "at": "app.js:3488"
+ },
+ {
+  "s": "could not be loaded",
+  "kind": "str",
+  "at": "app.js:3567"
+ },
+ {
+  "s": "“{0}” has no window of its own.",
+  "kind": "tpl",
+  "at": "app.js:3584"
+ },
+ {
+  "s": "Plug-in “{0}” crashed and is skipped now — the sound goes on without it. Remove it or reload the show.",
+  "kind": "tpl",
+  "at": "app.js:3589"
+ },
+ {
+  "s": "The plug-in host stopped — restarting it. The sound goes on meanwhile.",
+  "kind": "str",
+  "at": "app.js:3596"
+ },
+ {
+  "s": "Plug-ins work in the Live Studio app on Windows.",
+  "kind": "str",
+  "at": "app.js:3624"
+ },
+ {
+  "s": "The plug-in host is missing from this installation — update Live Studio.",
+  "kind": "str",
+  "at": "app.js:3625"
+ },
+ {
+  "s": "No plug-ins on the master. The sound goes straight through, with no delay.",
+  "kind": "str",
+  "at": "app.js:3626"
+ },
+ {
+  "s": "Plug-in host starting… (the sound goes on untouched meanwhile)",
+  "kind": "str",
+  "at": "app.js:3627"
+ },
+ {
+  "s": " ({0} ms of it from the plug-ins)",
+  "kind": "tpl",
+  "at": "app.js:3631"
+ },
+ {
+  "s": "picture delayed to match",
+  "kind": "str",
+  "at": "app.js:3631"
+ },
+ {
+  "s": "inputs’ sound delay shortened to match",
+  "kind": "str",
+  "at": "app.js:3631"
+ },
+ {
+  "s": "● Running · sound {0} ms behind{1} · {2}",
+  "kind": "tpl",
+  "at": "app.js:3631"
+ },
+ {
+  "s": " · {0} ms late in the last second",
+  "kind": "tpl",
+  "at": "app.js:3632"
+ },
+ {
+  "s": "Looking for plug-ins… {0}/{1} {2}",
+  "kind": "tpl",
+  "at": "app.js:3634"
+ },
+ {
+  "s": "crashed — skipped",
+  "kind": "str",
+  "at": "app.js:3641"
+ },
+ {
+  "s": "loading…",
+  "kind": "str",
+  "at": "app.js:3641"
+ },
+ {
+  "s": "delay {0} ms",
+  "kind": "tpl",
+  "at": "app.js:3641"
+ },
+ {
+  "s": "Bypassed — click to turn it on",
+  "kind": "str",
+  "at": "app.js:3644"
+ },
+ {
+  "s": "On — click to bypass",
+  "kind": "str",
+  "at": "app.js:3644"
+ },
+ {
+  "s": "Open the plug-in’s own window",
+  "kind": "str",
+  "at": "app.js:3646"
+ },
+ {
+  "s": "Window open",
+  "kind": "str",
+  "at": "app.js:3646"
+ },
+ {
+  "s": "Edit…",
+  "kind": "str",
+  "at": "app.js:3646"
+ },
+ {
+  "s": "Move up (earlier in the chain)",
+  "kind": "str",
+  "at": "app.js:3647"
+ },
+ {
+  "s": "Move down (later in the chain)",
+  "kind": "str",
+  "at": "app.js:3648"
+ },
+ {
+  "s": "Remove from the master",
+  "kind": "str",
+  "at": "app.js:3649"
+ },
+ {
+  "s": "Close the list",
+  "kind": "str",
+  "at": "app.js:3652"
+ },
+ {
+  "s": "+ Add plug-in…",
+  "kind": "str",
+  "at": "app.js:3652"
+ },
+ {
+  "s": "Search (name or maker, e.g. L2, Waves, EQ)",
+  "kind": "str",
+  "at": "app.js:3658"
+ },
+ {
+  "s": "Looking for plug-ins… (the first time can take a minute — Waves especially)",
+  "kind": "str",
+  "at": "app.js:3664"
+ },
+ {
+  "s": "No VST3 plug-ins found. They live in C:\\Program Files\\Common Files\\VST3 — install them there (Waves: through Waves Central) and click “Look again”.",
+  "kind": "str",
+  "at": "app.js:3665"
+ },
+ {
+  "s": "Nothing matches.",
+  "kind": "str",
+  "at": "app.js:3672"
+ },
+ {
+  "s": "Looking…",
+  "kind": "str",
+  "at": "app.js:3677"
+ },
+ {
+  "s": "↻ Look again",
+  "kind": "str",
+  "at": "app.js:3677"
+ },
+ {
+  "s": "Add a folder with VST3 plug-ins (besides the standard one)",
+  "kind": "str",
+  "at": "app.js:3678"
+ },
+ {
+  "s": "+ Folder…",
+  "kind": "str",
+  "at": "app.js:3678"
+ },
+ {
+  "s": "Speech — gentle",
+  "kind": "str",
+  "at": "app.js:3692"
+ },
+ {
+  "s": "Worship / music — light",
+  "kind": "str",
+  "at": "app.js:3693"
+ },
+ {
+  "s": "Even it out — stronger",
+  "kind": "str",
+  "at": "app.js:3694"
+ },
+ {
+  "s": "Console style (−26 dB, 3:1)",
+  "kind": "str",
+  "at": "app.js:3695"
+ },
+ {
+  "s": "Name for a new preset (e.g. Sunday sermon)",
+  "kind": "str",
+  "at": "app.js:3721"
+ },
+ {
+  "s": "Type a name for the preset first.",
+  "kind": "str",
+  "at": "app.js:3724"
+ },
+ {
+  "s": "Preset “{0}” saved.",
+  "kind": "tpl",
+  "at": "app.js:3727"
+ },
+ {
+  "s": "★ Save as preset",
+  "kind": "str",
+  "at": "app.js:3728"
+ },
+ {
+  "s": "Preset “{0}” deleted.",
+  "kind": "tpl",
+  "at": "app.js:3729"
+ },
+ {
+  "s": "Delete “",
+  "kind": "str",
+  "at": "app.js:3729"
+ },
+ {
+  "s": "btn dyn-on",
+  "kind": "str",
+  "at": "app.js:3730"
+ },
+ {
+  "s": "{0} ON",
+  "kind": "tpl",
+  "at": "app.js:3730"
+ },
+ {
+  "s": "{0} OFF",
+  "kind": "tpl",
+  "at": "app.js:3730"
+ },
+ {
+  "s": "Presets…",
+  "kind": "str",
+  "at": "app.js:3733"
+ },
+ {
+  "s": "COMPRESSOR",
+  "kind": "str",
+  "at": "app.js:3740"
+ },
+ {
+  "s": "LIMITER",
+  "kind": "str",
+  "at": "app.js:3741"
+ },
+ {
+  "s": "VST3 plug-ins on the master (inserts)",
+  "kind": "str",
+  "at": "app.js:3742"
+ },
+ {
+  "s": "PLUG-INS",
+  "kind": "str",
+  "at": "app.js:3742"
+ },
+ {
+  "s": "Threshold",
+  "kind": "str",
+  "at": "app.js:3746"
+ },
+ {
+  "s": "Ratio",
+  "kind": "str",
+  "at": "app.js:3747"
+ },
+ {
+  "s": "Attack",
+  "kind": "str",
+  "at": "app.js:3748"
+ },
+ {
+  "s": "Release",
+  "kind": "str",
+  "at": "app.js:3749"
+ },
+ {
+  "s": "Out gain",
+  "kind": "str",
+  "at": "app.js:3750"
+ },
+ {
+  "s": "Knee",
+  "kind": "str",
+  "at": "app.js:3751"
+ },
+ {
+  "s": "HARD",
+  "kind": "str",
+  "at": "app.js:3752"
+ },
+ {
+  "s": "The compressor evens out the level before the limiter. It works on what the stream and recording hear, after the mixer. Double-click a slider to reset it.",
+  "kind": "str",
+  "at": "app.js:3753"
+ },
+ {
+  "s": "l2-pk mono",
+  "kind": "str",
+  "at": "app.js:3759"
+ },
+ {
+  "s": "Highest level — click to reset",
+  "kind": "str",
+  "at": "app.js:3759"
+ },
+ {
+  "s": "Peak limiter",
+  "kind": "str",
+  "at": "app.js:3764"
+ },
+ {
+  "s": "l2-gain mono",
+  "kind": "str",
+  "at": "app.js:3765"
+ },
+ {
+  "s": "How much the level is pushed up (ceiling − threshold)",
+  "kind": "str",
+  "at": "app.js:3765"
+ },
+ {
+  "s": "+{0} dB",
+  "kind": "tpl",
+  "at": "app.js:3765"
+ },
+ {
+  "s": "Out Ceiling",
+  "kind": "str",
+  "at": "app.js:3768"
+ },
+ {
+  "s": "Atten",
+  "kind": "str",
+  "at": "app.js:3769"
+ },
+ {
+  "s": "btn l2-arc",
+  "kind": "str",
+  "at": "app.js:3771"
+ },
+ {
+  "s": "ARC — automatic release: follows the music, longer when the limiter works all the time so it does not pump",
+  "kind": "str",
+  "at": "app.js:3771"
+ },
+ {
+  "s": "ARC",
+  "kind": "str",
+  "at": "app.js:3771"
+ },
+ {
+  "s": "IDR",
+  "kind": "str",
+  "at": "app.js:3773"
+ },
+ {
+  "s": "Quantize",
+  "kind": "str",
+  "at": "app.js:3775"
+ },
+ {
+  "s": "24 bit",
+  "kind": "str",
+  "at": "app.js:3775"
+ },
+ {
+  "s": "Dither",
+  "kind": "str",
+  "at": "app.js:3776"
+ },
+ {
+  "s": "Type 1",
+  "kind": "str",
+  "at": "app.js:3776"
+ },
+ {
+  "s": "Type 2",
+  "kind": "str",
+  "at": "app.js:3776"
+ },
+ {
+  "s": "Shaping",
+  "kind": "str",
+  "at": "app.js:3777"
+ },
+ {
+  "s": "Moderate",
+  "kind": "str",
+  "at": "app.js:3777"
+ },
+ {
+  "s": "Ultra",
+  "kind": "str",
+  "at": "app.js:3777"
+ },
+ {
+  "s": "btn small l2-opt",
+  "kind": "str",
+  "at": "app.js:3779"
+ },
+ {
+  "s": "Works like an L2: lower the Threshold to make it louder — the level goes up by (ceiling − threshold) and a look-ahead brickwall stops every peak at the Out Ceiling. ARC makes the release follow the music. IDR rounds the output to the bits you choose (for YouTube 24 bit is right). Drag a fader (Shift = fine), mouse wheel, double-click to reset, or type in the box.",
+  "kind": "str",
+  "at": "app.js:3780"
+ },
+ {
+  "s": "18px Consolas, monospace",
+  "kind": "str",
+  "at": "app.js:3800"
+ },
+ {
+  "s": "700 28px Inter, Segoe UI, sans-serif",
+  "kind": "str",
+  "at": "app.js:3821"
+ },
+ {
+  "s": "600 24px Consolas, monospace",
+  "kind": "str",
+  "at": "app.js:3822"
+ },
+ {
+  "s": "In",
+  "kind": "str",
+  "at": "app.js:3824"
+ },
+ {
+  "s": "GR",
+  "kind": "str",
+  "at": "app.js:3824"
+ },
+ {
+  "s": "Out",
+  "kind": "str",
+  "at": "app.js:3824"
+ },
+ {
+  "s": "600 {0}px Consolas, monospace",
+  "kind": "tpl",
+  "at": "app.js:3832"
+ },
+ {
+  "s": "Master — compressor, limiter & plug-ins",
+  "kind": "str",
+  "at": "app.js:3873"
+ },
+ {
+  "s": "{0}px Inter, Segoe UI, sans-serif",
+  "kind": "tpl",
+  "at": "app.js:3885"
+ },
+ {
+  "s": "700 {0}px Inter, Segoe UI, sans-serif",
+  "kind": "tpl",
+  "at": "app.js:3897"
+ },
+ {
+  "s": "MAX",
+  "kind": "str",
+  "at": "app.js:3897"
+ },
+ {
+  "s": "no sound",
+  "kind": "str",
+  "at": "app.js:3924"
+ },
+ {
+  "s": "{0} dB louder than YouTube’s level — it will be turned down",
+  "kind": "tpl",
+  "at": "app.js:3924"
+ },
+ {
+  "s": "{0} dB quieter than YouTube’s level",
+  "kind": "tpl",
+  "at": "app.js:3924"
+ },
+ {
+  "s": "matches YouTube ✓",
+  "kind": "str",
+  "at": "app.js:3924"
+ },
+ {
+  "s": " · auto {0}{1} dB",
+  "kind": "tpl",
+  "at": "app.js:3925"
+ },
+ {
+  "s": "Add a camera and an audio input first.",
+  "kind": "str",
+  "at": "app.js:3940"
+ },
+ {
+  "s": "This measures how far the sound and picture from your capture card are apart, and fixes it. ",
+  "kind": "str",
+  "at": "app.js:3952"
+ },
+ {
+  "s": "Clap your hands sharply in front of the camera, about once a second",
+  "kind": "str",
+  "at": "app.js:3953"
+ },
+ {
+  "s": " (or play an “AV sync test” flash-and-beep video on a phone held up to the camera). Keep other sounds quiet.",
+  "kind": "str",
+  "at": "app.js:3954"
+ },
+ {
+  "s": "Listening… keep clapping",
+  "kind": "str",
+  "at": "app.js:3960"
+ },
+ {
+  "s": "↻ Test again",
+  "kind": "str",
+  "at": "app.js:3960"
+ },
+ {
+  "s": "▶ Start test (12 seconds)",
+  "kind": "str",
+  "at": "app.js:3960"
+ },
+ {
+  "s": "Not enough claps detected.",
+  "kind": "str",
+  "at": "app.js:3966"
+ },
+ {
+  "s": "In sync ✓",
+  "kind": "str",
+  "at": "app.js:3968"
+ },
+ {
+  "s": "Sound arrives {0} ms before the picture",
+  "kind": "tpl",
+  "at": "app.js:3968"
+ },
+ {
+  "s": "Sound arrives {0} ms after the picture",
+  "kind": "tpl",
+  "at": "app.js:3968"
+ },
+ {
+  "s": " (uneven — try again with sharper claps)",
+  "kind": "str",
+  "at": "app.js:3969"
+ },
+ {
+  "s": "Measured {0} claps · spread ±{1} ms{2}",
+  "kind": "tpl",
+  "at": "app.js:3969"
+ },
+ {
+  "s": "Audio delay set to {0} ms.",
+  "kind": "tpl",
+  "at": "app.js:3973"
+ },
+ {
+  "s": "Fix it — set audio delay to {0} ms",
+  "kind": "tpl",
+  "at": "app.js:3973"
+ },
+ {
+  "s": "Then run the test again to confirm.",
+  "kind": "str",
+  "at": "app.js:3974"
+ },
+ {
+  "s": "The sound is later than the picture, so delaying the sound won’t help. Check the audio delay setting on your sound desk or camera, and set this input’s delay to 0.",
+  "kind": "str",
+  "at": "app.js:3976"
+ },
+ {
+  "s": "Set delay to 0",
+  "kind": "str",
+  "at": "app.js:3977"
+ },
+ {
+  "s": "That camera or audio input is not connected.",
+  "kind": "str",
+  "at": "app.js:3985"
+ },
+ {
+  "s": "Sync test could not start: ",
+  "kind": "str",
+  "at": "app.js:3989"
+ },
+ {
+  "s": "Heard {0} sounds and saw {1} movements, but only {2} matched. Clap closer to the camera and microphone, with your hands clearly in view.",
+  "kind": "tpl",
+  "at": "app.js:4032"
+ },
+ {
+  "s": "The measurements didn’t agree. Try again with sharper claps.",
+  "kind": "str",
+  "at": "app.js:4039"
+ },
+ {
+  "s": "<span class=\"muted\">Press Start, then clap.</span>",
+  "kind": "str",
+  "at": "app.js:4044"
+ },
+ {
+  "s": "Audio / video sync test",
+  "kind": "str",
+  "at": "app.js:4045"
+ },
+ {
+  "s": "Mic {0}",
+  "kind": "tpl",
+  "at": "app.js:4050"
+ },
+ {
+  "s": "Input 1 (mono)",
+  "kind": "str",
+  "at": "app.js:4052"
+ },
+ {
+  "s": "Input 2 (mono)",
+  "kind": "str",
+  "at": "app.js:4052"
+ },
+ {
+  "s": "Input 3 (mono)",
+  "kind": "str",
+  "at": "app.js:4052"
+ },
+ {
+  "s": "Input 4 (mono)",
+  "kind": "str",
+  "at": "app.js:4052"
+ },
+ {
+  "s": "Inputs 1+2 as stereo",
+  "kind": "str",
+  "at": "app.js:4052"
+ },
+ {
+  "s": "Inputs 1+2 mixed to mono",
+  "kind": "str",
+  "at": "app.js:4052"
+ },
+ {
+  "s": "Audio device",
+  "kind": "str",
+  "at": "app.js:4056"
+ },
+ {
+  "s": "Which input",
+  "kind": "str",
+  "at": "app.js:4057"
+ },
+ {
+  "s": "Capture card sound (from your sound desk into the camera/SDI): choose the Blackmagic audio device, inputs 1+2 as stereo. SSL interface: mic on input 1 or 2.",
+  "kind": "str",
+  "at": "app.js:4058"
+ },
+ {
+  "s": "Audio delay (lip sync)",
+  "kind": "str",
+  "at": "app.js:4060"
+ },
+ {
+  "s": "⏱ Measure…",
+  "kind": "str",
+  "at": "app.js:4060"
+ },
+ {
+  "s": "Pan",
+  "kind": "str",
+  "at": "app.js:4061"
+ },
+ {
+  "s": " Low-cut (removes rumble)",
+  "kind": "str",
+  "at": "app.js:4063"
+ },
+ {
+  "s": " Voice leveler (gentle compression)",
+  "kind": "str",
+  "at": "app.js:4064"
+ },
+ {
+  "s": "Remove input",
+  "kind": "str",
+  "at": "app.js:4066"
+ },
+ {
+  "s": "Add input",
+  "kind": "str",
+  "at": "app.js:4075"
+ },
+ {
+  "s": "Add audio input",
+  "kind": "str",
+  "at": "app.js:4076"
+ },
+ {
+  "s": "Audio input — {0}",
+  "kind": "tpl",
+  "at": "app.js:4076"
+ },
+ {
+  "s": "LIMIT −{0}",
+  "kind": "tpl",
+  "at": "app.js:4117"
+ },
+ {
+  "s": "DYN −{0}",
+  "kind": "tpl",
+  "at": "app.js:4122"
+ },
+ {
+  "s": "{0} LUFS",
+  "kind": "tpl",
+  "at": "app.js:4126"
+ },
+ {
+  "s": "inset(0 {0}% 0 0)",
+  "kind": "tpl",
+  "at": "app.js:4130"
+ },
+ {
+  "s": "Cameras & capture cards",
+  "kind": "str",
+  "at": "app.js:4163"
+ },
+ {
+  "s": "No cameras yet. Connect your Blackmagic card, then click “Add camera”.",
+  "kind": "str",
+  "at": "app.js:4164"
+ },
+ {
+  "s": "— choose device —",
+  "kind": "str",
+  "at": "app.js:4166"
+ },
+ {
+  "s": "Remove camera",
+  "kind": "str",
+  "at": "app.js:4170"
+ },
+ {
+  "s": "Auto fps",
+  "kind": "str",
+  "at": "app.js:4174"
+ },
+ {
+  "s": "Must match the signal your camera sends",
+  "kind": "str",
+  "at": "app.js:4174"
+ },
+ {
+  "s": "Card (native engine)",
+  "kind": "str",
+  "at": "app.js:4175"
+ },
+ {
+  "s": " (no {0} fps)",
+  "kind": "tpl",
+  "at": "app.js:4176"
+ },
+ {
+  "s": "{0} — card {1}{2}",
+  "kind": "tpl",
+  "at": "app.js:4176"
+ },
+ {
+  "s": "+ Add camera",
+  "kind": "str",
+  "at": "app.js:4181"
+ },
+ {
+  "s": "Found {0} video and {1} audio devices.",
+  "kind": "tpl",
+  "at": "app.js:4182"
+ },
+ {
+  "s": "Video, picture & music files",
+  "kind": "str",
+  "at": "app.js:4184"
+ },
+ {
+  "s": "Add intro/ending videos, background loops or logos.",
+  "kind": "str",
+  "at": "app.js:4185"
+ },
+ {
+  "s": "Remove file",
+  "kind": "str",
+  "at": "app.js:4191"
+ },
+ {
+  "s": " Loop",
+  "kind": "str",
+  "at": "app.js:4193"
+ },
+ {
+  "s": "Try again",
+  "kind": "str",
+  "at": "app.js:4194"
+ },
+ {
+  "s": "+ Add video / picture / music",
+  "kind": "str",
+  "at": "app.js:4196"
+ },
+ {
+  "s": "Camera {0}",
+  "kind": "tpl",
+  "at": "app.js:4202"
+ },
+ {
+  "s": "This file is on air — switch away first.",
+  "kind": "str",
+  "at": "app.js:4209"
+ },
+ {
+  "s": "Paste your stream key",
+  "kind": "str",
+  "at": "app.js:4229"
+ },
+ {
+  "s": "Server address (RTMP/RTMPS)",
+  "kind": "str",
+  "at": "app.js:4230"
+ },
+ {
+  "s": "· encoder engine FFmpeg {0}",
+  "kind": "tpl",
+  "at": "app.js:4233"
+ },
+ {
+  "s": "Stop streaming/recording before changing video output settings.",
+  "kind": "str",
+  "at": "app.js:4236"
+ },
+ {
+  "s": "YouTube 1080p 60 fps",
+  "kind": "str",
+  "at": "app.js:4247"
+ },
+ {
+  "s": "YouTube 1080p 30 fps",
+  "kind": "str",
+  "at": "app.js:4247"
+ },
+ {
+  "s": "YouTube 720p",
+  "kind": "str",
+  "at": "app.js:4247"
+ },
+ {
+  "s": "Slow internet",
+  "kind": "str",
+  "at": "app.js:4247"
+ },
+ {
+  "s": "Standard",
+  "kind": "str",
+  "at": "app.js:4248"
+ },
+ {
+  "s": "High (for editing)",
+  "kind": "str",
+  "at": "app.js:4248"
+ },
+ {
+  "s": "Small files",
+  "kind": "str",
+  "at": "app.js:4248"
+ },
+ {
+  "s": "Very small (like Wirecast)",
+  "kind": "str",
+  "at": "app.js:4248"
+ },
+ {
+  "s": "Name for a new preset",
+  "kind": "str",
+  "at": "app.js:4258"
+ },
+ {
+  "s": "Preset",
+  "kind": "str",
+  "at": "app.js:4262"
+ },
+ {
+  "s": "{0}{1} — {2} / {3} kbps",
+  "kind": "tpl",
+  "at": "app.js:4262"
+ },
+ {
+  "s": "Custom (not saved)",
+  "kind": "str",
+  "at": "app.js:4262"
+ },
+ {
+  "s": "Picture (kbps)",
+  "kind": "str",
+  "at": "app.js:4264"
+ },
+ {
+  "s": "Sound (kbps)",
+  "kind": "str",
+  "at": "app.js:4265"
+ },
+ {
+  "s": "★ Save these numbers as a preset",
+  "kind": "str",
+  "at": "app.js:4267"
+ },
+ {
+  "s": "Delete this preset",
+  "kind": "str",
+  "at": "app.js:4268"
+ },
+ {
+  "s": "Connected{0}. Choosing an event fills in the stream key.",
+  "kind": "tpl",
+  "at": "app.js:4276"
+ },
+ {
+  "s": "Connect your YouTube account to pick upcoming events and check stream health — or just paste a stream key below.",
+  "kind": "str",
+  "at": "app.js:4276"
+ },
+ {
+  "s": "YouTube events…",
+  "kind": "str",
+  "at": "app.js:4277"
+ },
+ {
+  "s": "Connect YouTube…",
+  "kind": "str",
+  "at": "app.js:4277"
+ },
+ {
+  "s": "Server",
+  "kind": "str",
+  "at": "app.js:4278"
+ },
+ {
+  "s": "YouTube — primary (secure RTMPS, recommended)",
+  "kind": "str",
+  "at": "app.js:4278"
+ },
+ {
+  "s": "YouTube — primary (RTMP)",
+  "kind": "str",
+  "at": "app.js:4278"
+ },
+ {
+  "s": "Custom server (Facebook, Vimeo, other)…",
+  "kind": "str",
+  "at": "app.js:4278"
+ },
+ {
+  "s": "Stream key",
+  "kind": "str",
+  "at": "app.js:4280"
+ },
+ {
+  "s": "▶ Test this key",
+  "kind": "str",
+  "at": "app.js:4280"
+ },
+ {
+  "s": "Find it in YouTube Studio → Create → Go live → Stream → “Stream key”. Keep it private — it is stored encrypted on this computer.",
+  "kind": "str",
+  "at": "app.js:4281"
+ },
+ {
+  "s": "Video output",
+  "kind": "str",
+  "at": "app.js:4283"
+ },
+ {
+  "s": "Locked while live or recording.",
+  "kind": "str",
+  "at": "app.js:4284"
+ },
+ {
+  "s": "Resolution",
+  "kind": "str",
+  "at": "app.js:4286"
+ },
+ {
+  "s": "Frame rate",
+  "kind": "str",
+  "at": "app.js:4287"
+ },
+ {
+  "s": "25 fps",
+  "kind": "str",
+  "at": "app.js:4287"
+ },
+ {
+  "s": "29.97 fps (29.97 cameras)",
+  "kind": "str",
+  "at": "app.js:4287"
+ },
+ {
+  "s": "30 fps",
+  "kind": "str",
+  "at": "app.js:4287"
+ },
+ {
+  "s": "50 fps",
+  "kind": "str",
+  "at": "app.js:4287"
+ },
+ {
+  "s": "59.94 fps (59.94 cameras — Blackmagic)",
+  "kind": "str",
+  "at": "app.js:4287"
+ },
+ {
+  "s": "60 fps",
+  "kind": "str",
+  "at": "app.js:4287"
+ },
+ {
+  "s": "Encoder",
+  "kind": "str",
+  "at": "app.js:4288"
+ },
+ {
+  "s": "Software (works on every PC)",
+  "kind": "str",
+  "at": "app.js:4288"
+ },
+ {
+  "s": "NVIDIA graphics card (NVENC)",
+  "kind": "str",
+  "at": "app.js:4288"
+ },
+ {
+  "s": "Intel graphics (Quick Sync)",
+  "kind": "str",
+  "at": "app.js:4288"
+ },
+ {
+  "s": "AMD graphics card (AMF)",
+  "kind": "str",
+  "at": "app.js:4288"
+ },
+ {
+  "s": "Picture engine",
+  "kind": "str",
+  "at": "app.js:4289"
+ },
+ {
+  "s": "Classic (inside the window)",
+  "kind": "str",
+  "at": "app.js:4289"
+ },
+ {
+  "s": "Native — OBS-style (test)",
+  "kind": "str",
+  "at": "app.js:4289"
+ },
+ {
+  "s": "Stop streaming/recording before switching the picture engine.",
+  "kind": "str",
+  "at": "app.js:4290"
+ },
+ {
+  "s": "Native engine: the cameras now go straight to it (a few seconds)…",
+  "kind": "str",
+  "at": "app.js:4291"
+ },
+ {
+  "s": "Classic engine",
+  "kind": "str",
+  "at": "app.js:4291"
+ },
+ {
+  "s": "Sound/picture sync (native)",
+  "kind": "str",
+  "at": "app.js:4293"
+ },
+ {
+  "s": "ms the picture waits for the sound (if lips move before you hear the words, raise it; starts with the next stream/recording)",
+  "kind": "str",
+  "at": "app.js:4295"
+ },
+ {
+  "s": "Tip: use a hardware encoder if your PC has one — it leaves the processor free. Set the frame rate to exactly what the cameras send (Blackmagic at 59.94 → 59.94).",
+  "kind": "str",
+  "at": "app.js:4296"
+ },
+ {
+  "s": "This encoder refused the tuned settings; plain settings are being used.",
+  "kind": "str",
+  "at": "app.js:4297"
+ },
+ {
+  "s": "Live stream quality",
+  "kind": "str",
+  "at": "app.js:4298"
+ },
+ {
+  "s": "YouTube suggests 4,500–9,000 kbps for 1080p at 30 fps and about 12,000 for 1080p at 60 fps. Your upload speed should be about 1.5× the picture bitrate.",
+  "kind": "str",
+  "at": "app.js:4300"
+ },
+ {
+  "s": "Save recordings to",
+  "kind": "str",
+  "at": "app.js:4303"
+ },
+ {
+  "s": "Change…",
+  "kind": "str",
+  "at": "app.js:4304"
+ },
+ {
+  "s": "Open",
+  "kind": "str",
+  "at": "app.js:4305"
+ },
+ {
+  "s": " Also start recording when I press GO LIVE (normally recording starts with START SERVICE)",
+  "kind": "str",
+  "at": "app.js:4307"
+ },
+ {
+  "s": "Recording quality",
+  "kind": "str",
+  "at": "app.js:4308"
+ },
+ {
+  "s": "Switching",
+  "kind": "str",
+  "at": "app.js:4311"
+ },
+ {
+  "s": "Frame move speed",
+  "kind": "str",
+  "at": "app.js:4313"
+ },
+ {
+  "s": " Fade to black also fades the audio",
+  "kind": "str",
+  "at": "app.js:4314"
+ },
+ {
+  "s": "Interface",
+  "kind": "str",
+  "at": "app.js:4316"
+ },
+ {
+  "s": "Shot button size",
+  "kind": "str",
+  "at": "app.js:4319"
+ },
+ {
+  "s": "Arrange panels…",
+  "kind": "str",
+  "at": "app.js:4321"
+ },
+ {
+  "s": "Show file",
+  "kind": "str",
+  "at": "app.js:4323"
+ },
+ {
+  "s": "A show keeps your cameras, shots, labels, intro/ending and audio setup. It saves automatically; save copies for different events.",
+  "kind": "str",
+  "at": "app.js:4324"
+ },
+ {
+  "s": "Save show as…",
+  "kind": "str",
+  "at": "app.js:4326"
+ },
+ {
+  "s": "Show opened.",
+  "kind": "str",
+  "at": "app.js:4327"
+ },
+ {
+  "s": "Open show…",
+  "kind": "str",
+  "at": "app.js:4327"
+ },
+ {
+  "s": "End the stream first.",
+  "kind": "str",
+  "at": "app.js:4328"
+ },
+ {
+  "s": "New empty show",
+  "kind": "str",
+  "at": "app.js:4328"
+ },
+ {
+  "s": "Choose your own key for every action, shot, label and speaker. F11 = full screen.",
+  "kind": "str",
+  "at": "app.js:4331"
+ },
+ {
+  "s": "⌨ Edit keyboard shortcuts…",
+  "kind": "str",
+  "at": "app.js:4332"
+ },
+ {
+  "s": "About",
+  "kind": "str",
+  "at": "app.js:4334"
+ },
+ {
+  "s": "Live Studio {0}",
+  "kind": "tpl",
+  "at": "app.js:4335"
+ },
+ {
+  "s": "Updates work in the installed app.",
+  "kind": "str",
+  "at": "app.js:4339"
+ },
+ {
+  "s": "Check for updates",
+  "kind": "str",
+  "at": "app.js:4342"
+ },
+ {
+  "s": "Settings",
+  "kind": "str",
+  "at": "app.js:4344"
+ },
+ {
+  "s": "Finish streaming/recording first, then restart to update.",
+  "kind": "str",
+  "at": "app.js:4365"
+ },
+ {
+  "s": "Checking for updates…",
+  "kind": "str",
+  "at": "app.js:4372"
+ },
+ {
+  "s": "✓ You have the newest version.",
+  "kind": "str",
+  "at": "app.js:4373"
+ },
+ {
+  "s": "Update {0} found — downloading{1}",
+  "kind": "tpl",
+  "at": "app.js:4374"
+ },
+ {
+  "s": "✓ Update {0} is downloaded. ",
+  "kind": "tpl",
+  "at": "app.js:4375"
+ },
+ {
+  "s": "Restart & update now",
+  "kind": "str",
+  "at": "app.js:4375"
+ },
+ {
+  "s": "Update {0} is ready.",
+  "kind": "tpl",
+  "at": "app.js:4384"
+ },
+ {
+  "s": "Restart & update",
+  "kind": "str",
+  "at": "app.js:4384"
+ },
+ {
+  "s": "It will also install automatically next time you close the app.",
+  "kind": "str",
+  "at": "app.js:4384"
+ },
+ {
+  "s": "Downloading update {0}… {1}",
+  "kind": "tpl",
+  "at": "app.js:4387"
+ },
+ {
+  "s": "Tab",
+  "kind": "str",
+  "at": "app.js:4393"
+ },
+ {
+  "s": "Escape",
+  "kind": "str",
+  "at": "app.js:4393"
+ },
+ {
+  "s": "Take — fade Preview to air",
+  "kind": "str",
+  "at": "app.js:4397"
+ },
+ {
+  "s": "Cut — instant switch",
+  "kind": "str",
+  "at": "app.js:4398"
+ },
+ {
+  "s": "Fade to black / back",
+  "kind": "str",
+  "at": "app.js:4399"
+ },
+ {
+  "s": "Next shot into Preview",
+  "kind": "str",
+  "at": "app.js:4400"
+ },
+ {
+  "s": "Previous shot into Preview",
+  "kind": "str",
+  "at": "app.js:4401"
+ },
+ {
+  "s": "START SERVICE",
+  "kind": "str",
+  "at": "app.js:4402"
+ },
+ {
+  "s": "END SERVICE",
+  "kind": "str",
+  "at": "app.js:4403"
+ },
+ {
+  "s": "Show the holding screen (clock)",
+  "kind": "str",
+  "at": "app.js:4404"
+ },
+ {
+  "s": "Pictures — logo / decorations (show / hide)",
+  "kind": "str",
+  "at": "app.js:4405"
+ },
+ {
+  "s": "Web page overlays (show / hide)",
+  "kind": "str",
+  "at": "app.js:4406"
+ },
+ {
+  "s": "Labels & speakers",
+  "kind": "str",
+  "at": "app.js:4407"
+ },
+ {
+  "s": "Hide all labels and name captions",
+  "kind": "str",
+  "at": "app.js:4407"
+ },
+ {
+  "s": "Speakers (show / hide name caption)",
+  "kind": "str",
+  "at": "app.js:4408"
+ },
+ {
+  "s": "Labels (show / hide)",
+  "kind": "str",
+  "at": "app.js:4409"
+ },
+ {
+  "s": "Label",
+  "kind": "str",
+  "at": "app.js:4409"
+ },
+ {
+  "s": "Shots — put in Preview",
+  "kind": "str",
+  "at": "app.js:4411"
+ },
+ {
+  "s": "Shots — straight to air",
+  "kind": "str",
+  "at": "app.js:4412"
+ },
+ {
+  "s": "Streaming",
+  "kind": "str",
+  "at": "app.js:4413"
+ },
+ {
+  "s": "Go live",
+  "kind": "str",
+  "at": "app.js:4413"
+ },
+ {
+  "s": "End stream (press twice)",
+  "kind": "str",
+  "at": "app.js:4414"
+ },
+ {
+  "s": "Start / stop recording (stop: press twice)",
+  "kind": "str",
+  "at": "app.js:4415"
+ },
+ {
+  "s": "Ctrl",
+  "kind": "str",
+  "at": "app.js:4429"
+ },
+ {
+  "s": "Alt",
+  "kind": "str",
+  "at": "app.js:4430"
+ },
+ {
+  "s": "Shift",
+  "kind": "str",
+  "at": "app.js:4431"
+ },
+ {
+  "s": "Win",
+  "kind": "str",
+  "at": "app.js:4432"
+ },
+ {
+  "s": "Space",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Enter",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Num Enter",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Backspace",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Del",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Ins",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Home",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "End",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "PgUp",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "PgDn",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Num +",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Num -",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Num *",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Num /",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "Num .",
+  "kind": "str",
+  "at": "app.js:4435"
+ },
+ {
+  "s": "{0} was moved from “{1}”.",
+  "kind": "tpl",
+  "at": "app.js:4454"
+ },
+ {
+  "s": "Click “Change”, then press the key you want (you can hold Ctrl, Alt or Shift too). Works with USB keypads and Stream Deck buttons set to send a key.",
+  "kind": "str",
+  "at": "app.js:4465"
+ },
+ {
+  "s": "Reset all to defaults",
+  "kind": "str",
+  "at": "app.js:4466"
+ },
+ {
+  "s": "Press a key… (Esc to cancel)",
+  "kind": "str",
+  "at": "app.js:4475"
+ },
+ {
+  "s": "No key",
+  "kind": "str",
+  "at": "app.js:4477"
+ },
+ {
+  "s": "Back to default",
+  "kind": "str",
+  "at": "app.js:4478"
+ },
+ {
+  "s": "{0} is used by the app itself — pick another key.",
+  "kind": "tpl",
+  "at": "app.js:4493"
+ },
+ {
+  "s": "{0} — wide",
+  "kind": "tpl",
+  "at": "app.js:4530"
+ },
+ {
+  "s": "{0} — close",
+  "kind": "tpl",
+  "at": "app.js:4531"
+ },
+ {
+  "s": "Capture card",
+  "kind": "str",
+  "at": "app.js:4540"
+ },
+ {
+  "s": "Audio in",
+  "kind": "str",
+  "at": "app.js:4540"
+ },
+ {
+  "s": " (bypassed)",
+  "kind": "str",
+  "at": "app.js:4604"
+ },
+ {
+  "s": "sync q{0}",
+  "kind": "tpl",
+  "at": "app.js:4651"
+ },
+ {
+  "s": "out {0}fps miss {1} draw {2}ms ui {3}ms",
+  "kind": "tpl",
+  "at": "app.js:4652"
+ },
+ {
+  "s": " busy {0}×{1}ms",
+  "kind": "tpl",
+  "at": "app.js:4652"
+ },
+ {
+  "s": " | air \"{0}\" {1} rep {2} skip {3}",
+  "kind": "tpl",
+  "at": "app.js:4653"
+ },
+ {
+  "s": "NO SIGNAL",
+  "kind": "str",
+  "at": "app.js:4657"
+ },
+ {
+  "s": " late {0}",
+  "kind": "tpl",
+  "at": "app.js:4657"
+ },
+ {
+  "s": " | {0} {1} gap {2}{3}",
+  "kind": "tpl",
+  "at": "app.js:4657"
+ },
+ {
+  "s": " | yt {0}fps {1}Mb dup {2} drop {3} x{4} buf {5}K",
+  "kind": "tpl",
+  "at": "app.js:4667"
+ },
+ {
+  "s": " | yt starting",
+  "kind": "str",
+  "at": "app.js:4668"
+ },
+ {
+  "s": " | rec {0}fps dup {1} drop {2} x{3}",
+  "kind": "tpl",
+  "at": "app.js:4669"
+ },
+ {
+  "s": " | native STARTING",
+  "kind": "str",
+  "at": "app.js:4672"
+ },
+ {
+  "s": " late {0} ({1}ms)",
+  "kind": "tpl",
+  "at": "app.js:4676"
+ },
+ {
+  "s": " STALL",
+  "kind": "str",
+  "at": "app.js:4676"
+ },
+ {
+  "s": " GAP {0}",
+  "kind": "tpl",
+  "at": "app.js:4676"
+ },
+ {
+  "s": " enc-drop {0}",
+  "kind": "tpl",
+  "at": "app.js:4676"
+ },
+ {
+  "s": " | native {0}f rep {1} skip {2}{3}{4} mix {5}/{6}ms sound {7}ms {8}ppm{9}{10}",
+  "kind": "tpl",
+  "at": "app.js:4676"
+ },
+ {
+  "s": ", {0} too late",
+  "kind": "tpl",
+  "at": "app.js:4677"
+ },
+ {
+  "s": "{0} (uneven {1}ms{2})",
+  "kind": "tpl",
+  "at": "app.js:4677"
+ },
+ {
+  "s": " video-rep {0}",
+  "kind": "tpl",
+  "at": "app.js:4678"
+ },
+ {
+  "s": " | native (no news)",
+  "kind": "str",
+  "at": "app.js:4681"
+ },
+ {
+  "s": " | cpu {0}%{1}{2} gpu {3}{4} mem {5}%",
+  "kind": "tpl",
+  "at": "app.js:4684"
+ },
+ {
+  "s": " heap {0}M",
+  "kind": "tpl",
+  "at": "app.js:4688"
+ },
+ {
+  "s": " | {0} LUFS",
+  "kind": "tpl",
+  "at": "app.js:4689"
+ },
+ {
+  "s": "LIVE ",
+  "kind": "str",
+  "at": "app.js:4692"
+ },
+ {
+  "s": "REC ",
+  "kind": "str",
+  "at": "app.js:4692"
+ },
+ {
+  "s": "Marked in the log ✓ (F9)",
+  "kind": "str",
+  "at": "app.js:4702"
+ },
+ {
+  "s": "Classic dark",
+  "kind": "str",
+  "at": "engine.js:872"
+ },
+ {
+  "s": "Classic light",
+  "kind": "str",
+  "at": "engine.js:872"
+ },
+ {
+  "s": "Modern glass",
+  "kind": "str",
+  "at": "engine.js:872"
+ },
+ {
+  "s": "News two-tier",
+  "kind": "str",
+  "at": "engine.js:872"
+ },
+ {
+  "s": "Slanted",
+  "kind": "str",
+  "at": "engine.js:872"
+ },
+ {
+  "s": "Minimal line",
+  "kind": "str",
+  "at": "engine.js:872"
+ },
+ {
+  "s": "Tag on top",
+  "kind": "str",
+  "at": "engine.js:873"
+ },
+ {
+  "s": "Elegant band",
+  "kind": "str",
+  "at": "engine.js:873"
+ },
+ {
+  "s": "Pill",
+  "kind": "str",
+  "at": "engine.js:873"
+ },
+ {
+  "s": "Big centre title",
+  "kind": "str",
+  "at": "engine.js:873"
+ },
+ {
+  "s": "Corner tag",
+  "kind": "str",
+  "at": "engine.js:873"
+ },
+ {
+  "s": "Fade",
+  "kind": "str",
+  "at": "engine.js:875"
+ },
+ {
+  "s": "Simply fades in",
+  "kind": "str",
+  "at": "engine.js:875"
+ },
+ {
+  "s": "Slide + fade",
+  "kind": "str",
+  "at": "engine.js:875"
+ },
+ {
+  "s": "Slides in a little from the side while fading",
+  "kind": "str",
+  "at": "engine.js:875"
+ },
+ {
+  "s": "Wipe",
+  "kind": "str",
+  "at": "engine.js:876"
+ },
+ {
+  "s": "Revealed from the side like a curtain",
+  "kind": "str",
+  "at": "engine.js:876"
+ },
+ {
+  "s": "Build up",
+  "kind": "str",
+  "at": "engine.js:876"
+ },
+ {
+  "s": "Accent bar first, then the name, then the second line",
+  "kind": "str",
+  "at": "engine.js:876"
+ },
+ {
+  "s": "Rise from a line",
+  "kind": "str",
+  "at": "engine.js:877"
+ },
+ {
+  "s": "Each line rises up out of an invisible line",
+  "kind": "str",
+  "at": "engine.js:877"
+ },
+ {
+  "s": "Line by line",
+  "kind": "str",
+  "at": "engine.js:877"
+ },
+ {
+  "s": "The name slides in, then the second line follows",
+  "kind": "str",
+  "at": "engine.js:877"
+ },
+ {
+  "s": "Pop",
+  "kind": "str",
+  "at": "engine.js:878"
+ },
+ {
+  "s": "Zooms in with a small bounce",
+  "kind": "str",
+  "at": "engine.js:878"
+ },
+ {
+  "s": "Soft focus",
+  "kind": "str",
+  "at": "engine.js:878"
+ },
+ {
+  "s": "Comes into focus from a blur",
+  "kind": "str",
+  "at": "engine.js:878"
+ },
+ {
+  "s": "Typewriter",
+  "kind": "str",
+  "at": "engine.js:878"
+ },
+ {
+  "s": "Typed out letter by letter",
+  "kind": "str",
+  "at": "engine.js:878"
+ },
+ {
+  "s": "\"{0}\", \"Segoe UI\", system-ui, sans-serif",
+  "kind": "tpl",
+  "at": "engine.js:905"
+ },
+ {
+  "s": "{0}{1} {2}px {3}",
+  "kind": "tpl",
+  "at": "engine.js:907"
+ },
+ {
+  "s": "600 54px \"Segoe UI\", system-ui, sans-serif",
+  "kind": "str",
+  "at": "engine.js:1140"
+ },
+ {
+  "s": "LIVE STUDIO",
+  "kind": "str",
+  "at": "engine.js:1141"
+ }
+]

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('studio', {
   nativeAudio: (rate, pcm) => ipcRenderer.send('native:audio', rate, pcm),
   nativeWeb: (id, cfg) => ipcRenderer.send('native:web', id, cfg),
   onNative: cb => ipcRenderer.on('native:ev', (e, h, payload) => cb(h, payload)),
+  setLang: l => ipcRenderer.send('app:lang', l),
   // VST3 plug-ins on the master
   vstStart: opts => ipcRenderer.invoke('vst:start', opts),
   vstStop: () => ipcRenderer.invoke('vst:stop'),

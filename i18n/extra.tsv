@@ -1,0 +1,92 @@
+Show name (used for recordings)	Название шоу (используется для записей)
+▶ Run Show	▶ Ведение
+🛠 Setup	🛠 Настройка
+Save everything now (Ctrl+Shift+S). Changes also save by themselves.	Сохранить всё сейчас (Ctrl+Shift+S). Изменения сохраняются и сами.
+▦ Layout	▦ Раскладка
+Arrange the interface	Расставить интерфейс
+⚙ Settings	⚙ Настройки
+Click anywhere to turn on audio	Щёлкните где угодно, чтобы включить звук
+Arrange your interface	Расставьте интерфейс
+Arranging this screen only. Drag panels by their title, resize with the buttons, hide what you don't need.	Раскладка только этого экрана. Перетаскивайте панели за заголовок, меняйте размер кнопками, скрывайте ненужное.
+Ready-made arrangements for the Run Show page	Готовые раскладки для страницы «Ведение»
+Arrangement…	Раскладка…
+Big monitors (like Wirecast)	Большие мониторы (как в Wirecast)
+Classic (monitors + side column)	Классическая (мониторы + боковая колонка)
+Reset to standard	Вернуть стандартную
+⚠ Computer or internet can't keep up — lower bitrate or use a hardware encoder	⚠ Компьютер или интернет не успевают — снизьте битрейт или используйте аппаратный кодировщик
+native engine starting…	встроенный движок запускается…
+⚠ {0} hitches	⚠ рывков: {0}
+0 hitches	0 рывков
+⚠ {0} dropped	⚠ пропущено: {0}
+0 dropped	0 пропущено
+Press Start, then clap.	Нажмите «Начать», затем хлопайте.
+Language	Язык
+Interface language	Язык интерфейса
+English	English
+Русский	Русский
+Keyboard shortcuts	Сочетания клавиш
+Keyboard shortcut	Сочетание клавиш
+slow	медленно
+medium	средне
+fast	быстро
+The language of the interface. Names you typed stay as they are.	Язык интерфейса. Названия, которые вы ввели, остаются как есть.
+Not available: {0}	Недоступно: {0}
+Native engine: {0} — using the classic engine.	Встроенный движок: {0} — используется классический.
+Missing or unreadable: {0}	Отсутствует или не читается: {0}
+Could not go live: {0}	Не удалось выйти в эфир: {0}
+Could not record: {0}	Не удалось начать запись: {0}
+Recording saved: {0}	Запись сохранена: {0}
+Stream connection problem: {0}. Reconnecting…	Проблема с соединением трансляции: {0}. Переподключение…
+Recording stopped: {0}	Запись остановлена: {0}
+Server: {0}	Сервер: {0}
+Key: {0}{1}	Ключ: {0}{1}
+Sending: {0}×{1} at {2} fps, {3} kbps picture, {4} kbps sound, encoder: {5}	Отправка: {0}×{1} при {2} кадр/с, картинка {3} кбит/с, звук {4} кбит/с, кодировщик: {5}
+If YouTube Studio still does not show it: (1) open Studio → Go live → Stream and check the key there matches the one above; (2) a scheduled event has its own key unless you picked “default stream key”; (3) the preview in Studio can take 20–30 seconds to appear; (4) a scheduled event shows the preview but only goes public when you press GO LIVE in Studio — or connect your YouTube account here and Live Studio does that for you.	Если YouTube Studio всё ещё не показывает трансляцию: (1) откройте Studio → Начать трансляцию → Трансляция и проверьте, что ключ там совпадает с ключом выше; (2) у запланированного события свой ключ, если вы не выбрали «ключ трансляции по умолчанию»; (3) предпросмотр в Studio может появиться через 20–30 секунд; (4) запланированное событие показывает предпросмотр, но становится публичным, только когда вы нажмёте «Начать эфир» в Studio, — или подключите здесь аккаунт YouTube, и Live Studio сделает это за вас.
+YouTube reports for “{0}”: {1}.	YouTube сообщает для «{0}»: {1}.
+Reported: {0}	Сообщение: {0}
+Test could not start: {0}	Тест не запустился: {0}
+Test file saved: {0}	Тестовый файл сохранён: {0}
+the test stopped by itself: {0}	тест остановился сам: {0}
+Speaker: {0}{1}	Выступающий: {0}{1}
+Speaker: {0}	Выступающий: {0}
+Now: {0}.	Сейчас: {0}.
+Could not convert: {0}	Не удалось преобразовать: {0}
+✅ Event: {0}	✅ Событие: {0}
+Plug-ins: {0}	Плагины: {0}
+Plug-in “{0}” could not be loaded: {1}	Плагин «{0}» не удалось загрузить: {1}
+Plug-in scan: {0}	Поиск плагинов: {0}
+{0} file(s) could not be opened: {1}	Не удалось открыть файлов: {0} — {1}
+VST3 plug-ins (e.g. Waves) on the program sound, top to bottom: after the master fader, before Live Studio’s compressor and limiter (keep LIMITER on as the last safety). They run in a separate program — if one crashes, the stream goes on without it. With plug-ins the sound runs about 50 ms behind; the picture is delayed to match. Settings made in a plug-in’s window are saved with the show.	Плагины VST3 (например, Waves) на звуке программы, сверху вниз: после мастер-фейдера, перед компрессором и лимитером Live Studio (держите ЛИМИТЕР включённым как последнюю защиту). Они работают в отдельной программе — если один упадёт, трансляция продолжится без него. С плагинами звук отстаёт примерно на 50 мс; картинка задерживается для синхронизации. Настройки, сделанные в окне плагина, сохраняются вместе с шоу.
+Loudness	Громкость
+target −14	цель −14
+Current delay on “{0}”: {1} ms	Текущая задержка на «{0}»: {1} мс
+🔊 sounds heard:	🔊 услышано звуков:
+🎥 movements/flashes seen:	🎥 замечено движений/вспышек:
+{0}: sound card connected.	{0}: звуковая карта подключена.
+{0}: sound card not ready yet, retrying…	{0}: звуковая карта ещё не готова, повторная попытка…
+{0}: could not open the sound card ({1}). Still trying — check it is plugged in.	{0}: не удалось открыть звуковую карту ({1}). Продолжаю пробовать — проверьте, подключена ли она.
+This encoder would not start, so the software encoder is being used until the program is restarted. Updating the graphics card driver usually fixes it. Reported: {0}	Этот кодировщик не запустился, поэтому до перезапуска программы используется программный. Обычно помогает обновление драйвера видеокарты. Сообщение: {0}
+Update check failed: {0}	Не удалось проверить обновления: {0}
+Live Studio could not start the video engine.	Live Studio не удалось запустить видеодвижок.
+Update your graphics driver and restart.	Обновите драйвер видеокарты и перезапустите.
+go live	выйти в эфир
+start recording	начать запись
+stop recording	остановить запись
+camera	камера
+set up	настроить
+after	через
+none	нет
+Arrange: centred	Расположение: по центру
+Font: {0}	Шрифт: {0}
+dB	дБ
+ms	мс
+LIVE	ЭФИР
+{0} s	{0} с
+stereo	стерео
+mono	моно
+🎥 Camera {0}	🎥 Камера {0}
+LIMIT −{0}	ЛИМИТ −{0}
+♪ MUSIC PREVIEW	♪ МУЗЫКА ПРЕДПРОСМОТР
+♪ MUSIC ON AIR	♪ МУЗЫКА В ЭФИРЕ
+🎞 PREVIEW	🎞 ПРЕДПРОСМОТР
+🎞 ON AIR	🎞 В ЭФИРЕ

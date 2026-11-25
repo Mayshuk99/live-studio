@@ -115,6 +115,26 @@ function natWebFrame(f) {
 function webRepaint(id) { const w = webPages.get(id); if (w) { w.needFull = true; try { w.win.webContents.invalidate(); } catch (e) { /* */ } } }
 app.on('before-quit', () => { natWanted = null; });
 
+/* ---------- interface language: the window tells us; dialogs from here use it too ---------- */
+let uiLang = 'en';
+const UI_RU = {
+  'Folder with VST3 plug-ins': 'Папка с плагинами VST3',
+  'Keep streaming': 'Продолжать трансляцию', 'End stream and quit': 'Завершить трансляцию и выйти',
+  'You are live': 'Вы в эфире', 'You are live or recording right now.': 'Сейчас идёт трансляция или запись.',
+  'Quitting will end the stream and finish the recording.': 'Выход завершит трансляцию и запись.',
+  'Cancel': 'Отмена', 'Close without saving': 'Закрыть без сохранения', 'Could not save': 'Не удалось сохранить',
+  'Your changes could not be saved.': 'Не удалось сохранить изменения.',
+  'Add video, picture or music': 'Добавить видео, картинку или музыку', 'Video, pictures & music': 'Видео, картинки и музыка', 'All files': 'Все файлы',
+  'Save show': 'Сохранить шоу', 'Open show': 'Открыть шоу', 'Live Studio show': 'Шоу Live Studio',
+  'Folder for recordings': 'Папка для записей',
+  'Save': 'Сохранить', "Don't save": 'Не сохранять', 'Save changes?': 'Сохранить изменения?',
+  'Do you want to save your changes?': 'Сохранить изменения?',
+  'You changed shots, slides, titles, people or settings since you last saved. If you don\'t save, those changes are lost.': 'После последнего сохранения вы меняли кадры, слайды, титры, людей или настройки. Если не сохранить, эти изменения пропадут.',
+  'Live Studio — unsaved changes': 'Live Studio — есть несохранённые изменения'
+};
+const T = s => (uiLang === 'ru' && UI_RU[s]) || s;
+ipcMain.on('app:lang', (e, l) => { uiLang = l === 'ru' ? 'ru' : 'en'; if (win && !win.isDestroyed()) win.setTitle(unsaved ? T('Live Studio — unsaved changes') : 'Live Studio'); });
+
 /* ---------- VST3 plug-ins on the Master (inserts): run in their own program (ls-vst), so a plug-in that crashes
    never takes Live Studio or the stream with it — the sound just goes on without it ---------- */
 const VST = require('./vst-host');
@@ -196,7 +216,7 @@ ipcMain.handle('vst:scan', async (e, force, extra) => {
   try { return await vstS.scanning; } catch (err) { return { error: err.message }; }
 });
 ipcMain.handle('vst:pick-folder', async () => {
-  const r = await dialog.showOpenDialog(win, { title: 'Folder with VST3 plug-ins', properties: ['openDirectory'] });
+  const r = await dialog.showOpenDialog(win, { title: T('Folder with VST3 plug-ins'), properties: ['openDirectory'] });
   return r.canceled ? null : r.filePaths[0];
 });
 app.on('before-quit', () => { vstS.want = null; const p = vh.proc; if (p) { vh.send(['quit']); setTimeout(() => { try { p.kill(); } catch (e) { /* */ } }, 2000).unref(); } });
@@ -240,8 +260,8 @@ function createWindow() {
     const live = isLive || outputs.active;
     if (live) {
       const r = dialog.showMessageBoxSync(win, {
-        type: 'warning', buttons: ['Keep streaming', 'End stream and quit'], defaultId: 0, cancelId: 0,
-        title: 'You are live', message: 'You are live or recording right now.', detail: 'Quitting will end the stream and finish the recording.'
+        type: 'warning', buttons: [T('Keep streaming'), T('End stream and quit')], defaultId: 0, cancelId: 0,
+        title: T('You are live'), message: T('You are live or recording right now.'), detail: T('Quitting will end the stream and finish the recording.')
       });
       if (r === 0) { e.preventDefault(); return; }
     }
@@ -251,7 +271,7 @@ function createWindow() {
     e.preventDefault();
     (async () => {
       if (save === 'yes' && !(await saveFromWindow())) {
-        const r = dialog.showMessageBoxSync(win, { type: 'error', buttons: ['Cancel', 'Close without saving'], defaultId: 0, cancelId: 0, title: 'Could not save', message: 'Your changes could not be saved.' });
+        const r = dialog.showMessageBoxSync(win, { type: 'error', buttons: [T('Cancel'), T('Close without saving')], defaultId: 0, cancelId: 0, title: T('Could not save'), message: T('Your changes could not be saved.') });
         if (r === 0) return;
       }
       if (live) { await outputs.stopAll(); isLive = false; }
@@ -331,10 +351,10 @@ ipcMain.handle('settings:save', (e, obj) => {
 
 ipcMain.handle('media:pick', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: 'Add video, picture or music', properties: ['openFile', 'multiSelections'],
+    title: T('Add video, picture or music'), properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'Video, pictures & music', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'jfif', 'bmp', 'avif', 'webp', 'gif', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'flac'] },
-      { name: 'All files', extensions: ['*'] }
+      { name: T('Video, pictures & music'), extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'jfif', 'bmp', 'avif', 'webp', 'gif', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'flac'] },
+      { name: T('All files'), extensions: ['*'] }
     ]
   });
   if (r.canceled) return [];
@@ -366,7 +386,7 @@ ipcMain.handle('media:convert', (e, src) => new Promise(resolve => {
   p.on('exit', code => resolve(code === 0 && fs.existsSync(out) ? { path: out } : { error: 'This file could not be converted.' }));
 }));
 ipcMain.handle('folder:pick', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
+  const r = await dialog.showOpenDialog(win, { title: T('Folder for recordings'), properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.handle('folder:open', (e, p) => { if (p) { try { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); } catch (err) { /* e.g. a whole drive */ } shell.openPath(p); } });
@@ -374,15 +394,15 @@ ipcMain.handle('file:show', (e, p) => { if (p) shell.showItemInFolder(p); });
 
 ipcMain.handle('show:export', async (e, obj) => {
   const r = await dialog.showSaveDialog(win, {
-    title: 'Save show', defaultPath: `${obj.showName || 'Show'}.livestudio.json`,
-    filters: [{ name: 'Live Studio show', extensions: ['json'] }]
+    title: T('Save show'), defaultPath: `${obj.showName || 'Show'}.livestudio.json`,
+    filters: [{ name: T('Live Studio show'), extensions: ['json'] }]
   });
   if (r.canceled) return false;
   writeJSON(r.filePath, obj);
   return true;
 });
 ipcMain.handle('show:import', async () => {
-  const r = await dialog.showOpenDialog(win, { title: 'Open show', filters: [{ name: 'Live Studio show', extensions: ['json'] }], properties: ['openFile'] });
+  const r = await dialog.showOpenDialog(win, { title: T('Open show'), filters: [{ name: T('Live Studio show'), extensions: ['json'] }], properties: ['openFile'] });
   if (r.canceled) return null;
   return readJSON(r.filePaths[0], null);
 });
@@ -433,13 +453,13 @@ ipcMain.handle('out:stop', (e, id) => outputs.stop(id));
 ipcMain.on('app:live', (e, live) => { isLive = !!live; });
 // unsaved changes: the window tells us when there are some, and we ask before closing
 let unsaved = false, closeOK = false;
-ipcMain.on('app:dirty', (e, d) => { unsaved = !!d; if (win && !win.isDestroyed()) win.setTitle(unsaved ? 'Live Studio — unsaved changes' : 'Live Studio'); });
+ipcMain.on('app:dirty', (e, d) => { unsaved = !!d; if (win && !win.isDestroyed()) win.setTitle(unsaved ? T('Live Studio — unsaved changes') : 'Live Studio'); });
 function askSave() {
   if (!unsaved || !win || win.isDestroyed()) return 'no';
   const r = dialog.showMessageBoxSync(win, {
-    type: 'question', buttons: ['Save', "Don't save", 'Cancel'], defaultId: 0, cancelId: 2, noLink: true,
-    title: 'Save changes?', message: 'Do you want to save your changes?',
-    detail: 'You changed shots, slides, titles, people or settings since you last saved. If you don\'t save, those changes are lost.'
+    type: 'question', buttons: [T('Save'), T("Don't save"), T('Cancel')], defaultId: 0, cancelId: 2, noLink: true,
+    title: T('Save changes?'), message: T('Do you want to save your changes?'),
+    detail: T('You changed shots, slides, titles, people or settings since you last saved. If you don\'t save, those changes are lost.')
   });
   return r === 0 ? 'yes' : r === 1 ? 'no' : 'cancel';
 }

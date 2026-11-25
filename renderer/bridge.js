@@ -118,6 +118,7 @@
     },
     vstScan: async () => { const L = vstL(); await new Promise(r => setTimeout(r, 200)); return { plugins: L.list, problems: [], folders: ['C:\\Program Files\\Common Files\\VST3'], modules: 2 }; },
     vstPickFolder: async () => null,
+    setLang: () => {},
     // the direct line: a worker stands in for the host program (its own thread, like the real one)
     vstPortSink: port => {
       const L = vstL();

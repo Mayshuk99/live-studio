@@ -7,6 +7,8 @@
 
   /* ================= helpers ================= */
   const $ = (s, r = document) => r.querySelector(s);
+  // a text as it will appear on screen (translated) — for code that compares before it sets, so nothing is redrawn needlessly
+  const T = s => (window.I18N ? window.I18N.tr(s) : s);
   function el(tag, props, ...kids) {
     const e = document.createElement(tag);
     if (props) for (const [k, v] of Object.entries(props)) {
@@ -163,6 +165,9 @@
   /* ================= state ================= */
   let show = merge(defaultShow(), (await S.loadShow()) || {});
   let settings = merge(defaultSettings(), (await S.loadSettings()) || {});
+  // interface language (everything on screen is translated as it appears — see i18n.js)
+  const setLanguage = l => { if (window.I18N) window.I18N.setLang(l); if (S.setLang) S.setLang(l); };
+  setLanguage(settings.lang || 'en');
   if (settings.ui.layoutV < 4 || !settings.ui.layouts) { settings.ui.layouts = defaultLayouts(); settings.ui.layoutV = 5; delete settings.ui.layout; }
   if (settings.ui.layoutV === 4) { settings.ui.layouts.live = layoutFrom('live'); settings.ui.layoutV = 5; } // 1.25: big monitors (the Setup page is kept)
   for (const v of ['live', 'setup']) {
@@ -768,7 +773,7 @@
     return r;
   }
   // write text / styles only when they change (each write makes the browser redo the page layout)
-  const setText = (n, t) => { if (n.textContent !== t) n.textContent = t; };
+  const setText = (n, t) => { t = T(t); if (n.textContent !== t) n.textContent = t; };
 
   /* ================= switching ================= */
   function setPreview(id) {
@@ -1930,7 +1935,7 @@
       if (!v) return;
       if (!drag) { const rv = String(Math.round(v.currentTime / v.duration * 1000)); if (range.value !== rv) range.value = rv; setText(now, fmtShort(v.currentTime)); setText(left, '−' + fmtShort(v.duration - v.currentTime)); }
       const ic = v.paused ? '▶' : '⏸'; if (playBtn.textContent !== ic) playBtn.textContent = ic;
-      const tg = `${v.tagName === 'AUDIO' ? '♪ MUSIC' : '🎞'} ${kind === 'pv' ? 'PREVIEW' : 'ON AIR'}`; if (tag.textContent !== tg) tag.textContent = tg;
+      const tg = T(`${v.tagName === 'AUDIO' ? '♪ MUSIC' : '🎞'} ${kind === 'pv' ? 'PREVIEW' : 'ON AIR'}`); if (tag.textContent !== tg) tag.textContent = tg;
     };
     return { bar, update };
   }
@@ -3396,7 +3401,7 @@
   function syncAudioButtons() {
     const m = show.audio.master;
     document.querySelectorAll('.tbtn[data-akey]').forEach(b => b.classList.toggle('on', b.dataset.akey === 'dyn' ? !!dynCfg().comp.on : b.dataset.akey === 'fx' ? vstOnCount() > 0 : !!m[b.dataset.akey]));
-    document.querySelectorAll('.tbtn[data-akey="fx"]').forEach(b => { const t = vstBtnText(); if (b.textContent !== t) b.textContent = t; b.classList.toggle('bad', [...VSTR.slots.values()].some(v => v.broken || v.err)); });
+    document.querySelectorAll('.tbtn[data-akey="fx"]').forEach(b => { const t = T(vstBtnText()); if (b.textContent !== t) b.textContent = t; b.classList.toggle('bad', [...VSTR.slots.values()].some(v => v.broken || v.err)); });
   }
   RENDER.audio = body => {
     body.innerHTML = '';
@@ -4114,12 +4119,12 @@
     const lim = m0.limiter ? hold('lim', Math.max(0, -gm.lim)) : 0, cmp = dynCfg().comp.on ? hold('comp', Math.max(0, -gm.comp)) : 0;
     drawMaster(MA); drawMonMeter(MA, monMeterMain, 'left', m0.limiter ? lim : null);
     for (const b of document.querySelectorAll('.tbtn[data-akey="limiter"]')) {
-      const t = m0.limiter && lim >= 0.3 ? `LIMIT −${lim.toFixed(1)}` : 'LIMIT';
+      const t = T(m0.limiter && lim >= 0.3 ? `LIMIT −${lim.toFixed(1)}` : 'LIMIT');
       if (b.textContent !== t) b.textContent = t;
       b.classList.toggle('working', m0.limiter && lim >= 0.3); b.classList.toggle('hard', m0.limiter && lim > 6);
     }
     for (const b of document.querySelectorAll('.tbtn[data-akey="dyn"]')) {
-      const t = cmp >= 0.3 ? `DYN −${cmp.toFixed(1)}` : 'DYN';
+      const t = T(cmp >= 0.3 ? `DYN −${cmp.toFixed(1)}` : 'DYN');
       if (b.textContent !== t) b.textContent = t;
       b.classList.toggle('working', cmp >= 0.3);
     }
@@ -4314,6 +4319,10 @@
         el('div', null, check(' Fade to black also fades the audio', s.ftbAudio, v => { s.ftbAudio = v; saveSettings(); }))),
 
       el('h3', null, 'Interface'),
+      el('div', { class: 'field' }, el('span', null, 'Language'),
+        el('div', { class: 'row', style: 'gap:10px' },
+          select(window.I18N ? window.I18N.languages : [['en', 'English']], s.lang || 'en', v => { s.lang = v; saveSettings(); setLanguage(v); logEvent('SETTINGS', `language ${v}`); }, { translate: 'no' }),
+          el('span', { class: 'muted', style: 'font-size:.85em' }, 'The language of the interface. Names you typed stay as they are.'))),
       el('div', { class: 'grid2' },
         el('div', null, slider({ label: 'Text size', min: 0.85, max: 1.5, step: 0.05, value: s.ui.scale, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { s.ui.scale = v; applyUI(); saveSettings(); } })),
         el('div', null, slider({ label: 'Shot button size', min: 0.7, max: 1.8, step: 0.05, value: s.ui.card, reset: 1, fmt: v => `${Math.round(v * 100)}%`, onInput: v => { s.ui.card = v; applyUI(); saveSettings(); } }))),
@@ -4702,5 +4711,5 @@
   function markGlitch() { logEvent('MARK', '>>> F9 pressed: glitch seen on screen / YouTube <<<'); logFlush(); toast('Marked in the log ✓ (F9)', 'ok'); }
   document.addEventListener('keydown', e => { if (e.key === 'F9') { e.preventDefault(); markGlitch(); } });
   startServiceLog();
-  window.__live = { Feed, engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb, markGlitch, logFlush, switchEngine, NAT, goLive, togglePic, VSTR, vstSync, openDynamics };
+  window.__live = { Feed, engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb, markGlitch, logFlush, switchEngine, NAT, goLive, togglePic, VSTR, vstSync, openDynamics, openSettings, openServiceEdit, openHoldDesigner, openMixer, openShortcuts, openYouTube, setLanguage };
 })();
