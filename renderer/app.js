@@ -3564,7 +3564,7 @@
   const masterCanvas = el('canvas', { class: 'master-meters', width: 150, height: 300 });
   const gonio = el('canvas', { class: 'gonio', width: 160, height: 160 });
   const corrCanvas = el('canvas', { class: 'corr', width: 300, height: 26 });
-  const lufsBox = el('div', { class: 'lufs mono' });
+  const lufsBox = el('div', { class: 'lufs mono', title: 'Click for the AUTO level settings', style: 'cursor:pointer', onclick: () => openDynamics('auto') });
   /* the audio buttons: in the Audio panel, and (when that panel is hidden) under the monitors */
   function audioButtons() {
     const m = show.audio.master;
@@ -3576,12 +3576,13 @@
       tog('LIMIT', 'limiter', 'YouTube-safe limiter: keeps peaks at or below the Out ceiling (set in DYN). Turns orange and shows how many dB it is turning the sound down while it works (red above 6 dB = too much — lower the level)', () => mixer.setMaster(m)),
       el('button', { class: 'tbtn' + (dynCfg().comp.on ? ' on' : ''), dataset: { akey: 'dyn' }, title: 'Compressor & limiter: threshold, ratio, attack, release, knee, out gain, ceiling', onclick: () => openDynamics() }, 'DYN'),
       el('button', { class: 'tbtn' + (vstOnCount() ? ' on' : ''), dataset: { akey: 'fx' }, title: 'Plug-ins (VST3, e.g. Waves) on the master — inserts before the compressor and limiter', onclick: () => openDynamics('fx') }, vstBtnText()),
-      tog('AUTO −14', 'auto', 'Auto level: slowly turns the overall volume up or down to sit at YouTube’s −14 LUFS', () => {}),
+      (() => { const b = tog(autoLabel(), 'auto', 'Auto level: slowly turns the overall volume up or down to sit at the target loudness (YouTube: −14 LUFS). Right-click for its settings — target, speed, range…', () => {}); b.addEventListener('contextmenu', e => { e.preventDefault(); openDynamics('auto'); }); return b; })(),
       el('button', { class: 'tbtn', title: 'Sound card, volumes, mute, sync test, output', onclick: openMixer }, names ? '🎚 Mixer' : '🔌 Connect sound card')];
   }
   function syncAudioButtons() {
     const m = show.audio.master;
     document.querySelectorAll('.tbtn[data-akey]').forEach(b => b.classList.toggle('on', b.dataset.akey === 'dyn' ? !!dynCfg().comp.on : b.dataset.akey === 'fx' ? vstOnCount() > 0 : !!m[b.dataset.akey]));
+    document.querySelectorAll('.tbtn[data-akey="auto"]').forEach(b => { const t = T(autoLabel()); if (b.textContent !== t) b.textContent = t; });
     document.querySelectorAll('.tbtn[data-akey="fx"]').forEach(b => { const t = T(vstBtnText()); if (b.textContent !== t) b.textContent = t; b.classList.toggle('bad', [...VSTR.slots.values()].some(v => v.broken || v.err)); });
   }
   RENDER.audio = body => {
@@ -3643,7 +3644,7 @@
         ? el('div', { class: 'status-bad', style: 'font-size:.85em;margin-top:4px' }, 'Headphones and Program playback are the same device — choose your headphones here.') : null,
       el('h3', null, 'Master volume'),
       el('div', { class: 'ch master-ch' }, el('span', { class: 'ch-mute ghost' }, ''), el('div', { class: 'ch-name' }, 'MASTER'), mFader, mDb, el('span')),
-      el('div', { class: 'muted', style: 'font-size:.85em;margin-top:8px' }, 'Normally leave these at 0 and mix on your sound desk. LIMIT keeps peaks under the Out ceiling (DYN); AUTO −14 holds the overall loudness at YouTube’s level.'),
+      el('div', { class: 'muted', style: 'font-size:.85em;margin-top:8px' }, 'Normally leave these at 0 and mix on your sound desk. LIMIT keeps peaks under the Out ceiling (DYN); AUTO holds the overall loudness at the target (right-click AUTO for its settings).'),
       el('div', { class: 'row', style: 'margin-top:14px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => closeModal() }, 'Done')));
     openModal('Audio mixer & sound card', body);
   }
@@ -3880,6 +3881,20 @@
     ['Even it out — stronger', { threshold: -28, ratio: 4, attack: 5, release: 120, knee: 4, makeup: 6 }],
     ['Console style (−26 dB, 3:1)', { threshold: -26, ratio: 3, attack: 1, release: 144, knee: 2, makeup: 4 }]];
   const RATIOS = [1, 1.1, 1.3, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 6, 8, 10, 20];
+  /* AUTO (auto level): its settings live with the show (Audio → right-click AUTO, or DYN → AUTO LEVEL) */
+  const AUTO_DEF = { target: -14, window: 'S', reaction: 8, up: 0.8, down: 0.8, maxUp: 12, maxDown: 12, dead: 0, gate: -45 };
+  const AUTO_BEHAVIOUR = [
+    ['Gentle (default)', { window: 'S', reaction: 8, up: 0.8, down: 0.8, dead: 0 }],
+    ['Music — slow, keeps the dynamics', { window: 'L', reaction: 20, up: 0.4, down: 0.6, dead: 1 }],
+    ['Speech — quicker between speakers', { window: 'S', reaction: 3, up: 1.5, down: 3, dead: 0.5 }]
+  ];
+  function autoCfg() {
+    const m = show.audio.master, c = m.autoCfg || (m.autoCfg = {});
+    for (const k in AUTO_DEF) if (typeof c[k] !== typeof AUTO_DEF[k]) c[k] = AUTO_DEF[k];
+    return c;
+  }
+  const minus = v => (v < 0 ? '−' : '') + Math.abs(v);
+  const autoLabel = () => `AUTO ${minus(autoCfg().target)}`;
   function dynCfg() {
     const m = show.audio.master;
     // fill in missing values on the SAME objects (an open DYN window keeps editing them)
@@ -3926,7 +3941,52 @@
         el('button', { class: 'btn dyn-tab' + (tab === 'comp' ? ' sel' : ''), onclick: () => { rt.dynTab = 'comp'; draw(); } }, 'COMPRESSOR', el('span', { class: 'dot' + (c.on ? ' on' : '') })),
         el('button', { class: 'btn dyn-tab' + (tab === 'lim' ? ' sel' : ''), onclick: () => { rt.dynTab = 'lim'; draw(); } }, 'LIMITER', el('span', { class: 'dot' + (m.limiter ? ' on' : '') })),
         el('button', { class: 'btn dyn-tab' + (tab === 'fx' ? ' sel' : ''), title: 'VST3 plug-ins on the master (inserts)', onclick: () => { rt.dynTab = 'fx'; draw(); } }, 'PLUG-INS', el('span', { class: 'dot fx-dot' + (vstOnCount() ? ' on' : '') })),
-        el('span', { class: 'grow' }), tab === 'fx' ? null : presetSel);
+        el('button', { class: 'btn dyn-tab' + (tab === 'auto' ? ' sel' : ''), title: 'AUTO: automatic level toward the target loudness', onclick: () => { rt.dynTab = 'auto'; draw(); } }, 'AUTO LEVEL', el('span', { class: 'dot' + (m.auto ? ' on' : '') })),
+        el('span', { class: 'grow' }), tab === 'fx' || tab === 'auto' ? null : presetSel);
+      // AUTO LEVEL: target, how it measures, how fast and how far it may move — and a graph of the last minute
+      const autoPage = () => {
+        const C = autoCfg();
+        const set = (k, v) => { C[k] = v; if (k === 'maxUp' || k === 'maxDown') { rt.autoDb = clamp(rt.autoDb || 0, -C.maxDown, C.maxUp); mixer.setAuto(rt.autoDb); } changed(); syncAudioButtons(); drawAutoGraph(rt.autoGraph); };
+        const seg = (opts, cur, fn) => el('div', { class: 'seg' }, opts.map(([v, t, tip]) => el('button', { class: 'btn small' + (cur === v ? ' sel' : ''), title: tip || null, onclick: () => fn(v) }, t)));
+        const lrow = (label, ctl) => el('div', { class: 'row', style: 'gap:10px;align-items:center;margin:6px 0' }, el('span', { class: 'lbl', style: 'width:calc(165px * var(--scale));flex:none;font-weight:600' }, label), ctl);
+        const cv = el('canvas', { class: 'auto-graph', width: 1400, height: 330 }); rt.autoGraph = cv;
+        // (the words in their own spans, so the interface language can change while this is open)
+        const iNow = el('span'), iAuto = el('span'), iSt = el('span');
+        const info = el('div', { class: 'auto-info mono' }, el('span', null, 'Now'), ': ', iNow, ' LUFS · ', el('span', null, 'auto'), ' ', iAuto, ' dB · ', iSt);
+        rt.autoInfo = () => {
+          const st = { off: 'off', frozen: 'frozen — holding its level', quiet: 'quiet — holding (below the gate)', ok: 'on target — holding', up: 'turning up', down: 'turning down' }[rt.autoState || 'off'];
+          const l = rt.autoNow;
+          setText(iNow, l === undefined || l <= -60 ? '—' : l.toFixed(1)); setText(iAuto, `${(rt.autoDb || 0) >= 0 ? '+' : ''}${(rt.autoDb || 0).toFixed(1)}`); setText(iSt, st);
+        };
+        rt.autoInfo();
+        setTimeout(() => drawAutoGraph(cv), 0);
+        const beh = AUTO_BEHAVIOUR.findIndex(([, b]) => Object.keys(b).every(k => C[k] === b[k]));
+        return el('div', { class: 'auto-page' },
+          el('div', { class: 'row wrap', style: 'gap:8px;margin-bottom:8px;align-items:center' },
+            btnOn(!!m.auto, 'AUTO', () => { m.auto = !m.auto; changed(); draw(); refresh('audio'); syncAudioButtons(); }),
+            el('button', { class: 'btn' + (rt.autoHold ? ' on dyn-on' : ''), title: 'Hold the level where it is now (e.g. during a quiet prayer) — press again to let AUTO work', onclick: () => { rt.autoHold = !rt.autoHold; logEvent('AUDIO', `auto level ${rt.autoHold ? 'frozen' : 'released'}`); draw(); } }, rt.autoHold ? '❄ FROZEN' : '❄ Freeze'),
+            el('button', { class: 'btn', title: 'Back to 0 dB now', onclick: () => { rt.autoDb = 0; mixer.setAuto(0); rt.autoInfo(); } }, 'Reset to 0 dB'),
+            el('span', { class: 'grow' }),
+            select([...(beh < 0 ? [['', 'Behaviour: custom']] : []), ...AUTO_BEHAVIOUR.map(([n], i) => [i, n])], beh < 0 ? '' : beh, v => { if (v === '') return; Object.assign(C, AUTO_BEHAVIOUR[+v][1]); changed(); draw(); })),
+          info, cv,
+          el('div', { class: 'auto-legend' }, el('span', { style: 'color:#4ade80' }, '━ loudness'), el('span', { style: 'color:#60a5fa' }, '┅ target'), el('span', { style: 'color:#71717a' }, '┅ gate'), el('span', { style: 'color:#f59e0b' }, '━ AUTO gain (right scale)')),
+          el('div', { class: 'dyn-wrap' },
+            el('div', { class: 'dyn-col' },
+              el('div', { class: 'auto-h' }, 'Target & measuring'),
+              slider({ label: 'Target loudness', min: -30, max: -9, step: 0.5, value: C.target, reset: -14, fmt: v => `${minus(v)} LUFS`, onInput: v => set('target', v) }),
+              lrow('Quick targets', seg([[-14, 'YouTube −14', 'YouTube, Spotify'], [-16, 'Apple −16', 'Apple Music / Podcasts'], [-23, 'Broadcast −23', 'EBU R128 television / radio']], C.target, v => { set('target', v); draw(); })),
+              lrow('Measure over', seg([['M', 'Momentary 0.4 s', 'Reacts to every word — can pump'], ['S', 'Short 3 s', 'Like the Loudness meter (default)'], ['L', 'Long 10 s', 'The last 10 s, pauses left out — steadiest']], C.window, v => { set('window', v); draw(); })),
+              slider({ label: 'Leave alone within', min: 0, max: 4, step: 0.5, value: C.dead, reset: 0, fmt: v => `±${v.toFixed(1)} LU`, onInput: v => set('dead', v) }),
+              slider({ label: 'Ignore sound quieter than', min: -70, max: -20, step: 1, value: C.gate, reset: -45, fmt: v => `${minus(v)} LUFS`, onInput: v => set('gate', v) })),
+            el('div', { class: 'dyn-col' },
+              el('div', { class: 'auto-h' }, 'Speed & range'),
+              slider({ label: 'Reaction time', min: 1, max: 60, step: 1, value: C.reaction, reset: 8, fmt: v => `${v} s`, onInput: v => set('reaction', v) }),
+              slider({ label: 'Fastest turn up', min: 0.1, max: 6, step: 0.1, value: C.up, reset: 0.8, fmt: v => `${v.toFixed(1)} dB/s`, onInput: v => set('up', v) }),
+              slider({ label: 'Fastest turn down', min: 0.1, max: 6, step: 0.1, value: C.down, reset: 0.8, fmt: v => `${v.toFixed(1)} dB/s`, onInput: v => set('down', v) }),
+              slider({ label: 'Most it may boost', min: 0, max: 24, step: 0.5, value: C.maxUp, reset: 12, fmt: v => `+${v.toFixed(1)} dB`, onInput: v => set('maxUp', v) }),
+              slider({ label: 'Most it may cut', min: 0, max: 24, step: 0.5, value: C.maxDown, reset: 12, fmt: v => `−${v.toFixed(1)} dB`, onInput: v => set('maxDown', v) }))),
+          el('div', { class: 'muted', style: 'font-size:.82em;margin-top:8px' }, 'AUTO moves the whole mix slowly toward the target. Reaction time = how long it takes to fix most of a difference; the dB/s limits stop sudden jumps (a faster turn down than up catches loud moments without pumping quiet ones). “Leave alone within” stops it from chasing small changes; below “Ignore sound quieter than” (pauses, silence) it holds its level. It sits before the plug-ins, compressor and limiter. Right-click AUTO or click the Loudness box to open this page. Double-click a slider to reset it.'));
+      };
       const compPage = () => el('div', { class: 'dyn-col' },
         el('div', { class: 'row', style: 'gap:8px;margin-bottom:10px' }, btnOn(c.on, 'COMPRESSOR', () => { c.on = !c.on; apply(); draw(); syncAudioButtons(); })),
         slider({ label: 'Threshold', min: -60, max: 0, step: 0.5, value: c.threshold, reset: -24, fmt: v => `${v.toFixed(1)} dB`, onInput: v => { c.threshold = v; apply(); } }),
@@ -3967,8 +4027,8 @@
       };
       put(body,
         tabs,
-        tab === 'fx' ? null : presetRow,
-        tab === 'fx' ? vstPage() : tab === 'lim' ? limPage() : el('div', { class: 'dyn-wrap' }, compPage(), el('div', { class: 'dyn-col dyn-vis' }, graph, meters)),
+        tab === 'fx' || tab === 'auto' ? null : presetRow,
+        tab === 'auto' ? autoPage() : tab === 'fx' ? vstPage() : tab === 'lim' ? limPage() : el('div', { class: 'dyn-wrap' }, compPage(), el('div', { class: 'dyn-col dyn-vis' }, graph, meters)),
         el('div', { class: 'row', style: 'margin-top:12px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => { closeModal(); refresh('audio'); if (VSTR.ready) for (const x of vstIns()) if ((VSTR.slots.get(x.id) || {}).ok) S.vstCmd(['get-state', x.id]); } }, 'Done')));
     };
     // live picture: the curve, where the sound is on it right now, and In / GR / Out meters
@@ -4103,22 +4163,67 @@
     g.fillStyle = A.corr < 0 ? 'rgba(239,68,68,.75)' : 'rgba(74,222,128,.75)';
     const sc = Math.min(gw, gh) * 0.62;
     for (let i = 0; i < A.L.length; i += 2) { const l = A.L[i], r = A.R[i]; g.fillRect(gw / 2 + (r - l) * 0.7071 * sc, gh / 2 - (l + r) * 0.7071 * sc, 1.5 * k, 1.5 * k); }
-    // loudness against YouTube's −14 LUFS
-    const lu = v => v <= -60 ? '—' : v.toFixed(1);
-    const d = A.lufsS + 14;
+    // loudness against the target (YouTube's −14 LUFS unless changed in the AUTO settings)
+    const lu = v => v <= -60 ? '—' : v.toFixed(1), tg = autoCfg().target, yt = tg === -14;
+    const d = A.lufsS - tg;
     const cls = A.lufsS <= -60 ? '' : d > 2 ? 'bad' : d < -4 ? 'low' : 'ok';
-    const hint = A.lufsS <= -60 ? 'no sound' : d > 2 ? `${d.toFixed(0)} dB louder than YouTube’s level — it will be turned down` : d < -4 ? `${(-d).toFixed(0)} dB quieter than YouTube’s level` : 'matches YouTube ✓';
-    lufsBox.innerHTML = `<div><span class="mlabel">Loudness</span><span class="hint">target −14</span></div><div class="big ${cls}">${lu(A.lufsS)} <small>LUFS</small></div><div class="hint" style="margin:0">${hint}${rt.autoDb ? ` · auto ${rt.autoDb > 0 ? '+' : ''}${rt.autoDb.toFixed(1)} dB` : ''}</div>`;
+    const hint = A.lufsS <= -60 ? 'no sound' : yt ? (d > 2 ? `${d.toFixed(0)} dB louder than YouTube’s level — it will be turned down` : d < -4 ? `${(-d).toFixed(0)} dB quieter than YouTube’s level` : 'matches YouTube ✓')
+      : (d > 2 ? `${d.toFixed(0)} dB louder than the target` : d < -4 ? `${(-d).toFixed(0)} dB quieter than the target` : 'matches the target ✓');
+    lufsBox.innerHTML = `<div><span class="mlabel">Loudness</span><span class="hint">target ${minus(tg)}</span></div><div class="big ${cls}">${lu(A.lufsS)} <small>LUFS</small></div><div class="hint" style="margin:0">${hint}${rt.autoDb ? ` · auto ${rt.autoDb > 0 ? '+' : ''}${rt.autoDb.toFixed(1)} dB` : ''}${rt.autoHold && show.audio.master.auto ? ' · frozen' : ''}</div>`;
   }
-  // AUTO −14: slow automatic level toward YouTube's loudness (only while there is sound)
+  /* AUTO: slow automatic level toward the target loudness (only while there is sound). Every half second:
+       measure (Momentary 0.4 s / Short 3 s / Long 10 s gated) → if louder than the gate and outside the dead band,
+       move by (error ÷ reaction time) — never faster than the up / down speed, never beyond the boost / cut range.
+     The last minute is kept for the graph in DYN → AUTO LEVEL. */
+  const autoMeasure = (C, A) => C.window === 'M' ? A.lufsM : C.window === 'L' ? (A.lufsL ?? A.lufsS) : A.lufsS;
   setInterval(() => {
-    const m = show.audio.master;
-    if (!m.auto || !rt.MA) { if (rt.autoDb) { rt.autoDb = 0; mixer.setAuto(0); } return; }
-    const l = rt.MA.lufsS;
-    if (l < -45) return;
-    rt.autoDb = clamp((rt.autoDb || 0) + clamp((-14 - l) * 0.06, -0.4, 0.4), -12, 12);
-    mixer.setAuto(rt.autoDb);
+    const m = show.audio.master, C = autoCfg(), A = rt.MA;
+    const l = A ? autoMeasure(C, A) : -70;
+    let state = 'off';
+    if (!m.auto || !A) { if (rt.autoDb) { rt.autoDb = 0; mixer.setAuto(0); } }
+    else if (rt.autoHold) state = 'frozen';
+    else if (l < C.gate) state = 'quiet';
+    else {
+      const err = C.target - l;
+      if (Math.abs(err) <= C.dead) state = 'ok';
+      else {
+        const e = err - Math.sign(err) * C.dead;
+        const step = clamp(e * 0.5 / Math.max(0.5, C.reaction), -C.down * 0.5, C.up * 0.5);
+        rt.autoDb = clamp((rt.autoDb || 0) + step, -C.maxDown, C.maxUp);
+        mixer.setAuto(rt.autoDb);
+        state = step > 0 ? 'up' : 'down';
+      }
+    }
+    rt.autoState = state; rt.autoNow = l;
+    const H = rt.autoHist || (rt.autoHist = []);
+    H.push({ l, g: rt.autoDb || 0, on: !!m.auto }); if (H.length > 120) H.shift();
+    drawAutoGraph(rt.autoGraph);
+    if (rt.autoInfo && rt.autoInfo.isConnected) rt.autoInfo();
   }, 500);
+  // the last minute: loudness (green; grey when quieter than the gate), the target and its dead band, AUTO's gain (orange)
+  function drawAutoGraph(cv) {
+    if (!cv || !cv.isConnected) return;
+    const C = autoCfg(), H0 = rt.autoHist || [], g = cv.getContext('2d'), W = cv.width, Hh = cv.height;
+    const pl = 86, pr = 86, top = 18, bot = 40, gw = W - pl - pr, gh = Hh - top - bot;
+    const lo = Math.min(-40, C.target - 16), hi = Math.max(-4, C.target + 8), rng = Math.max(6, C.maxUp, C.maxDown);
+    const Y = v => top + (1 - (clamp(v, lo, hi) - lo) / (hi - lo)) * gh, YG = v => top + (1 - (v + rng) / (2 * rng)) * gh, X = i => pl + gw * (1 - (H0.length - 1 - i) / 119);
+    g.clearRect(0, 0, W, Hh); g.fillStyle = '#0a0a0c'; g.fillRect(pl, top, gw, gh);
+    g.font = '20px Consolas, monospace'; g.textBaseline = 'middle';
+    for (let v = Math.ceil(lo / 6) * 6; v <= hi; v += 6) { g.fillStyle = '#1f1f24'; g.fillRect(pl, Y(v), gw, 1); g.fillStyle = '#8d8d96'; g.textAlign = 'right'; g.fillText(minus(v), pl - 10, Y(v)); }
+    g.fillStyle = '#f59e0b'; g.textAlign = 'left';
+    for (const v of [rng, rng / 2, 0, -rng / 2, -rng]) g.fillText((v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(Math.round(v)), pl + gw + 10, YG(v));
+    g.fillStyle = '#8d8d96'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    g.fillText('LUFS', pl / 2, Hh - 10); g.fillText(T('−60 s'), pl + 30, Hh - 10); g.fillText(T('now'), pl + gw - 20, Hh - 10); g.fillStyle = '#f59e0b'; g.fillText(T('dB'), pl + gw + pr / 2, Hh - 10);
+    if (C.dead > 0) { g.fillStyle = 'rgba(96,165,250,.13)'; g.fillRect(pl, Y(C.target + C.dead), gw, Y(C.target - C.dead) - Y(C.target + C.dead)); }
+    g.strokeStyle = '#60a5fa'; g.lineWidth = 2; g.setLineDash([10, 8]); g.beginPath(); g.moveTo(pl, Y(C.target)); g.lineTo(pl + gw, Y(C.target)); g.stroke();
+    if (C.gate > lo) { g.strokeStyle = '#52525b'; g.beginPath(); g.moveTo(pl, Y(C.gate)); g.lineTo(pl + gw, Y(C.gate)); g.stroke(); }
+    g.setLineDash([]);
+    g.strokeStyle = 'rgba(245,158,11,.35)'; g.lineWidth = 1; g.beginPath(); g.moveTo(pl, YG(0)); g.lineTo(pl + gw, YG(0)); g.stroke();
+    g.lineWidth = 3;
+    for (let i = 1; i < H0.length; i++) { const a = H0[i - 1], b = H0[i]; if (a.l <= -60 || b.l <= -60) continue; g.strokeStyle = b.l < C.gate ? '#52525b' : '#4ade80'; g.beginPath(); g.moveTo(X(i - 1), Y(a.l)); g.lineTo(X(i), Y(b.l)); g.stroke(); }
+    g.strokeStyle = '#f59e0b'; g.beginPath(); H0.forEach((b, i) => { const y = YG(clamp(b.g, -rng, rng)); if (i) g.lineTo(X(i), y); else g.moveTo(X(i), y); }); g.stroke();
+    g.lineWidth = 1;
+  }
 
   /* ================= audio / video sync test ================= */
   async function openSyncTest() {
@@ -4309,7 +4414,7 @@
       if (b.textContent !== t) b.textContent = t;
       b.classList.toggle('working', cmp >= 0.3);
     }
-    if (miniLufs.isConnected) { const v = MA.lufsS, d = v + 14; setText(miniLufs, v <= -60 ? '— LUFS' : `${v.toFixed(1)} LUFS`); const cls = 'mini-lufs mono' + (v <= -60 ? '' : d > 2 ? ' bad' : d < -4 ? ' low' : ' ok'); if (miniLufs.className !== cls) miniLufs.className = cls; } drawMonMeter(mixer.previewAnalysis(), pvMeter, 'right');
+    if (miniLufs.isConnected) { const v = MA.lufsS, d = v - autoCfg().target; setText(miniLufs, v <= -60 ? '— LUFS' : `${v.toFixed(1)} LUFS`); const cls = 'mini-lufs mono' + (v <= -60 ? '' : d > 2 ? ' bad' : d < -4 ? ' low' : ' ok'); if (miniLufs.className !== cls) miniLufs.className = cls; } drawMonMeter(mixer.previewAnalysis(), pvMeter, 'right');
     for (const [id, m] of rt.meters) {
       const db = lv[id];
       if (db === undefined) continue;
@@ -4958,7 +5063,7 @@
         if (pc.cpu !== null) { sum.cpuSum += pc.cpu; sum.cpuN++; if (pc.parts) for (const [k, v] of Object.entries(pc.parts)) sum.parts[k] = (sum.parts[k] || 0) + v; }
       }
       if (performance.memory) line += ` heap ${Math.round(performance.memory.usedJSHeapSize / 1048576)}M`;
-      if (rt.MA) line += ` | ${rt.MA.lufsS <= -60 ? '—' : rt.MA.lufsS.toFixed(1)} LUFS`;
+      if (rt.MA) line += ` | ${rt.MA.lufsS <= -60 ? '—' : rt.MA.lufsS.toFixed(1)} LUFS${show.audio.master.auto ? ` auto ${(rt.autoDb || 0) >= 0 ? '+' : ''}${(rt.autoDb || 0).toFixed(1)}${rt.autoState && rt.autoState !== 'off' ? ' ' + rt.autoState : ''}` : ''}`;
       if (busy.length) flags.push('busy');
       sum.missed += Math.max(0, missed); sum.rep += Math.max(0, rep); sum.skip += Math.max(0, skip); sum.busy += busy.length; sum.busyMax = Math.max(sum.busyMax, ...busy, 0); if (flags.length) sum.bad++;
       if (LOG.on) LOG.buf.push(`${logTime()}${flags.length ? ' !' : '  '} ${(rt.live ? 'LIVE ' : '') + (rt.rec ? 'REC ' : '')}${line}${flags.length ? '  [' + flags.join(',') + ']' : ''}`);

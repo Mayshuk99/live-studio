@@ -515,13 +515,22 @@
       for (let i = 0; i < KL.length; i++) { kl += KL[i] * KL[i]; kr += KR[i] * KR[i]; }
       const ms = (kl + kr) / L.length;
       this._ms.push({ t: now, ms });
-      while (this._ms.length && now - this._ms[0].t > 3000) this._ms.shift();
+      while (this._ms.length && now - this._ms[0].t > 10000) this._ms.shift();
       const avg = (from) => { let a = 0, n = 0; for (const b of this._ms) if (now - b.t <= from) { a += b.ms; n++; } return n ? a / n : 0; };
+      // the last 10 s, gated like BS.1770's integrated loudness: silence (below −70) and moments 10 LU under the
+      // average are left out, so pauses between songs or sentences do not pull it down (AUTO: "Long 10 s")
+      const gated = () => {
+        let a = 0, n = 0; for (const b of this._ms) if (b.ms > 1e-7) { a += b.ms; n++; }
+        if (!n) return 0;
+        const rel = a / n * 0.1; let a2 = 0, n2 = 0;
+        for (const b of this._ms) if (b.ms > 1e-7 && b.ms >= rel) { a2 += b.ms; n2++; }
+        return n2 ? a2 / n2 : 0;
+      };
       const lufs = m => m > 1e-10 ? -0.691 + 10 * Math.log10(m) : -70;
       return {
         peakL, peakR, rmsL, rmsR, holdL: this.hold.L, holdR: this.hold.R,
         clipL: now - this.clip.L < 2000, clipR: now - this.clip.R < 2000,
-        corr: this.corr, lufsM: lufs(avg(400)), lufsS: lufs(avg(3000)), L: this._bL, R: this._bR,
+        corr: this.corr, lufsM: lufs(avg(400)), lufsS: lufs(avg(3000)), lufsL: lufs(gated()), L: this._bL, R: this._bR,
         silent: pl < 1e-4 && pr < 1e-4
       };
     }

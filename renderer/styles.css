@@ -712,3 +712,9 @@ textarea { width: 100%; box-sizing: border-box; }
 .rec-adv-l { text-align: right; font-weight: 600; }
 .rec-adv-h { grid-column: 1 / -1; margin-top: 6px; font-weight: 700; color: var(--muted); text-transform: uppercase; font-size: .8em; letter-spacing: .06em; }
 .rec-adv .check { margin: 0; }
+/* DYN → AUTO LEVEL */
+.auto-graph { width: 100%; height: auto; aspect-ratio: 1400 / 330; display: block; border-radius: 8px; background: #111114; }
+.auto-info { font-size: 1.05em; font-weight: 700; margin: 2px 0 6px; color: #e4e4e7; }
+.auto-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: .82em; margin: 4px 0 10px; }
+.auto-h { font-weight: 800; letter-spacing: .04em; text-transform: uppercase; font-size: .8em; color: var(--muted); margin: 2px 0 6px; }
+.auto-page .slider { grid-template-columns: calc(165px * var(--scale)) 1fr calc(84px * var(--scale)); }
