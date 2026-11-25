@@ -568,6 +568,29 @@ textarea { width: 100%; box-sizing: border-box; }
 .mini-lufs { font-weight: 700; margin-left: 6px; color: var(--muted); white-space: nowrap; }
 .mini-lufs.ok { color: #4ade80; } .mini-lufs.low { color: #60a5fa; } .mini-lufs.bad { color: #f87171; }
 
+/* DYN window, PLUG-INS tab: VST3 inserts on the master */
+.vst-page { min-width: 0; }
+.vst-pick .row input { min-width: 0; }
+.vst-status { margin: 2px 0 12px; font-size: .95em; }
+.vst-slots { display: flex; flex-direction: column; gap: 8px; }
+.vst-slot { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
+.vst-slot.off .vst-name { opacity: .5; }
+.vst-slot.bad { border-color: #ef4444; }
+.vst-num { width: 22px; text-align: center; color: var(--muted); font-weight: 800; }
+.vst-pwr { width: 48px; height: 42px; font-size: 1.25em; padding: 0; color: var(--muted); }
+.vst-pwr.on { color: #4ade80; border-color: #4ade80; box-shadow: 0 0 8px rgba(74,222,128,.25); }
+.vst-name { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vst-name b { font-size: 1.1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vst-name small { color: var(--muted); }
+.vst-name span { font-size: .85em; }
+.vst-add { align-self: flex-start; margin-top: 4px; padding: 10px 18px; }
+.vst-pick { margin-top: 12px; padding: 12px; background: #0d121b; border: 1px solid var(--line); border-radius: 10px; }
+.vst-list { max-height: 360px; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px; }
+.vst-item { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 9px 11px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; color: inherit; font: inherit; cursor: pointer; }
+.vst-item:hover { border-color: var(--accent); }
+.vst-item small { color: var(--muted); font-size: .8em; }
+.tbtn.bad { border-color: #ef4444; color: #fca5a5; }
+
 /* DYN window: tabs + L2-style limiter page */
 .dyn-tabs { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .dyn-tab { min-width: 170px; font-weight: 800; letter-spacing: .05em; padding: 10px 16px; display: inline-flex; align-items: center; gap: 10px; justify-content: center; }

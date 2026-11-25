@@ -1,7 +1,11 @@
 /* Live Studio — safe bridge between the interface and the desktop app */
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
-window.addEventListener('message', e => { if (e.source === window && e.data === 'ls-native-audio-port' && e.ports && e.ports[0]) ipcRenderer.postMessage('native:audio-port', null, [e.ports[0]]); });
+window.addEventListener('message', e => {
+  if (e.source !== window || !e.ports || !e.ports[0]) return;
+  if (e.data === 'ls-native-audio-port') ipcRenderer.postMessage('native:audio-port', null, [e.ports[0]]);
+  else if (e.data === 'ls-vst-port') ipcRenderer.postMessage('vst:port', null, [e.ports[0]]);
+});
 
 contextBridge.exposeInMainWorld('studio', {
   isApp: true,
@@ -17,6 +21,16 @@ contextBridge.exposeInMainWorld('studio', {
   nativeAudio: (rate, pcm) => ipcRenderer.send('native:audio', rate, pcm),
   nativeWeb: (id, cfg) => ipcRenderer.send('native:web', id, cfg),
   onNative: cb => ipcRenderer.on('native:ev', (e, h, payload) => cb(h, payload)),
+  // VST3 plug-ins on the master
+  vstStart: opts => ipcRenderer.invoke('vst:start', opts),
+  vstStop: () => ipcRenderer.invoke('vst:stop'),
+  vstCmd: (fields, payload) => ipcRenderer.send('vst:cmd', fields, payload || null),
+  vstAudio: (seq, pcm) => ipcRenderer.send('vst:audio', seq, pcm),
+  vstScan: (force, extra) => ipcRenderer.invoke('vst:scan', !!force, extra || []),
+  vstPickFolder: () => ipcRenderer.invoke('vst:pick-folder'),
+  onVst: cb => ipcRenderer.on('vst:ev', (e, f, payload) => cb(f, payload)),
+  onVstAudio: cb => ipcRenderer.on('vst:audio', (e, d) => cb(d)),
+  onVstScan: cb => ipcRenderer.on('vst:scan-progress', (e, p) => cb(p)),
   logInfo: () => ipcRenderer.invoke('log:info'),
   logShow: () => ipcRenderer.invoke('log:show'),
   ffmpegVersion: () => ipcRenderer.invoke('app:ffmpeg'),

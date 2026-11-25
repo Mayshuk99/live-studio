@@ -150,20 +150,48 @@
     pcmTapPort(port) { if (this._tap) this._tap.port.postMessage({ port }, port ? [port] : []); }
     disablePcmTap() { this._tapCb = null; }
 
+    /* VST3 plug-ins on the master (after the master fader and auto-level, before the compressor and limiter).
+       The node stays in the chain once made; with no plug-ins it passes the sound straight through, with no delay. */
+    async enableInserts(onMsg) {
+      this._vstMsg = onMsg;
+      if (this._vst) return this._vst;
+      if (!this._vstLoad) this._vstLoad = this.ctx.audioWorklet.addModule('vst-insert.js').then(() => {
+        const n = new AudioWorkletNode(this.ctx, 'vst-insert', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
+        n.port.onmessage = e => { if (this._vstMsg) this._vstMsg(e.data); };
+        this._vst = n;
+        this._wire();
+        return n;
+      });
+      return this._vstLoad;
+    }
+    // on: blocks go to the plug-ins; D: how far (samples) the sound runs behind so the plug-ins have time to answer
+    setInserts(on, D) { if (this._vst) this._vst.port.postMessage({ on: !!on, D: on ? D | 0 : 0 }); this.insertD = on ? D | 0 : 0; }
+    insertPort(port) { if (this._vst) this._vst.port.postMessage({ port }, port ? [port] : []); }
+    insertReply(d) { if (this._vst) this._vst.port.postMessage(d); }
+    // classic engine: the inputs' own sound delay is shortened by the plug-ins' delay, so lips stay in sync
+    setDelayComp(ms) {
+      ms = Math.max(0, +ms || 0);
+      if (ms === (this.delayComp || 0)) return;
+      this.delayComp = ms;
+      for (const [id, s] of this.strips) if (s.cfg) this.update(id, s.cfg);
+    }
+
     setLimiter(on) {
       if (this.limiterOn === !!on && this._wired) return;
       this.limiterOn = !!on;
       this._wire();
     }
-    // auto-level → [compressor → make-up] → [limiter → hard ceiling] → master out
+    // auto-level → [plug-ins] → [compressor → make-up] → [limiter → hard ceiling] → master out
     _wire() {
       try { this.auto.disconnect(); } catch (e) { /* */ }
+      if (this._vst) try { this._vst.disconnect(); } catch (e) { /* */ }
       try { this.makeup.disconnect(); } catch (e) { /* */ }
       try { this.limIn.disconnect(this.limDrive); } catch (e) { /* */ }
       try { this.limIn.disconnect(this.masterOut); } catch (e) { /* */ }
       if (this.l2) try { this.limIn.disconnect(this.l2); } catch (e) { /* */ }
-      this.auto.connect(this.dynSplit);
       let last = this.auto;
+      if (this._vst) { last.connect(this._vst); last = this._vst; }
+      last.connect(this.dynSplit);
       if (this.compOn) { last.connect(this.comp); last = this.makeup; }
       last.connect(this.limIn);
       this.limIn.connect(this.limiterOn ? (this.l2 || this.limDrive) : this.masterOut);
@@ -335,9 +363,10 @@
       if (!s) return;
       const t = this.ctx.currentTime;
       const c = Object.assign({ gain: 0, mute: false, delay: 0, lowcut: false, voice: false, pan: 0 }, cfg);
+      s.cfg = cfg;
       s.fader.gain.setTargetAtTime(dbToGain(c.gain), t, 0.015);
       s.mute.gain.setTargetAtTime(c.mute ? 0 : 1, t, 0.01);
-      s.delay.delayTime.setTargetAtTime(Math.max(0, Math.min(2000, c.delay)) / 1000, t, 0.01);
+      s.delay.delayTime.setTargetAtTime(Math.max(0, Math.min(2000, c.delay - (this.delayComp || 0))) / 1000, t, 0.01);
       s.lowcut.frequency.setTargetAtTime(c.lowcut ? 90 : 5, t, 0.01);
       s.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, c.pan)), t, 0.01);
       if (c.voice) {

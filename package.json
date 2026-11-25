@@ -1,7 +1,7 @@
 {
   "name": "live-studio",
   "productName": "Live Studio",
-  "version": "1.31.1",
+  "version": "1.32.0",
   "description": "Live video production and streaming for Blackmagic capture cards and YouTube",
   "main": "main.js",
   "author": "Konstantin",
@@ -36,6 +36,7 @@
       "preload.js",
       "streamer.js",
       "native-engine.js",
+      "vst-host.js",
       "renderer/**/*",
       "build/icon.png",
       "package.json"
@@ -44,6 +45,13 @@
       {
         "from": "resources/ffmpeg",
         "to": "ffmpeg",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/vst",
+        "to": "vst",
         "filter": [
           "**/*"
         ]

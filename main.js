@@ -115,6 +115,92 @@ function natWebFrame(f) {
 function webRepaint(id) { const w = webPages.get(id); if (w) { w.needFull = true; try { w.win.webContents.invalidate(); } catch (e) { /* */ } } }
 app.on('before-quit', () => { natWanted = null; });
 
+/* ---------- VST3 plug-ins on the Master (inserts): run in their own program (ls-vst), so a plug-in that crashes
+   never takes Live Studio or the stream with it — the sound just goes on without it ---------- */
+const VST = require('./vst-host');
+const vh = new VST.VstHost();
+const vstS = { want: null, route: 'port', port: null, sent: 0, lastSent: 0, lastReply: 0, restarts: [], scanning: null };
+function vstEv(f, payload) { if (win && !win.isDestroyed()) win.webContents.send('vst:ev', f, payload ? new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength) : null); }
+function vstStart() {
+  const exe = VST.vstExe(app);
+  if (!exe) return { error: 'The plug-in host is missing from this installation — update Live Studio.' };
+  if (vh.proc) return { ok: true, ready: vh.ready };
+  if (!vh.start(exe)) return { error: 'The plug-in host could not start.' };
+  vstS.sent = 0; vstS.lastReply = Date.now();
+  vh.send(['init', vstS.want.rate || 48000, 512]);
+  return { ok: true, ready: false };
+}
+vh.on('msg', (f, payload) => {
+  if (f[0] === 'audio') { // a processed block: back to the sound thread, the way it came
+    vstS.lastReply = Date.now();
+    if (!payload) return;
+    const pcm = new Float32Array(payload.length >> 2);
+    Buffer.from(pcm.buffer).set(payload.subarray(0, pcm.length * 4)); // copied: a Buffer may not sit on a 4-byte boundary
+    const d = { seq: +f[1], lat: +f[3] || 0, pcm };
+    if (vstS.route === 'port' && vstS.port) { try { vstS.port.postMessage(d); } catch (e) { vstS.route = 'ipc'; } }
+    else if (win && !win.isDestroyed()) win.webContents.send('vst:audio', d);
+    return;
+  }
+  if (f[0] === 'host-exit') {
+    vstEv(f);
+    if (vstS.want) { // came down by itself: back up (the window loads the plug-ins again when it says ready)
+      const now = Date.now(); vstS.restarts = vstS.restarts.filter(t => now - t < 120000);
+      if (vstS.restarts.length >= 3) { vstEv(['log', 'the plug-in host stopped 3 times in 2 minutes — the sound goes on without plug-ins until you load them again']); vstS.want = null; return; }
+      vstS.restarts.push(now);
+      setTimeout(() => { if (vstS.want && !vh.proc) vstStart(); }, 1000);
+    }
+    return;
+  }
+  vstEv(f, payload);
+});
+// a plug-in that hangs while processing: no answer for 4 s although sound is being sent → the host is restarted
+setInterval(() => {
+  if (!vh.proc || !vstS.want || !vh.ready) return;
+  const now = Date.now();
+  if (vstS.sent > 50 && now - vstS.lastSent < 1000 && now - vstS.lastReply > 4000) {
+    vstEv(['log', 'a plug-in stopped answering — restarting the plug-in host']);
+    vstS.sent = 0; vstS.lastReply = Date.now();
+    try { vh.proc.kill('SIGKILL'); } catch (e) { /* */ }
+  }
+}, 1000);
+function vstAudio(seq, pcm) {
+  if (!vh.ready) return;
+  if (vh.backlog > (4 << 20)) return; // the host is far behind: drop (the sound thread plays the untouched sound)
+  const frames = (pcm.byteLength >> 3);
+  if (frames <= 0) return;
+  const now = Date.now();
+  if (!vstS.sent || now - vstS.lastSent > 2000) vstS.lastReply = now; // (sound starting again after a pause)
+  vstS.sent++; vstS.lastSent = now;
+  vh.send(['audio', seq, frames], pcm);
+}
+ipcMain.handle('vst:start', (e, opts) => { vstS.want = Object.assign({ rate: 48000 }, opts); vstS.restarts = []; return vstStart(); });
+ipcMain.handle('vst:stop', async () => { vstS.want = null; await vh.stop(); return true; });
+ipcMain.on('vst:cmd', (e, fields, payload) => { if (Array.isArray(fields) && fields.length) vh.send(fields, payload || undefined); });
+ipcMain.on('vst:audio', (e, seq, pcm) => { vstS.route = 'ipc'; vstAudio(seq, pcm); });
+// the direct line from the window's sound thread
+ipcMain.on('vst:port', e => {
+  const port = e.ports && e.ports[0];
+  if (!port) return;
+  if (vstS.port) try { vstS.port.close(); } catch (err) { /* */ }
+  vstS.port = port; vstS.route = 'port';
+  port.on('message', ev => { const d = ev.data; if (d && d.pcm !== undefined) { vstS.route = 'port'; vstAudio(d.seq, d.pcm); } });
+  port.on('close', () => { if (vstS.port === port) { vstS.port = null; vstS.route = 'ipc'; } });
+  port.start();
+  port.postMessage({ hello: 1 });
+});
+ipcMain.handle('vst:scan', async (e, force, extra) => {
+  const exe = VST.vstExe(app);
+  if (!exe) return { error: 'The plug-in host is missing from this installation — update Live Studio.' };
+  if (!vstS.scanning) vstS.scanning = VST.scan(exe, VST.vstFolders(extra), path.join(userDir(), 'vst-plugins.json'), !!force,
+    p => { if (win && !win.isDestroyed()) win.webContents.send('vst:scan-progress', p); }).finally(() => { vstS.scanning = null; });
+  try { return await vstS.scanning; } catch (err) { return { error: err.message }; }
+});
+ipcMain.handle('vst:pick-folder', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Folder with VST3 plug-ins', properties: ['openDirectory'] });
+  return r.canceled ? null : r.filePaths[0];
+});
+app.on('before-quit', () => { vstS.want = null; const p = vh.proc; if (p) { vh.send(['quit']); setTimeout(() => { try { p.kill(); } catch (e) { /* */ } }, 2000).unref(); } });
+
 function updateBlocker() {
   const need = outputs.active;
   if (need && blocker === null) blocker = powerSaveBlocker.start('prevent-display-sleep');
@@ -392,7 +478,7 @@ function pcStart() {
   if (process.platform === 'win32') {
     // (the GPU counters are only read when there is no NVIDIA tool — reading them costs processor time itself)
     // FF| lists each FFmpeg's processor time in ms, and PS| this loop's own, so the log can show what each one costs
-    const script = "$ErrorActionPreference='SilentlyContinue'; $nv=[bool](Get-Command nvidia-smi); while($true){ $g=''; $t=''; $s=$null; if(-not $nv){ $s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples }; if($s){ $m=0; $s | Group-Object { if($_.InstanceName -match 'engtype_(\\w+)'){$matches[1]} } | ForEach-Object { $v=($_.Group | Measure-Object CookedValue -Sum).Sum; if($v -gt $m){$m=$v} }; $g=[math]::Min(100,[math]::Round($m)) }; $z=Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature; if($z){ $t=[math]::Round((($z | Measure-Object CurrentTemperature -Maximum).Maximum/10)-273.15) }; Write-Output ('PC|{0}|{1}' -f $g,$t); $f=(Get-Process -Name ffmpeg,ls-engine | ForEach-Object { '{0}:{1}' -f $_.Id,[long]$_.TotalProcessorTime.TotalMilliseconds }) -join ','; Write-Output ('FF|' + $f); Write-Output ('PS|' + [long](Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds); Start-Sleep -Seconds 3 }";
+    const script = "$ErrorActionPreference='SilentlyContinue'; $nv=[bool](Get-Command nvidia-smi); while($true){ $g=''; $t=''; $s=$null; if(-not $nv){ $s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples }; if($s){ $m=0; $s | Group-Object { if($_.InstanceName -match 'engtype_(\\w+)'){$matches[1]} } | ForEach-Object { $v=($_.Group | Measure-Object CookedValue -Sum).Sum; if($v -gt $m){$m=$v} }; $g=[math]::Min(100,[math]::Round($m)) }; $z=Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature; if($z){ $t=[math]::Round((($z | Measure-Object CurrentTemperature -Maximum).Maximum/10)-273.15) }; Write-Output ('PC|{0}|{1}' -f $g,$t); $f=(Get-Process -Name ffmpeg,ls-engine,ls-vst | ForEach-Object { '{0}:{1}' -f $_.Id,[long]$_.TotalProcessorTime.TotalMilliseconds }) -join ','; Write-Output ('FF|' + $f); Write-Output ('PS|' + [long](Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds); Start-Sleep -Seconds 3 }";
     try {
       const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
       const ffPrev = new Map(); let psPrev = null;
@@ -401,9 +487,10 @@ function pcStart() {
         if (line.startsWith('FF|')) { // processor share of each FFmpeg, named by what it does
           const by = {}, kindOf = new Map([...outputs.outs.values()].map(o => [o.proc.pid, o.kind]));
           if (nat.proc && nat.proc.pid) kindOf.set(nat.proc.pid, 'engine');
+          if (vh.proc && vh.proc.pid) kindOf.set(vh.proc.pid, 'vst');
           for (const it of line.slice(3).split(',')) { const [pid, ms] = it.split(':').map(Number); if (!pid) continue;
             const p = ffPrev.get(pid); ffPrev.set(pid, { t: now, ms });
-            if (p && now > p.t) { const k = { stream: 'yt', record: 'rec', native: 'native', engine: 'engine' }[kindOf.get(pid)] || 'ffmpeg'; by[k] = (by[k] || 0) + Math.max(0, 100 * (ms - p.ms) / (now - p.t) / cores); } }
+            if (p && now > p.t) { const k = { stream: 'yt', record: 'rec', native: 'native', engine: 'engine', vst: 'vst' }[kindOf.get(pid)] || 'ffmpeg'; by[k] = (by[k] || 0) + Math.max(0, 100 * (ms - p.ms) / (now - p.t) / cores); } }
           pc.ff = by; continue;
         }
         if (line.startsWith('PS|')) { const ms = +line.slice(3); if (psPrev && now > psPrev.t) pc.ps = Math.max(0, 100 * (ms - psPrev.ms) / (now - psPrev.t) / cores); psPrev = { t: now, ms }; continue; }

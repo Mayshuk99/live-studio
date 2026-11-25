@@ -16,6 +16,12 @@
   const outs = new Map();
   let n = 0;
   const emit = ev => outListeners.forEach(cb => cb(ev));
+  const vstSyncWorker = L => { if (L.worker) L.worker.postMessage({ n: L.chain.filter(id => L.slots[id] && !L.slots[id].bypass).length, delay: L.delayMs, running: L.running }); };
+  const vstL = () => window.__vst = window.__vst || { sent: [], cbs: [], audioCbs: [], slots: {}, chain: [], delayMs: 4, latOf: {},
+    list: [{ path: 'C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 14.12_x64.vst3', cid: '57415645534C324C3220537465726500', name: 'L2 Stereo', vendor: 'Waves', sub: 'Fx|Dynamics' },
+      { path: 'C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 14.12_x64.vst3', cid: '57415645535251533352657665726200', name: 'RVerb Stereo', vendor: 'Waves', sub: 'Fx|Reverb' },
+      { path: 'C:\\Program Files\\Common Files\\VST3\\FabFilter Pro-Q 3.vst3', cid: '72C4DB717A4D459AB97E51745D84B39D', name: 'Pro-Q 3', vendor: 'FabFilter', sub: 'Fx|EQ' },
+      { path: 'C:\\Program Files\\Common Files\\VST3\\Synth.vst3', cid: '00000000000000000000000000000001', name: 'Some Synth', vendor: 'X', sub: 'Instrument|Synth' }] };
 
   window.studio = {
     isApp: false,
@@ -89,6 +95,41 @@
     nativeAudio: (rate, pcm) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.audio = (L.audio || 0) + pcm.length; },
     nativeWeb: (id, cfg) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push({ cmd: 'web', id, cfg }); },
     onNative: cb => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.cbs.push(cb); },
+    // VST3 plug-in host stand-in for tests: every plug-in halves the level; answers after L.delayMs
+    vstStart: async () => { const L = vstL(); L.running = true; vstSyncWorker(L); setTimeout(() => L.cbs.forEach(cb => cb(['ready', 'test'])), 50); return { ok: true, ready: false }; },
+    vstStop: async () => { const L = vstL(); L.running = false; L.chain = []; vstSyncWorker(L); return true; },
+    vstCmd: (f, payload) => {
+      const L = vstL(); L.sent.push({ f, bytes: payload ? payload.byteLength : 0 });
+      const ev = (...a) => setTimeout(() => L.cbs.forEach(cb => cb(a[0], a[1])), 5);
+      if (f[0] === 'load') { L.slots[f[1]] = { bypass: false, lat: L.latOf[f[3]] || 0 }; if (!L.chain.includes(f[1])) L.chain.push(f[1]); const p = L.list.find(x => x.cid === f[3]); ev(p ? ['loaded', f[1], '1', String(L.slots[f[1]].lat), p.name, '2', '2'] : ['loaded', f[1], '0', 'this plug-in is no longer in its file (updated or removed?)']); }
+      else if (f[0] === 'unload') { delete L.slots[f[1]]; L.chain = L.chain.filter(x => x !== f[1]); ev(['unloaded', f[1]]); }
+      else if (f[0] === 'order') L.chain = f.slice(1).filter(id => L.slots[id]);
+      else if (f[0] === 'bypass') { if (L.slots[f[1]]) L.slots[f[1]].bypass = f[2] === '1'; }
+      else if (f[0] === 'edit') { ev(['editor', f[1], 'open']); setTimeout(() => L.cbs.forEach(cb => cb(['edited', f[1]])), 300); }
+      else if (f[0] === 'get-state') ev(['state', f[1]], new Uint8Array([1, 2, 3, 4]));
+      vstSyncWorker(L);
+    },
+    vstAudio: (seq, pcm) => {
+      const L = vstL(); L.blocks = (L.blocks || 0) + 1;
+      if (!L.running) return;
+      const act = L.chain.filter(id => L.slots[id] && !L.slots[id].bypass), g = Math.pow(0.5, act.length), lat = act.reduce((a, id) => a + L.slots[id].lat, 0);
+      const out = new Float32Array(pcm.length); for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] * g; // (the stand-in has no real delay: lat is only reported)
+      setTimeout(() => L.audioCbs.forEach(cb => cb({ seq, lat: 0, pcm: out })), L.delayMs);
+    },
+    vstScan: async () => { const L = vstL(); await new Promise(r => setTimeout(r, 200)); return { plugins: L.list, problems: [], folders: ['C:\\Program Files\\Common Files\\VST3'], modules: 2 }; },
+    vstPickFolder: async () => null,
+    // the direct line: a worker stands in for the host program (its own thread, like the real one)
+    vstPortSink: port => {
+      const L = vstL();
+      const src = `let n = 0, delay = 4, running = true, port = null;
+        onmessage = e => { const d = e.data; if (d.port) { port = d.port; port.onmessage = m => { const b = m.data; if (!running || b.pcm === undefined) return; const g = Math.pow(0.5, n), out = new Float32Array(b.pcm.length); for (let i = 0; i < out.length; i++) out[i] = b.pcm[i] * g; setTimeout(() => port.postMessage({ seq: b.seq, lat: 0, pcm: out }), delay); }; port.postMessage({ hello: 1 }); } else { n = d.n; delay = d.delay; running = d.running; } };`;
+      L.worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      L.worker.postMessage({ port }, [port]);
+      vstSyncWorker(L);
+    },
+    onVst: cb => vstL().cbs.push(cb),
+    onVstAudio: cb => vstL().audioCbs.push(cb),
+    onVstScan: () => {},
     openFolder: async () => {},
     setLive: () => {},
     onUpdate: fn => { window.__upd = fn; },

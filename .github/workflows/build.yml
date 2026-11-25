@@ -81,6 +81,26 @@ jobs:
       - name: Test the native engine (fake camera, fade, graphic, sound, recording)
         run: node scripts/engine-selftest.js resources/engine/ls-engine.exe resources/ffmpeg/ffmpeg.exe
 
+      - name: Build the plug-in host (VST3 inserts on the Master)
+        shell: pwsh
+        run: |
+          # VST 3 SDK (MIT license) — only the parts the host needs; the sample plug-ins are built for the test below
+          git clone --depth 1 --branch v3.8.1_build_84 https://github.com/steinbergmedia/vst3sdk vsthost/vst3sdk
+          git -C vsthost/vst3sdk submodule update --init --depth 1 base pluginterfaces public.sdk cmake
+          if ($LASTEXITCODE -ne 0) { throw 'VST 3 SDK download failed' }
+          cmake -S vsthost -B vsthost/build -A x64 -DLSVST_TEST_PLUGINS=ON
+          if ($LASTEXITCODE -ne 0) { throw 'cmake configure failed' }
+          cmake --build vsthost/build --config Release --parallel --target ls-vst adelay mda-vst3
+          if ($LASTEXITCODE -ne 0) { throw 'plug-in host build failed' }
+          New-Item -ItemType Directory -Force -Path resources/vst | Out-Null
+          $exe = Get-ChildItem vsthost/build -Recurse -Filter ls-vst.exe | Select-Object -First 1
+          Copy-Item $exe.FullName resources/vst/ls-vst.exe -Force
+          Copy-Item vsthost/vst3sdk/LICENSE.txt resources/vst/VST3_LICENSE.txt -Force
+          Get-Item resources/vst/ls-vst.exe
+
+      - name: Test the plug-in host (SDK sample plug-ins: echo, limiter, bypass, saved settings)
+        run: node scripts/vst-selftest.js resources/vst/ls-vst.exe vsthost/build
+
       - name: Prepare the release
         shell: pwsh
         env:
