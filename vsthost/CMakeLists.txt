@@ -15,7 +15,12 @@ set(SMTG_USE_STATIC_CRT ON CACHE BOOL "" FORCE) # no Visual C++ runtime needed o
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(SMTG_PLUGIN_TARGET_USER_PROGRAM_FILES_COMMON OFF CACHE BOOL "" FORCE)
 
-add_subdirectory(${VST3_SDK_ROOT} vst3sdk EXCLUDE_FROM_ALL)
+# (the Visual Studio generator can only build sample targets by name when they are part of the main solution)
+if(LSVST_TEST_PLUGINS)
+    add_subdirectory(${VST3_SDK_ROOT} vst3sdk)
+else()
+    add_subdirectory(${VST3_SDK_ROOT} vst3sdk EXCLUDE_FROM_ALL)
+endif()
 
 add_executable(ls-vst
     host.cpp
