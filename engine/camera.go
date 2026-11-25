@@ -29,6 +29,7 @@ type camSlot struct {
 
 type Camera struct {
 	id      string
+	W, H    int // captured size
 	args    []string
 	period  time.Duration // the camera's own frame time
 	lock    bool          // same rate as the output: the output clock may follow it
@@ -53,8 +54,13 @@ type Camera struct {
 	lateSec int
 }
 
-func newCamera(e *Engine, id string, args []string, fps float64) *Camera {
-	c := &Camera{id: id, args: args, e: e, held: -1, filling: 0, period: e.period, lock: true}
+// w, h: the size it is captured at (the camera's own; 0 = the output size). It is scaled to the output when drawn,
+// so a 1080p camera in a 4K output is captured — and piped — at 1080p.
+func newCamera(e *Engine, id string, args []string, fps float64, w, h int) *Camera {
+	if w < 16 || h < 16 || w%2 != 0 || h%2 != 0 {
+		w, h = e.W, e.H
+	}
+	c := &Camera{id: id, args: args, e: e, held: -1, filling: 0, period: e.period, lock: true, W: w, H: h}
 	if fps > 1 {
 		c.period = time.Duration(float64(time.Second) / fps)
 		// a 59.94 camera into a 60 output (or the other way): show it, but never pull the output clock to it
@@ -62,7 +68,7 @@ func newCamera(e *Engine, id string, args []string, fps float64) *Camera {
 		c.lock = abs(fps-outFps) < 0.01
 	}
 	for i := range c.bufs {
-		c.bufs[i] = newFrame(e.W, e.H)
+		c.bufs[i] = newFrame(w, h)
 		fillBlack(c.bufs[i])
 	}
 	go c.loop()
@@ -138,7 +144,7 @@ func (c *Camera) loop() {
 		c.mu.Unlock()
 		args := append([]string{"-hide_banner", "-loglevel", "error", "-nostats", "-nostdin"}, c.args...)
 		// every frame exactly as the card delivers it (no copies added to fill gaps: the mixer counts real gaps)
-		args = append(args, "-an", "-sn", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", fmt.Sprintf("%dx%d", c.e.W, c.e.H), "-")
+		args = append(args, "-an", "-sn", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", fmt.Sprintf("%dx%d", c.W, c.H), "-")
 		cmd := exec.Command(c.e.ffmpeg, args...)
 		procAttr(cmd, true)
 		out, err := cmd.StdoutPipe()

@@ -1046,7 +1046,17 @@ window.I18N_RU = {
     "Where it goes — drag it, pull a corner to resize": "Где она будет — перетащите её или тяните за угол, чтобы изменить размер",
     "Keep the 16:9 shape": "Сохранять форму 16:9",
     "White border": "Белая рамка",
-    "To zoom into or move the picture inside the small box, use “Frame: small picture” at the top. Double-click a slider to reset it.": "Чтобы увеличить или сдвинуть картинку внутри маленького окна, используйте «Рамка: маленькая картинка» вверху. Двойной щелчок по ползунку сбрасывает его."
+    "To zoom into or move the picture inside the small box, use “Frame: small picture” at the top. Double-click a slider to reset it.": "Чтобы увеличить или сдвинуть картинку внутри маленького окна, используйте «Рамка: маленькая картинка» вверху. Двойной щелчок по ползунку сбрасывает его.",
+    "4K (3840×2160) — native engine": "4K (3840×2160) — встроенный движок",
+    "1440p (2560×1440) — native engine": "1440p (2560×1440) — встроенный движок",
+    "The classic engine sends 1080p — choose “Native” under Picture engine for 4K / 1440p.": "Классический движок отдаёт 1080p — для 4K / 1440p выберите «Встроенный» в «Движок картинки».",
+    "4K / 1440p needs a graphics-card encoder (NVIDIA NVENC) — the processor cannot encode it in time.": "Для 4K / 1440p нужен кодировщик видеокарты (NVIDIA NVENC) — процессор не успеет кодировать.",
+    "4K at 60 fps: YouTube recommends about 35,000 kbps — your internet upload should be about 1.5× that. The 1080p cameras are scaled up; titles, pictures and web pages are drawn at full size. Recording at this size makes large files.": "4K при 60 кадр/с: YouTube рекомендует около 35 000 кбит/с — скорость отдачи интернета должна быть примерно в 1,5 раза больше. Камеры 1080p увеличиваются; титры, картинки и веб-страницы рисуются в полном размере. Запись в таком размере даёт большие файлы.",
+    "1440p at 60 fps: YouTube recommends about 24,000 kbps — your internet upload should be about 1.5× that. The 1080p cameras are scaled up; titles, pictures and web pages are drawn at full size. Recording at this size makes large files.": "1440p при 60 кадр/с: YouTube рекомендует около 24 000 кбит/с — скорость отдачи интернета должна быть примерно в 1,5 раза больше. Камеры 1080p увеличиваются; титры, картинки и веб-страницы рисуются в полном размере. Запись в таком размере даёт большие файлы.",
+    "YouTube 4K 60 fps": "YouTube 4K 60 кадр/с",
+    "YouTube 1440p 60 fps": "YouTube 1440p 60 кадр/с",
+    "4K (for editing)": "4K (для монтажа)",
+    "YouTube suggests 4,500–9,000 kbps for 1080p at 30 fps, about 12,000 for 1080p at 60 fps, 24,000 for 1440p at 60 fps and 35,000 for 4K at 60 fps. Your upload speed should be about 1.5× the picture bitrate.": "YouTube рекомендует 4 500–9 000 кбит/с для 1080p при 30 кадр/с, около 12 000 для 1080p при 60 кадр/с, 24 000 для 1440p при 60 кадр/с и 35 000 для 4K при 60 кадр/с. Скорость отдачи интернета должна быть примерно в 1,5 раза больше битрейта картинки."
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
@@ -1193,6 +1203,8 @@ window.I18N_RU = {
     ["{0} s", "{0} с"],
     ["🎥 Camera {0}", "🎥 Камера {0}"],
     ["LIMIT −{0}", "ЛИМИТ −{0}"],
-    ["“{0}”: the small picture is not in the native engine yet", "«{0}»: маленькая картинка пока не во встроенном движке"]
+    ["“{0}”: the small picture is not in the native engine yet", "«{0}»: маленькая картинка пока не во встроенном движке"],
+    ["The stream is set to {0} kbps — for {1} YouTube recommends {2} kbps.", "Трансляция настроена на {0} кбит/с — для {1} YouTube рекомендует {2} кбит/с."],
+    ["Use {0} kbps", "Поставить {0} кбит/с"]
   ]
 };

@@ -77,7 +77,7 @@ ipcMain.handle('native:start', (e, opts) => {
 });
 ipcMain.handle('native:stop', async () => { natWanted = null; natWebs.clear(); await nat.stop(); return true; });
 ipcMain.on('native:send', (e, h, payload) => { nat.send(h, payload || undefined); });
-ipcMain.on('native:camera', (e, id, dev) => { nat.send({ cmd: 'camera', id, fps: dev.fps, args: require('./streamer').captureArgs(dev) }); });
+ipcMain.on('native:camera', (e, id, dev) => { nat.send({ cmd: 'camera', id, fps: dev.fps, w: dev.w, h: dev.h, args: require('./streamer').captureArgs(dev) }); });
 ipcMain.on('native:audio', (e, rate, pcm) => { if (nat.backlog < 64 << 20) nat.send({ cmd: 'audio', rate, ch: 2 }, pcm); });
 // the direct line from the window's sound thread (does not wait for the window when it is busy)
 ipcMain.on('native:audio-port', e => {

@@ -165,6 +165,10 @@
   /* ================= state ================= */
   let show = merge(defaultShow(), (await S.loadShow()) || {});
   let settings = merge(defaultSettings(), (await S.loadSettings()) || {});
+  /* 4K / 1440p: only the native engine makes those (it scales the 1080p cameras up and draws graphics at full size).
+     The window's own picture — the monitors, and the whole output with the classic engine — stays at most 1080p. */
+  const bigOut = () => (settings.output.height || 1080) > 1080;
+  const uiH = () => Math.min(1080, settings.output.height || 1080), uiW = () => Math.round(uiH() * (settings.output.width || 1920) / (settings.output.height || 1080));
   // interface language (everything on screen is translated as it appears — see i18n.js)
   const setLanguage = l => { if (window.I18N) window.I18N.setLang(l); if (S.setLang) S.setLang(l); };
   setLanguage(settings.lang || 'en');
@@ -228,7 +232,7 @@
   /* ================= engine + mixer ================= */
   let engine;
   try {
-    engine = new Engine({ width: settings.output.width, height: settings.output.height, fps: settings.output.fps });
+    engine = new Engine({ width: uiW(), height: uiH(), fps: settings.output.fps });
     engine.frameSync = false; // see engine.js — the normal camera path is used
   } catch (e) {
     document.body.innerHTML = `<div style="padding:40px;font-size:18px">Live Studio could not start the video engine.<br><br>${e.message}<br><br>Update your graphics driver and restart.</div>`;
@@ -237,7 +241,7 @@
   engine.getShot = getShot;
   engine.moveSpeed = settings.moveSpeed;
   engine.zebra = settings.zebra;
-  engine.setSource('bars', makeBars(settings.output.width, settings.output.height), 'image');
+  engine.setSource('bars', makeBars(uiW(), uiH()), 'image');
   const blackCanvas = el('canvas', { width: 16, height: 9 }); blackCanvas.getContext('2d').fillRect(0, 0, 16, 9);
   engine.setSource('black', blackCanvas, 'image');
   engine.onTransitionEnd = () => { renderTally(); };
@@ -402,16 +406,18 @@
   const NAT = { on: false, ready: false, devices: null, cams: new Map(), M: null };
   rt.eng = null; // NAT while the native engine is in use
   const natW = () => settings.output.width || 1920, natH = () => settings.output.height || 1080;
+  // the size a camera is captured at: the output size up to 1080p; for 4K / 1440p output the camera's own size (Inputs → resolution)
+  const natCap = cam => natH() <= 1080 ? [natW(), natH()] : ({ 2160: [3840, 2160], 1080: [1920, 1080], 720: [1280, 720] }[(cam && cam.res) || '1080'] || [1920, 1080]);
   const fpsND = fps => fps === 59.94 ? [60000, 1001] : fps === 29.97 ? [30000, 1001] : fps === 23.98 ? [24000, 1001] : [Math.round(fps * 1000), 1000];
   const hexRGB = h => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
   // a card's formats at exactly the output size and rate (as in the native test), best first
-  function natExact(v, loose) {
-    const W = natW(), H = natH(), t = settings.output.fps || 59.94, tol = loose ? 0.1 : 0.05, near = f => Math.abs(f - t) < tol;
+  function natExact(v, loose, cam) {
+    const [W, H] = natCap(cam), t = settings.output.fps || 59.94, tol = loose ? 0.1 : 0.05, near = f => Math.abs(f - t) < tol;
     const FMT = ['uyvy422', 'yuyv422', 'nv12', 'yuv420p', 'v210'], r = m => (FMT.indexOf(m.fmt) + 10) % 10;
     return (v.modes || []).filter(m => m.w === W && m.h === H && (near(m.maxFps) || near(m.minFps) || (t > m.minFps && t < m.maxFps))).sort((a, b) => r(a) - r(b));
   }
   // 60 output with 59.94 cards (or 30 / 29.97): still usable, one repeated frame about every 17 s — and said so
-  const natFits = v => natExact(v).length ? natExact(v) : natExact(v, true);
+  const natFits = (v, cam) => natExact(v, false, cam).length ? natExact(v, false, cam) : natExact(v, true, cam);
   /* the card a camera uses: the one chosen in Inputs, or the same card the classic engine used (same name and place
      in the list — e.g. “Blackmagic WDM Capture” 2 and 3), or the next free card that has the right format */
   function natCard(cam) {
@@ -419,21 +425,21 @@
     let v = null;
     if (cam.native && cam.native.name) v = list.find(x => x.name === cam.native.name && x.n === (cam.native.n || 0)) || null;
     if (!v) {
-      const taken = new Set([...NAT.cams].filter(([id]) => id !== cam.id).map(([, c]) => c.key)), free = x => natFits(x).length && !taken.has(x.name + '#' + x.n);
+      const taken = new Set([...NAT.cams].filter(([id]) => id !== cam.id).map(([, c]) => c.key)), free = x => natFits(x, cam).length && !taken.has(x.name + '#' + x.n);
       const same = list.filter(x => x.name === cam.deviceLabel);
       v = (cam.deviceIdx !== undefined && same.find(x => x.n === cam.deviceIdx && free(x))) || same.find(free) || list.find(free) || null;
     }
     if (!v) return null;
-    const m = natFits(v)[0];
-    if (m && !natExact(v).length) logEvent('NATIVE', `warning: ${v.name} ${v.n + 1} has no ${settings.output.fps} fps — capturing its ${(+m.maxFps.toFixed(2))} fps; set Settings → Video output → Frame rate to ${(+m.maxFps.toFixed(2))} for a perfectly smooth picture`);
-    return { name: v.name, n: v.n, w: natW(), h: natH(), fps: m ? +m.maxFps.toFixed(2) : (settings.output.fps || 59.94), pixFmt: m && m.kind === 'pixel_format' ? m.fmt : null, vcodec: m && m.kind === 'vcodec' ? m.fmt : null, exact: !!m, key: v.name + '#' + v.n };
+    const m = natFits(v, cam)[0], cap = natCap(cam);
+    if (m && !natExact(v, false, cam).length) logEvent('NATIVE', `warning: ${v.name} ${v.n + 1} has no ${settings.output.fps} fps — capturing its ${(+m.maxFps.toFixed(2))} fps; set Settings → Video output → Frame rate to ${(+m.maxFps.toFixed(2))} for a perfectly smooth picture`);
+    return { name: v.name, n: v.n, w: cap[0], h: cap[1], fps: m ? +m.maxFps.toFixed(2) : (settings.output.fps || 59.94), pixFmt: m && m.kind === 'pixel_format' ? m.fmt : null, vcodec: m && m.kind === 'vcodec' ? m.fmt : null, exact: !!m, key: v.name + '#' + v.n };
   }
   function natPreviewCams() { S.nativeSend({ cmd: 'preview', cam: { w: 384, h: 216, every: 3 }, cams: [...NAT.cams.keys()], pgm: { w: 0, h: 0, every: 0 } }); }
   function natOpenCamera(cam) {
     if (!engine.sources.has(cam.id) || engine.sources.get(cam.id).kind !== 'raw') engine.setRawSource(cam.id);
     if (!NAT.ready || !NAT.devices) { rt.camStatus.set(cam.id, { ok: false, text: 'Starting the native engine…' }); refreshInputStatus(); return; }
     const d = natCard(cam);
-    if (!d) { rt.camStatus.set(cam.id, { ok: false, text: `No free capture card with ${natW()}×${natH()} at ${settings.output.fps} fps — choose one below` }); refreshInputStatus(); return; }
+    if (!d) { const c = natCap(cam); rt.camStatus.set(cam.id, { ok: false, text: `No free capture card with ${c[0]}×${c[1]} at ${settings.output.fps} fps — choose one below` }); refreshInputStatus(); return; }
     const prev = NAT.cams.get(cam.id);
     if (prev && prev.key === d.key && prev.fmt === (d.pixFmt || d.vcodec)) return; // already capturing it
     NAT.cams.set(cam.id, { key: d.key, fmt: d.pixFmt || d.vcodec, dev: d });
@@ -450,7 +456,7 @@
       case 'ready': NAT.ready = true; logEvent('ENGINE', `ready · ${h.w}×${h.h} · ${h.threads} threads`); natResync(); break;
       case 'cam-status': {
         const cam = camById(h.id), d = NAT.cams.get(h.id);
-        rt.camStatus.set(h.id, { ok: h.ok, text: h.ok ? `${natW()}×${natH()} · ${settings.output.fps} fps · native${d ? ` (${d.dev.name} ${d.dev.n + 1})` : ''}` : h.text });
+        rt.camStatus.set(h.id, { ok: h.ok, text: h.ok ? `${d ? d.dev.w : natW()}×${d ? d.dev.h : natH()} · ${settings.output.fps} fps · native${d ? ` (${d.dev.name} ${d.dev.n + 1})` : ''}` : h.text });
         refreshInputStatus();
         if (cam) logEvent('NATIVE', `camera ${cam.name}: ${h.ok ? 'picture is coming in' : h.text}`);
         break;
@@ -580,7 +586,7 @@
   function natBand(M, L) {
     const key = L.key || '';
     if (M.bands.has(key)) return M.bands.get(key);
-    const W = natW(), H = natH(), c = natCanvas(W, H);
+    const W = engine.W, H = engine.H, c = natCanvas(W, H);
     c.ctx.setTransform(1, 0, 0, 1, 0, 0); c.ctx.clearRect(0, 0, W, H);
     window.LiveEngine.drawLabel(c.ctx, W, H, L.data, 1, false);
     const a = c.ctx.getImageData(0, 0, W, H).data;
@@ -639,8 +645,8 @@
       if (!L.shown.startsWith('full') && prev && now - prev.at < 30) continue;
       const band = natBand(M, L);
       if (!band || band.h < 2) continue;
-      const px = L.ctx.getImageData(0, band.y, W, band.h).data;
-      S.nativeSend({ cmd: 'overlay', id: 'lbl:' + id, z: 1000 + li, sw: W, sh: band.h, x: 0, y: band.y, w: W, h: band.h, premult: false, alpha: 1, fadeMs: 0 }, new Uint8Array(px.buffer));
+      const px = L.ctx.getImageData(0, band.y, engine.W, band.h).data, k = H / engine.H; // (drawn at ≤1080p; 4K / 1440p: scaled up by the engine)
+      S.nativeSend({ cmd: 'overlay', id: 'lbl:' + id, z: 1000 + li, sw: engine.W, sh: band.h, x: 0, y: Math.round(band.y * k) & ~1, w: W, h: Math.round(band.h * k) & ~1, premult: false, alpha: 1, fadeMs: 0 }, new Uint8Array(px.buffer));
       M.labels.set(id, { state, at: now });
     }
     for (const [id] of M.labels) if (!engine.labels.has(id)) { S.nativeSend({ cmd: 'overlay-remove', id: 'lbl:' + id }); M.labels.delete(id); }
@@ -1568,7 +1574,7 @@
     if (rt.live || rt.rec) { toast('Stop the stream and the recording first — the test uses the capture card on its own.', 'error'); return; }
     const body = el('div');
     let dev = null, pickV = 0, pickM = 0, pickA = -1, dest = settings.youtube.key ? 'yt' : 'file', run = null, lastMsg = '';
-    const o = settings.output, target = o.fps || 59.94, W = o.width || 1920, H = o.height || 1080;
+    const o = settings.output, target = o.fps || 59.94, W = bigOut() ? 1920 : o.width || 1920, H = bigOut() ? 1080 : o.height || 1080;
     /* The card's picture formats at the output size, the output's own rate first. Only an exact 1080p 59.94 format
        makes a fair test (13:00 log: “Blackmagic WDM Capture” had none and the test silently ran at 25 fps). */
     const near = f => Math.abs(f - target) < 0.05;
@@ -4318,26 +4324,47 @@
   async function openSettings(focus) {
     const s = settings, o = s.output, y = s.youtube;
     const live = !!(rt.live || rt.rec);
+    let outWarnDraw = () => {};
     const keyInput = el('input', { type: 'password', value: y.key, placeholder: 'Paste your stream key', class: 'grow', autocomplete: 'off', oninput: e => { y.key = e.target.value.trim(); saveSettings(); } });
     const customRow = el('div', { class: 'field' + (y.server === 'custom' ? '' : ' hidden') }, el('span', null, 'Server address (RTMP/RTMPS)'), el('input', { type: 'text', value: y.custom, placeholder: 'rtmps://…', oninput: e => { y.custom = e.target.value; saveSettings(); } }));
     const version = await S.version();
     const ffv = el('span', { class: 'muted', style: 'font-size:.85em;margin-left:10px' });
     if (S.ffmpegVersion) S.ffmpegVersion().then(v => { ffv.textContent = `· encoder engine FFmpeg ${v}`; }).catch(() => {});
     const updStatus = el('span', { class: 'muted', id: 'updStatus' });
+    // what 4K / 1440p needs, said right under the choices
+    const outWarn = el('div', { style: 'margin:-2px 0 8px' });
+    outWarnDraw = () => {
+      outWarn.innerHTML = '';
+      if (!bigOut()) return;
+      const lines = [];
+      if (o.engine !== 'native') lines.push(['status-bad', 'The classic engine sends 1080p — choose “Native” under Picture engine for 4K / 1440p.']);
+      if (o.encoder === 'x264') lines.push(['status-bad', '4K / 1440p needs a graphics-card encoder (NVIDIA NVENC) — the processor cannot encode it in time.']);
+      lines.push(['muted', `${o.height >= 2160 ? '4K at 60 fps: YouTube recommends about 35,000 kbps' : '1440p at 60 fps: YouTube recommends about 24,000 kbps'} — your internet upload should be about 1.5× that. The 1080p cameras are scaled up; titles, pictures and web pages are drawn at full size. Recording at this size makes large files.`]);
+      for (const [c, t] of lines) put(outWarn, el('div', { class: c, style: 'font-size:.85em;margin-top:4px' }, t));
+    };
+    outWarnDraw();
+    const resChange = v => {
+      const [w, h] = v.split('x').map(Number);
+      if (live) { toast('Stop streaming/recording before changing video output settings.', 'error'); return; }
+      o.width = w; changeOut('height', h);
+      const want = h >= 2160 ? 35000 : h >= 1440 ? 24000 : 0;
+      if (want && (o.bitrate || 0) < want * 0.6) toast(`The stream is set to ${o.bitrate} kbps — for ${h >= 2160 ? '4K' : '1440p'} YouTube recommends ${want.toLocaleString('en-US')} kbps.`, '', { label: `Use ${want.toLocaleString('en-US')} kbps`, fn: () => { o.bitrate = want; o.audioBitrate = Math.max(o.audioBitrate || 160, 192); saveSettings(); openSettings('out'); } });
+      logEvent('SETTINGS', `output ${w}×${h}`);
+    };
     const changeOut = (k, v) => {
       if (live) { toast('Stop streaming/recording before changing video output settings.', 'error'); return; }
-      o[k] = v; saveSettings();
+      o[k] = v; saveSettings(); outWarnDraw();
       if (k === 'width' || k === 'height' || k === 'fps') {
-        engine.setSize(o.width, o.height); engine.setFps(o.fps);
-        engine.setSource('bars', makeBars(o.width, o.height), 'image');
+        engine.setSize(uiW(), uiH()); engine.setFps(o.fps);
+        engine.setSource('bars', makeBars(uiW(), uiH()), 'image');
         previewCanvas.height = Math.round(previewCanvas.width * o.height / o.width);
         if (NAT.on) { clearTimeout(rt.natRestart); rt.natRestart = setTimeout(() => switchEngine('native'), 600); }
       }
     };
     /* picture + sound bitrate with ready-made and your own presets, separately for live and recording */
     const QUAL = {
-      live: { v: 'bitrate', a: 'audioBitrate', vr: [1000, 51000], ar: [64, 384], builtin: [['YouTube 1080p 60 fps', 12000, 192], ['YouTube 1080p 30 fps', 8000, 160], ['YouTube 720p', 5000, 128], ['Slow internet', 3000, 128]] },
-      rec: { v: 'recordBitrate', a: 'recordAudioBitrate', vr: [1000, 100000], ar: [96, 512], builtin: [['Standard', 20000, 256], ['High (for editing)', 40000, 320], ['Small files', 10000, 192], ['Very small (like Wirecast)', 3600, 160]] }
+      live: { v: 'bitrate', a: 'audioBitrate', vr: [1000, 51000], ar: [64, 384], builtin: [['YouTube 4K 60 fps', 35000, 192], ['YouTube 1440p 60 fps', 24000, 192], ['YouTube 1080p 60 fps', 12000, 192], ['YouTube 1080p 30 fps', 8000, 160], ['YouTube 720p', 5000, 128], ['Slow internet', 3000, 128]] },
+      rec: { v: 'recordBitrate', a: 'recordAudioBitrate', vr: [1000, 100000], ar: [96, 512], builtin: [['4K (for editing)', 80000, 320], ['Standard', 20000, 256], ['High (for editing)', 40000, 320], ['Small files', 10000, 192], ['Very small (like Wirecast)', 3600, 160]] }
     };
     function qualityBlock(kind) {
       const Q = QUAL[kind], wrap = el('div');
@@ -4372,24 +4399,25 @@
       el('div', { class: 'field' }, el('span', null, 'Stream key'), el('div', { class: 'row' }, keyInput, el('button', { class: 'btn small', onclick: e => { keyInput.type = keyInput.type === 'password' ? 'text' : 'password'; e.target.textContent = keyInput.type === 'password' ? 'Show' : 'Hide'; } }, 'Show'), el('button', { class: 'btn small primary', onclick: () => { saveSettings(); closeModal(); openStreamTest(); } }, '▶ Test this key'))),
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Find it in YouTube Studio → Create → Go live → Stream → “Stream key”. Keep it private — it is stored encrypted on this computer.'),
 
-      el('h3', null, 'Video output'),
+      el('h3', { id: 'set-out' }, 'Video output'),
       live ? el('div', { class: 'status-bad', style: 'margin-bottom:8px' }, 'Locked while live or recording.') : null,
       el('div', { class: 'grid2' },
-        el('div', { class: 'field' }, el('span', null, 'Resolution'), select([['1920x1080', '1080p (1920×1080)'], ['1280x720', '720p (1280×720)']], `${o.width}x${o.height}`, v => { const [w, h] = v.split('x').map(Number); changeOut('width', w); changeOut('height', h); })),
+        el('div', { class: 'field' }, el('span', null, 'Resolution'), select([['3840x2160', '4K (3840×2160) — native engine'], ['2560x1440', '1440p (2560×1440) — native engine'], ['1920x1080', '1080p (1920×1080)'], ['1280x720', '720p (1280×720)']], `${o.width}x${o.height}`, resChange)),
         el('div', { class: 'field' }, el('span', null, 'Frame rate'), select([[25, '25 fps'], [29.97, '29.97 fps (29.97 cameras)'], [30, '30 fps'], [50, '50 fps'], [59.94, '59.94 fps (59.94 cameras — Blackmagic)'], [60, '60 fps']], o.fps, v => changeOut('fps', +v))),
         el('div', { class: 'field' }, el('span', null, 'Encoder'), select([['x264', 'Software (works on every PC)'], ['nvenc', 'NVIDIA graphics card (NVENC)'], ['qsv', 'Intel graphics (Quick Sync)'], ['amf', 'AMD graphics card (AMF)']], o.encoder, v => changeOut('encoder', v))),
         el('div', { class: 'field' }, el('span', null, 'Picture engine'), select([['classic', 'Classic (inside the window)'], ['native', 'Native — OBS-style (test)']], o.engine || 'classic', v => {
           if (live) { toast('Stop streaming/recording before switching the picture engine.', 'error'); return; }
-          o.engine = v; saveSettings(); switchEngine(v); toast(v === 'native' ? 'Native engine: the cameras now go straight to it (a few seconds)…' : 'Classic engine', 'ok');
+          o.engine = v; saveSettings(); outWarnDraw(); switchEngine(v); toast(v === 'native' ? 'Native engine: the cameras now go straight to it (a few seconds)…' : 'Classic engine', 'ok');
         })),
         (o.engine || 'classic') === 'native' ? el('div', { class: 'field' }, el('span', null, 'Sound/picture sync (native)'), el('div', { class: 'row' },
           el('input', { type: 'number', min: 0, max: 500, step: 10, value: o.videoDelayMs ?? 20, style: 'width:90px', onchange: e => { o.videoDelayMs = Math.max(0, Math.min(500, Math.round(+e.target.value || 0))); saveSettings(); } }),
           el('span', { class: 'muted' }, 'ms the picture waits for the sound (if lips move before you hear the words, raise it; starts with the next stream/recording)'))) : null),
+      outWarn,
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free. Set the frame rate to exactly what the cameras send (Blackmagic at 59.94 → 59.94).'),
       rt.encFallback && rt.encFallback.for === o.encoder ? el('div', { class: 'status-bad', style: 'font-size:.9em;margin-top:6px' }, rt.encFallback.level >= 2 ? `This encoder would not start, so the software encoder is being used until the program is restarted. Updating the graphics card driver usually fixes it. Reported: ${rt.encFallback.detail || 'no details'}` : 'This encoder refused the tuned settings; plain settings are being used.') : null,
       el('h3', null, 'Live stream quality'),
       qualityBlock('live'),
-      el('div', { class: 'muted', style: 'font-size:.85em' }, 'YouTube suggests 4,500–9,000 kbps for 1080p at 30 fps and about 12,000 for 1080p at 60 fps. Your upload speed should be about 1.5× the picture bitrate.'),
+      el('div', { class: 'muted', style: 'font-size:.85em' }, 'YouTube suggests 4,500–9,000 kbps for 1080p at 30 fps, about 12,000 for 1080p at 60 fps, 24,000 for 1440p at 60 fps and 35,000 for 4K at 60 fps. Your upload speed should be about 1.5× the picture bitrate.'),
 
       el('h3', null, 'Recording'),
       el('div', { class: 'field' }, el('span', null, 'Save recordings to'), el('div', { class: 'row' }, el('input', { type: 'text', class: 'grow', value: s.recordDir, readonly: true, id: 'recDir' }),

@@ -84,7 +84,8 @@ function engineInput(o) {
   return [
     // no probing: the formats are known, and probing would wait for sound before reading any picture
     '-thread_queue_size', '2048', '-probesize', '32', '-analyzeduration', '0', '-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'tcp://127.0.0.1:{AUDIOPORT}',
-    '-thread_queue_size', '64', '-probesize', '32', '-analyzeduration', '0', ...(d > 0 ? ['-itsoffset', d.toFixed(3)] : []),
+    // (about 200 MB of pictures at most waiting inside FFmpeg, whatever the size: 64 at 1080p, 16 at 4K)
+    '-thread_queue_size', String(Math.max(8, Math.round(64 * 1920 * 1080 / ((o.width || 1920) * (o.height || 1080))))), '-probesize', '32', '-analyzeduration', '0', ...(d > 0 ? ['-itsoffset', d.toFixed(3)] : []),
     '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-video_size', `${o.width || 1920}x${o.height || 1080}`, '-framerate', rate, '-i', 'pipe:0'
   ];
 }

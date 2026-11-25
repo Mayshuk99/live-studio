@@ -11,7 +11,8 @@ const path = require('path');
 const ENCODERS = {
   x264: (o, g) => ['-c:v', 'libx264', '-preset', o.preset || 'veryfast', '-tune', 'zerolatency', '-profile:v', 'high',
     '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-bufsize', `${o.bitrate * 2}k`, '-x264-params', 'nal-hrd=cbr', '-g', g, '-keyint_min', g, '-sc_threshold', '0'],
-  nvenc: (o, g) => ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll', '-rc', 'cbr', '-profile:v', 'high',
+  // (4K / 1440p: a quicker preset, so a stream and a recording both keep up on one card)
+  nvenc: (o, g) => ['-c:v', 'h264_nvenc', '-preset', (o.height || 1080) > 1080 ? 'p2' : 'p4', '-tune', 'll', '-rc', 'cbr', '-profile:v', 'high',
     '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-bufsize', `${o.bitrate * 2}k`, '-g', g, '-bf', '2'],
   qsv: (o, g) => ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-profile:v', 'high',
     '-b:v', `${o.bitrate}k`, '-maxrate', `${o.bitrate}k`, '-bufsize', `${o.bitrate * 2}k`, '-g', g],
@@ -116,7 +117,7 @@ function recordArgs(o, partFile) {
   const hw = ['nvenc', 'qsv', 'amf'].includes(o.encoder);
   const kbps = o.bitrate || 20000;
   let v;
-  if (hw) v = [...(o.safe ? ENCODERS[o.encoder + '_safe'] : ENCODERS[o.encoder])({ bitrate: kbps }, String(Math.round(fps))), ...pixFmt(o), ...cfr(o, fps)];
+  if (hw) v = [...(o.safe ? ENCODERS[o.encoder + '_safe'] : ENCODERS[o.encoder])({ bitrate: kbps, height: o.height }, String(Math.round(fps))), ...pixFmt(o), ...cfr(o, fps)];
   else if (!o.engine && (o.inputCodec === 'h264' || o.inputCodec === 'vp9')) v = ['-c:v', 'copy'];
   else v = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', rate(fps), '-fps_mode', 'cfr'];
   return [

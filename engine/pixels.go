@@ -130,9 +130,67 @@ func drawFramed(dst, src *Frame, r Rect) {
 		copy(dst.Buf, src.Buf)
 		return
 	}
+	if isFull(r) && dst.W == 2*src.W && dst.H == 2*src.H { // 1080p cameras in a 4K picture: a much quicker exact 2×
+		scale2x(dst.Y(), src.Y(), src.W, src.H)
+		scale2x(dst.U(), src.U(), src.W/2, src.H/2)
+		scale2x(dst.V(), src.V(), src.W/2, src.H/2)
+		return
+	}
 	scalePlane(dst.Y(), dst.W, dst.H, src.Y(), src.W, src.H, r)
 	scalePlane(dst.U(), dst.W/2, dst.H/2, src.U(), src.W/2, src.H/2, r)
 	scalePlane(dst.V(), dst.W/2, dst.H/2, src.V(), src.W/2, src.H/2, r)
+}
+
+/*
+exactly twice the size, the same as scalePlane would give (bilinear, pixel centres): every new pixel is
+
+	¾ of its nearest source pixel and ¼ of the next one, across and down
+*/
+func scale2x(dst, src []byte, sw, sh int) {
+	dw := sw * 2
+	parallel(sh*2, func(y0, y1 int) {
+		// each source row doubled across (×4) once, kept for the rows that need it (3 at a time)
+		var rows [3][]int32
+		var idx = [3]int{-1, -1, -1}
+		get := func(j, keep int) []int32 {
+			for k := 0; k < 3; k++ {
+				if idx[k] == j {
+					return rows[k]
+				}
+			}
+			k := -1 // the oldest row (rows only go down the picture), never the one still in use
+			for c := 0; c < 3; c++ {
+				if idx[c] != keep && (k < 0 || idx[c] < idx[k]) {
+					k = c
+				}
+			}
+			if rows[k] == nil {
+				rows[k] = make([]int32, dw)
+			}
+			out, row := rows[k], src[j*sw:j*sw+sw]
+			for i := 0; i < sw; i++ {
+				c := int32(row[i]) * 3
+				out[2*i] = c + int32(row[max(i-1, 0)])
+				out[2*i+1] = c + int32(row[min(i+1, sw-1)])
+			}
+			idx[k] = j
+			return out
+		}
+		for y := y0; y < y1; y++ {
+			j := y >> 1
+			jf := j - 1
+			if y&1 == 1 {
+				jf = j + 1
+			}
+			jf = max(0, min(jf, sh-1))
+			h0 := get(j, -2)
+			h1 := get(jf, j)
+			d := dst[y*dw : y*dw+dw]
+			for x := range d {
+				d[x] = uint8((3*h0[x] + h1[x] + 8) >> 4)
+			}
+		}
+	})
 }
 
 // bilinear, 8-bit weights

@@ -210,7 +210,7 @@ func (e *Engine) command(cmd string, m Msg, payload []byte) {
 	switch cmd {
 	case "camera":
 		id := m.str("id")
-		c := newCamera(e, id, m.strs("args"), m.num("fps"))
+		c := newCamera(e, id, m.strs("args"), m.num("fps"), int(m.num("w")), int(m.num("h")))
 		e.mu.Lock()
 		old := e.cams[id]
 		e.cams[id] = c
