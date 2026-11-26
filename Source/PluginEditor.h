@@ -41,6 +41,27 @@ private:
 };
 
 //==============================================================================
+// Vertical stereo level meter (peak bar, RMS line, peak hold, clip LED, dB readout)
+class LevelMeter : public juce::Component
+{
+public:
+    LevelMeter (DefeedbackAudioProcessor& p, DefeedbackAudioProcessor::Meter& m, const juce::String& title)
+        : proc (p), meter (m), name (title) {}
+    void update();                 // called from the editor timer (30 Hz)
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override { clip.fill (false); repaint(); }
+
+private:
+    float yForDb (juce::Rectangle<float> r, float db) const;
+    DefeedbackAudioProcessor& proc;
+    DefeedbackAudioProcessor::Meter& meter;
+    juce::String name;
+    std::array<float, 2> peakDb { -100.0f, -100.0f }, rmsDb { -100.0f, -100.0f }, holdDb { -100.0f, -100.0f };
+    std::array<int, 2> holdFrames {};
+    std::array<bool, 2> clip {};
+};
+
+//==============================================================================
 class DefeedbackAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -59,6 +80,7 @@ private:
 
     SpectrumView spectrum;
     NotchList notchList;
+    LevelMeter inMeter, outMeter;
 
     juce::Slider feedbackKnob, denoiseKnob, dereverbKnob;
     juce::Label feedbackLabel, denoiseLabel, dereverbLabel;

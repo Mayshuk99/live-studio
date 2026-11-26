@@ -40,7 +40,18 @@ public:
 
     double getCurrentSampleRate() const noexcept { return currentSampleRate.load(); }
 
+    // level meters: peak (max since the UI last read it) and RMS of the last block, linear
+    struct Meter
+    {
+        std::array<std::atomic<float>, 2> peak, rms;
+        Meter() { for (int c = 0; c < 2; ++c) { peak[(size_t) c].store (0.0f); rms[(size_t) c].store (0.0f); } }
+    };
+    Meter inputMeter, outputMeter;
+    std::atomic<int> meterChannels { 2 };
+
 private:
+    void measure (Meter& m, const juce::AudioBuffer<float>& b, int numCh, int n) noexcept;
+
     std::atomic<float>* pFeedback = nullptr;
     std::atomic<float>* pDenoise = nullptr;
     std::atomic<float>* pDereverb = nullptr;

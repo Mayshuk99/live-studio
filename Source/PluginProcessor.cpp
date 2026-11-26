@@ -67,7 +67,23 @@ void DefeedbackAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                           pDereverb->load() * 0.01f,
                           pMute->load() > 0.5f);
 
-    engine.process (buffer.getArrayOfWritePointers(), juce::jmin (numIn, 2, buffer.getNumChannels()), n);
+    const int numCh = juce::jmin (numIn, 2, buffer.getNumChannels());
+    meterChannels.store (juce::jmax (1, numCh), std::memory_order_relaxed);
+
+    measure (inputMeter, buffer, numCh, n);
+    engine.process (buffer.getArrayOfWritePointers(), numCh, n);
+    measure (outputMeter, buffer, numCh, n);
+}
+
+void DefeedbackAudioProcessor::measure (Meter& m, const juce::AudioBuffer<float>& b, int numCh, int n) noexcept
+{
+    for (int c = 0; c < numCh; ++c)
+    {
+        const float pk = b.getMagnitude (c, 0, n);
+        if (pk > m.peak[(size_t) c].load (std::memory_order_relaxed))
+            m.peak[(size_t) c].store (pk, std::memory_order_relaxed);
+        m.rms[(size_t) c].store (b.getRMSLevel (c, 0, n), std::memory_order_relaxed);
+    }
 }
 
 juce::AudioProcessorEditor* DefeedbackAudioProcessor::createEditor()

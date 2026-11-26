@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(DefeedbackPlugin VERSION 1.0.0 LANGUAGES C CXX)
+project(DefeedbackPlugin VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,7 +21,7 @@ juce_add_plugin(DefeedbackPlugin
     PLUGIN_CODE                 Dfb1
     FORMATS                     VST3 Standalone
     PRODUCT_NAME                "DE-FEEDBACK"
-    VERSION                     1.0.0
+    VERSION                     1.1.0
     IS_SYNTH                    FALSE
     NEEDS_MIDI_INPUT            FALSE
     NEEDS_MIDI_OUTPUT           FALSE

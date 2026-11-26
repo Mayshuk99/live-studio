@@ -264,13 +264,112 @@ void NotchList::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+static float toDb (float lin) { return lin > 1.0e-5f ? 20.0f * std::log10 (lin) : -100.0f; }
+
+void LevelMeter::update()
+{
+    const int chans = juce::jlimit (1, 2, proc.meterChannels.load());
+    for (int c = 0; c < 2; ++c)
+    {
+        const float pk = c < chans ? toDb (meter.peak[(size_t) c].exchange (0.0f)) : -100.0f;
+        const float rm = c < chans ? toDb (meter.rms[(size_t) c].load()) : -100.0f;
+
+        peakDb[(size_t) c] = juce::jmax (pk, peakDb[(size_t) c] - 1.2f);       // ~36 dB/s fall
+        rmsDb[(size_t) c] = rm > rmsDb[(size_t) c] ? rm : rmsDb[(size_t) c] * 0.85f + rm * 0.15f;
+
+        if (pk >= holdDb[(size_t) c]) { holdDb[(size_t) c] = pk; holdFrames[(size_t) c] = 45; }   // 1.5 s hold
+        else if (--holdFrames[(size_t) c] <= 0) holdDb[(size_t) c] = juce::jmax (-100.0f, holdDb[(size_t) c] - 1.5f);
+
+        if (pk >= -0.1f) clip[(size_t) c] = true;
+    }
+    repaint();
+}
+
+float LevelMeter::yForDb (juce::Rectangle<float> r, float db) const
+{
+    return juce::jmap (juce::jlimit (-60.0f, 0.0f, db), -60.0f, 0.0f, r.getBottom(), r.getY());
+}
+
+void LevelMeter::paint (juce::Graphics& g)
+{
+    auto area = getLocalBounds().toFloat();
+    g.setColour (Colours::panel);
+    g.fillRoundedRectangle (area, 8.0f);
+    g.setColour (Colours::panelEdge);
+    g.drawRoundedRectangle (area.reduced (0.5f), 8.0f, 1.0f);
+
+    auto r = area.reduced (6.0f, 6.0f);
+    g.setColour (Colours::text);
+    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.drawText (name, r.removeFromTop (16.0f), juce::Justification::centred);
+
+    auto readout = r.removeFromBottom (16.0f);
+    auto leds = r.removeFromTop (8.0f);
+    r.removeFromTop (3.0f);
+
+    const int chans = juce::jlimit (1, 2, proc.meterChannels.load());
+    auto scale = r.removeFromLeft (24.0f);
+    r.removeFromLeft (2.0f);
+    const float gap = 3.0f;
+    const float barW = (r.getWidth() - gap * (float) (chans - 1)) / (float) chans;
+
+    // scale
+    g.setFont (juce::FontOptions (9.5f));
+    for (float db : { 0.0f, -6.0f, -12.0f, -18.0f, -24.0f, -36.0f, -48.0f, -60.0f })
+    {
+        const float y = yForDb (r, db);
+        g.setColour (Colours::textDim);
+        g.drawText (juce::String ((int) db), juce::Rectangle<float> (scale.getX(), y - 6.0f, scale.getWidth(), 12.0f), juce::Justification::centredRight);
+        g.setColour (Colours::grid);
+        g.drawHorizontalLine ((int) y, r.getX(), r.getRight());
+    }
+
+    const juce::ColourGradient grad (juce::Colour (0xffff3b30), 0.0f, yForDb (r, 0.0f),
+                                     juce::Colour (0xff34c759), 0.0f, yForDb (r, -60.0f), false);
+    float maxHold = -100.0f;
+    for (int c = 0; c < chans; ++c)
+    {
+        auto bar = juce::Rectangle<float> (r.getX() + (float) c * (barW + gap), r.getY(), barW, r.getHeight());
+        g.setColour (Colours::background);
+        g.fillRect (bar);
+
+        auto grad2 = grad;
+        grad2.addColour (0.10, juce::Colour (0xffff9500));   // -6 dB
+        grad2.addColour (0.30, juce::Colour (0xffffcc00));   // -18 dB
+        g.setGradientFill (grad2);
+        const float yPk = yForDb (bar, peakDb[(size_t) c]);
+        g.fillRect (bar.withTop (yPk));
+
+        g.setColour (juce::Colours::white.withAlpha (0.85f));                       // RMS
+        g.fillRect (bar.getX(), yForDb (bar, rmsDb[(size_t) c]) - 1.0f, bar.getWidth(), 2.0f);
+        if (holdDb[(size_t) c] > -60.0f)
+        {
+            g.setColour (Colours::text);                                            // peak hold
+            g.fillRect (bar.getX(), yForDb (bar, holdDb[(size_t) c]) - 1.0f, bar.getWidth(), 2.0f);
+        }
+
+        auto led = juce::Rectangle<float> (bar.getX(), leds.getY(), barW, leds.getHeight());
+        g.setColour (clip[(size_t) c] ? juce::Colour (0xffff3b30) : Colours::grid);
+        g.fillRoundedRectangle (led, 2.0f);
+        maxHold = juce::jmax (maxHold, holdDb[(size_t) c]);
+    }
+
+    g.setColour (maxHold >= -0.1f ? juce::Colour (0xffff3b30) : Colours::text);
+    g.setFont (juce::FontOptions (11.0f));
+    g.drawText (maxHold <= -99.0f ? juce::String ("-inf") : juce::String (maxHold, 1) + " dB", readout, juce::Justification::centred);
+}
+
+//==============================================================================
 DefeedbackAudioProcessorEditor::DefeedbackAudioProcessorEditor (DefeedbackAudioProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), spectrum (p), notchList (p)
+    : AudioProcessorEditor (&p), proc (p), spectrum (p), notchList (p),
+      inMeter (p, p.inputMeter, "IN"), outMeter (p, p.outputMeter, "OUT")
 {
     setLookAndFeel (&lnf);
 
     addAndMakeVisible (spectrum);
     addAndMakeVisible (notchList);
+    addAndMakeVisible (inMeter);
+    addAndMakeVisible (outMeter);
 
     setupKnob (feedbackKnob, feedbackLabel, "DE-FEEDBACK");
     setupKnob (denoiseKnob, denoiseLabel, "DE-NOISE");
@@ -290,8 +389,8 @@ DefeedbackAudioProcessorEditor::DefeedbackAudioProcessorEditor (DefeedbackAudioP
     clearButton.onClick = [this] { proc.engine.feedback.requestClear(); };
 
     setResizable (true, true);
-    setResizeLimits (820, 540, 1800, 1200);
-    setSize (980, 620);
+    setResizeLimits (900, 560, 1800, 1200);
+    setSize (1040, 640);
     startTimerHz (30);
 }
 
@@ -337,6 +436,8 @@ void DefeedbackAudioProcessorEditor::paint (juce::Graphics& g)
     const int notches = proc.engine.feedback.getActiveNotchCount();
     g.drawText ("Active notches: " + juce::String (notches) + " / " + juce::String (dfb::FeedbackSuppressor::kMaxNotches)
                     + "      Noise / reverb reduction: " + juce::String (shownReduction, 1) + " dB"
+                    + "      Room reverb (T60): " + (proc.engine.cleaner.getRoomT60() > 0.0f
+                                                       ? juce::String (proc.engine.cleaner.getRoomT60(), 1) + " s" : juce::String ("measuring..."))
                     + "      Latency: 0 samples",
                 status, juce::Justification::centredLeft);
 }
@@ -354,8 +455,12 @@ void DefeedbackAudioProcessorEditor::resized()
     r.removeFromRight (10);
     spectrum.setBounds (r);
 
-    // knobs
+    // meters | knobs | meters | buttons
     auto buttons = bottom.removeFromRight (150);
+    outMeter.setBounds (bottom.removeFromRight (76).reduced (2, 0));
+    bottom.removeFromRight (6);
+    inMeter.setBounds (bottom.removeFromLeft (76).reduced (2, 0));
+    bottom.removeFromLeft (6);
     const int knobW = bottom.getWidth() / 3;
     juce::Slider* knobs[] = { &feedbackKnob, &denoiseKnob, &dereverbKnob };
     juce::Label* labels[] = { &feedbackLabel, &denoiseLabel, &dereverbLabel };
@@ -376,6 +481,8 @@ void DefeedbackAudioProcessorEditor::timerCallback()
 {
     const float gr = proc.engine.cleaner.getGainReductionDb();
     shownReduction = 0.8f * shownReduction + 0.2f * gr;
+    inMeter.update();
+    outMeter.update();
     spectrum.repaint();
     notchList.repaint();
     repaint (getLocalBounds().removeFromBottom (32));

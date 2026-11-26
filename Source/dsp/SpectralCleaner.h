@@ -4,14 +4,15 @@
 // Side chain : short STFT (512 @ 48 kHz, hop 128) of the input.
 //   * Noise    : minimum-statistics noise floor tracker (Martin) + decision-directed
 //                Wiener gain (Ephraim-Malah).  Adapts to hum, hiss, fans, HVAC, etc.
-//   * Reverb   : late-reverberation spectral estimator (Lebart / Habets model):
-//                late tail now ~= energy D ms ago * exp(-2 * delta * D).
+//   * Reverb   : ReverbSuppressor - blind room-T60 estimation + late-reverb model
+//                (Lebart / Habets) + decision-directed Wiener gain.
 // Audio path : the resulting gain curve is converted every hop into a short
 //              MINIMUM-PHASE FIR filter (cepstral method) and the audio is filtered
 //              directly in the time domain, with a crossfade between filters.
 //              => no block delay, plugin latency = 0 samples.
 
 #include "FFT.h"
+#include "ReverbSuppressor.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -52,8 +53,8 @@ public:
         }
 
         auto z = [this] (std::vector<float>& v, float val = 0.0f) { v.assign ((size_t) bins, val); };
-        z (P); z (Psm); z (Pns); z (noise); z (late);
-        z (gainN, 1.0f); z (gammaN, 1.0f); z (gainR, 1.0f); z (gammaR, 1.0f);
+        z (P); z (Psm); z (Pns); z (noise);
+        z (gainN, 1.0f); z (gammaN, 1.0f); z (Gr, 1.0f);
         z (G, 1.0f); z (Gs, 1.0f); z (tmp, 1.0f);
 
         // minimum statistics: U sub-windows of V frames (~1.5 s total)
@@ -62,9 +63,7 @@ public:
         subMin.assign ((size_t) U, std::vector<float> ((size_t) bins, std::numeric_limits<float>::max()));
         curMin.assign ((size_t) bins, std::numeric_limits<float>::max());
 
-        // reverb history: delay D frames
-        D = std::max (1, (int) std::lround (0.06 / hopSec));   // 60 ms
-        revHist.assign ((size_t) (D + 1), std::vector<float> ((size_t) bins, 0.0f));
+        reverb.prepare (bins, N, hop, sr);
 
         hOld.assign ((size_t) L, 0.0f);
         hNew.assign ((size_t) L, 0.0f);
@@ -88,13 +87,11 @@ public:
         std::fill (noise.begin(), noise.end(), 0.0f);
         std::fill (gainN.begin(), gainN.end(), 1.0f);
         std::fill (gammaN.begin(), gammaN.end(), 1.0f);
-        std::fill (gainR.begin(), gainR.end(), 1.0f);
-        std::fill (gammaR.begin(), gammaR.end(), 1.0f);
         std::fill (Gs.begin(), Gs.end(), 1.0f);
         for (auto& s : subMin) std::fill (s.begin(), s.end(), std::numeric_limits<float>::max());
         std::fill (curMin.begin(), curMin.end(), std::numeric_limits<float>::max());
-        for (auto& r : revHist) std::fill (r.begin(), r.end(), 0.0f);
-        subIdx = subCount = revPos = 0;
+        reverb.reset();
+        subIdx = subCount = 0;
         anaPos = histPos = hopCounter = 0;
         frames = 0;
         oldIsIdentity = newIsIdentity = true;
@@ -109,6 +106,9 @@ public:
     }
 
     float getGainReductionDb() const noexcept { return gainReductionDb.load (std::memory_order_relaxed); }
+    float getRoomT60() const noexcept { return reverb.getT60Mid(); }   // seconds, 0 = not measured yet
+    float getRoomT60Band (int b) const noexcept { return reverb.getT60 (b); }
+    float getKappaDb (int b) const noexcept { return reverb.getKappaDb (b); }
 
     // test hook: analyse only the first n channels (0 = all). Used for "shadow filtering" measurements.
     void setAnalysisChannels (int n) noexcept { analysisChannels = n; }
@@ -212,24 +212,13 @@ private:
             noise[(size_t) k] = m * kNoiseBias;
         }
 
-        // ---- late reverb estimate
-        const int readIdx = (revPos + 1) % (D + 1);     // oldest = D frames ago
-        const float t60 = 0.3f + 1.2f * amtReverb;      // assumed T60: 0.3 .. 1.5 s
-        const float deltaR = 3.0f * std::log (10.0f) / t60;
-        const float decay = std::exp (-2.0f * deltaR * (float) D * (float) hop / (float) sr);
-        for (int k = 0; k < bins; ++k) late[(size_t) k] = decay * revHist[(size_t) readIdx][(size_t) k];
-        revHist[(size_t) revPos] = Psm;
-        revPos = readIdx;
-
         // ---- gains
         const bool useN = amtNoise > 0.001f;
-        const bool useR = amtReverb > 0.001f && frames > D;
+        const bool useR = reverb.process (P.data(), noise.data(), amtReverb, Gr.data());
         const float aDD = 0.92f;
 
         const float overN = 1.0f + 3.0f * amtNoise;
         const float floorN = std::pow (10.0f, -30.0f * amtNoise / 20.0f);    // 0 .. -30 dB
-        const float overR = 0.5f + 2.5f * amtReverb;
-        const float floorR = std::pow (10.0f, -25.0f * amtReverb / 20.0f);   // 0 .. -25 dB
 
         for (int k = 0; k < bins; ++k)
         {
@@ -248,15 +237,7 @@ private:
                 g *= gn;
             }
 
-            if (useR)
-            {
-                const float gamma = std::min (Psm[(size_t) k] / (overR * late[(size_t) k] + 1e-12f), 1e4f);
-                float gr = std::sqrt (std::max (1.0f - 1.0f / gamma, 0.0f));   // spectral subtraction
-                gr = std::max (gr, floorR);
-                gainR[(size_t) k] = gr;
-                gammaR[(size_t) k] = gamma;
-                g *= gr;
-            }
+            if (useR) g *= Gr[(size_t) k];
 
             G[(size_t) k] = std::max (g, 0.003f);   // never below -50 dB
         }
@@ -338,18 +319,19 @@ private:
     double sr = 48000.0;
     int channels = 2;
     int N = 512, hop = 128, bins = 257, L = 256, M = 1024;
-    int V = 70, D = 22;
+    int V = 70;
 
     FFT fft, fftC;
     std::vector<cfloat> buf, cep;
     std::vector<float> window, fadeWin;
     std::vector<float> ana[kMaxChannels], hist[kMaxChannels];
-    std::vector<float> P, Psm, Pns, noise, late, gainN, gammaN, gainR, gammaR, G, Gs, tmp;
-    std::vector<std::vector<float>> subMin, revHist;
+    std::vector<float> P, Psm, Pns, noise, gainN, gammaN, Gr, G, Gs, tmp;
+    std::vector<std::vector<float>> subMin;
+    ReverbSuppressor reverb;
     std::vector<float> curMin;
     std::vector<float> hOld, hNew, hDesign;
 
-    int subIdx = 0, subCount = 0, revPos = 0;
+    int subIdx = 0, subCount = 0;
     int anaPos = 0, histPos = 0, hopCounter = 0, fadePos = 0;
     long long frames = 0;
     bool oldIsIdentity = true, newIsIdentity = true;

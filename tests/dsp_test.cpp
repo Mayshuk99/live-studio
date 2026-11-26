@@ -130,6 +130,14 @@ int main (int argc, char** argv)
             eng->process (ch, 2, (int) std::min ((size_t) 256, mix.size() - p));
         }
         writeF32 (argv[4], part);
+        if (getenv ("DFB_T60"))
+        {
+            fprintf (stderr, "T60 bands:");
+            for (int b = 0; b < 6; ++b) fprintf (stderr, " %.2f", eng->cleaner.getRoomT60Band (b));
+            fprintf (stderr, "  mid %.2f s  kappa dB:", eng->cleaner.getRoomT60());
+            for (int b = 0; b < 6; ++b) fprintf (stderr, " %.1f", eng->cleaner.getKappaDb (b));
+            fprintf (stderr, "\n");
+        }
         return 0;
     }
 
