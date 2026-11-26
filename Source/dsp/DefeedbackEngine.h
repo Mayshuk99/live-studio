@@ -1,5 +1,5 @@
 #pragma once
-// Full processing chain:  input -> De-Feedback (notches) -> De-Noise + De-Reverb -> Mute -> output
+// Full processing chain:  input -> De-Feedback (notches) -> De-Noise + De-Room + De-Reverb -> Mute -> output
 // Total latency: 0 samples.
 
 #include "FeedbackSuppressor.h"
@@ -26,11 +26,16 @@ public:
     }
 
     // all amounts 0..1
-    void setParameters (float feedbackAmt, float noiseAmt, float reverbAmt, bool mute) noexcept
+    void setParameters (float feedbackAmt, float noiseAmt, float reverbAmt, bool mute, float roomAmt = 0.0f) noexcept
     {
         feedback.setStrength (feedbackAmt);
-        cleaner.setAmounts (noiseAmt, reverbAmt);
+        cleaner.setAmounts (noiseAmt, reverbAmt, roomAmt);
         muteTarget = mute ? 0.0f : 1.0f;
+    }
+
+    void setFeedbackTiming (float attackMs, float releaseSec, int ratio) noexcept
+    {
+        feedback.setTiming (attackMs, releaseSec, ratio);
     }
 
     void process (float* const* ch, int numCh, int numSamples) noexcept

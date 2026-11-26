@@ -14,6 +14,7 @@ namespace Colours
     const juce::Colour knobFeedback { 0xffff6b5e };
     const juce::Colour knobNoise    { 0xff5aa9e6 };
     const juce::Colour knobReverb   { 0xff9b7bea };
+    const juce::Colour knobRoom     { 0xff3cc8b4 };
 }
 
 static juce::String freqText (float f)
@@ -360,9 +361,93 @@ void LevelMeter::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+FeedbackSettings::FeedbackSettings (DefeedbackAudioProcessor& p) : proc (p)
+{
+    ratioParam = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("fbRatio"));
+    const char* names[] = { "1:1", "1:2", "1:3", "1:4" };
+    for (int i = 0; i < 4; ++i)
+    {
+        auto& b = ratioButtons[(size_t) i];
+        b.setButtonText (names[i]);
+        b.setClickingTogglesState (false);
+        b.setColour (juce::TextButton::buttonOnColourId, Colours::knobFeedback);
+        b.setTooltip (i == 0 ? "1:1 - detect and show only, no cut" : "Cut = howl level above normal x (1 - 1/ratio)");
+        b.onClick = [this, i] {
+            if (ratioParam == nullptr) return;
+            ratioParam->beginChangeGesture();
+            *ratioParam = i;
+            ratioParam->endChangeGesture();
+            syncRatio();
+        };
+        addAndMakeVisible (b);
+    }
+
+    auto setupSmall = [this] (juce::Slider& s, juce::Label& l, const juce::String& text) {
+        s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 18);
+        s.setRotaryParameters (juce::degreesToRadians (225.0f), juce::degreesToRadians (495.0f), true);
+        s.setColour (juce::Slider::rotarySliderFillColourId, Colours::knobFeedback);
+        addAndMakeVisible (s);
+        l.setText (text, juce::dontSendNotification);
+        l.setJustificationType (juce::Justification::centred);
+        l.setFont (juce::FontOptions (11.5f, juce::Font::bold));
+        l.setColour (juce::Label::textColourId, Colours::textDim);
+        addAndMakeVisible (l);
+    };
+    setupSmall (attack, attackLabel, "ATTACK");
+    setupSmall (release, releaseLabel, "RELEASE");
+    attackAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, "fbAttack", attack);
+    releaseAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, "fbRelease", release);
+    attack.setDoubleClickReturnValue (true, 20.0);
+    release.setDoubleClickReturnValue (true, 15.0);
+
+    ratioLabel.setText ("RATIO", juce::dontSendNotification);
+    ratioLabel.setFont (juce::FontOptions (11.5f, juce::Font::bold));
+    ratioLabel.setColour (juce::Label::textColourId, Colours::textDim);
+    addAndMakeVisible (ratioLabel);
+    syncRatio();
+}
+
+void FeedbackSettings::syncRatio()
+{
+    const int idx = ratioParam != nullptr ? ratioParam->getIndex() : 3;
+    for (int i = 0; i < 4; ++i)
+        ratioButtons[(size_t) i].setToggleState (i == idx, juce::dontSendNotification);
+}
+
+void FeedbackSettings::paint (juce::Graphics& g)
+{
+    auto area = getLocalBounds().toFloat();
+    g.setColour (Colours::panel);
+    g.fillRoundedRectangle (area, 8.0f);
+    g.setColour (Colours::panelEdge);
+    g.drawRoundedRectangle (area.reduced (0.5f), 8.0f, 1.0f);
+    g.setColour (Colours::text);
+    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.drawText ("DE-FEEDBACK SETTINGS", area.reduced (10.0f, 6.0f).removeFromTop (18.0f), juce::Justification::centredLeft);
+}
+
+void FeedbackSettings::resized()
+{
+    auto r = getLocalBounds().reduced (10, 6);
+    r.removeFromTop (22);
+    auto ratioRow = r.removeFromTop (26);
+    ratioLabel.setBounds (ratioRow.removeFromLeft (48));
+    const int bw = ratioRow.getWidth() / 4;
+    for (int i = 0; i < 4; ++i)
+        ratioButtons[(size_t) i].setBounds (ratioRow.removeFromLeft (bw).reduced (2, 0));
+    r.removeFromTop (6);
+    auto left = r.removeFromLeft (r.getWidth() / 2);
+    attackLabel.setBounds (left.removeFromTop (14));
+    attack.setBounds (left);
+    releaseLabel.setBounds (r.removeFromTop (14));
+    release.setBounds (r);
+}
+
+//==============================================================================
 DefeedbackAudioProcessorEditor::DefeedbackAudioProcessorEditor (DefeedbackAudioProcessor& p)
     : AudioProcessorEditor (&p), proc (p), spectrum (p), notchList (p),
-      inMeter (p, p.inputMeter, "IN"), outMeter (p, p.outputMeter, "OUT")
+      inMeter (p, p.inputMeter, "IN"), outMeter (p, p.outputMeter, "OUT"), fbSettings (p)
 {
     setLookAndFeel (&lnf);
 
@@ -370,17 +455,21 @@ DefeedbackAudioProcessorEditor::DefeedbackAudioProcessorEditor (DefeedbackAudioP
     addAndMakeVisible (notchList);
     addAndMakeVisible (inMeter);
     addAndMakeVisible (outMeter);
+    addAndMakeVisible (fbSettings);
 
     setupKnob (feedbackKnob, feedbackLabel, "DE-FEEDBACK");
     setupKnob (denoiseKnob, denoiseLabel, "DE-NOISE");
+    setupKnob (deroomKnob, deroomLabel, "DE-ROOM");
     setupKnob (dereverbKnob, dereverbLabel, "DE-REVERB");
     feedbackKnob.setColour (juce::Slider::rotarySliderFillColourId, Colours::knobFeedback);
     denoiseKnob.setColour (juce::Slider::rotarySliderFillColourId, Colours::knobNoise);
     dereverbKnob.setColour (juce::Slider::rotarySliderFillColourId, Colours::knobReverb);
+    deroomKnob.setColour (juce::Slider::rotarySliderFillColourId, Colours::knobRoom);
 
     feedbackAtt = std::make_unique<SliderAttachment> (proc.apvts, "feedback", feedbackKnob);
     denoiseAtt  = std::make_unique<SliderAttachment> (proc.apvts, "denoise", denoiseKnob);
     dereverbAtt = std::make_unique<SliderAttachment> (proc.apvts, "dereverb", dereverbKnob);
+    deroomAtt   = std::make_unique<SliderAttachment> (proc.apvts, "deroom", deroomKnob);
 
     addAndMakeVisible (muteButton);
     muteAtt = std::make_unique<ButtonAttachment> (proc.apvts, "mute", muteButton);
@@ -389,8 +478,8 @@ DefeedbackAudioProcessorEditor::DefeedbackAudioProcessorEditor (DefeedbackAudioP
     clearButton.onClick = [this] { proc.engine.feedback.requestClear(); };
 
     setResizable (true, true);
-    setResizeLimits (900, 560, 1800, 1200);
-    setSize (1040, 640);
+    setResizeLimits (1000, 600, 1900, 1250);
+    setSize (1120, 680);
     startTimerHz (30);
 }
 
@@ -427,7 +516,7 @@ void DefeedbackAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText ("DE-FEEDBACK", title.removeFromLeft (240), juce::Justification::centredLeft);
     g.setColour (Colours::textDim);
     g.setFont (juce::FontOptions (14.0f));
-    g.drawText ("Zero-Latency De-Feedback  +  De-Noise  +  De-Reverb", title, juce::Justification::centredLeft);
+    g.drawText ("Zero-Latency De-Feedback  +  De-Noise  +  De-Room  +  De-Reverb", title, juce::Justification::centredLeft);
 
     // status line under the knobs
     auto status = getLocalBounds().reduced (16, 8).removeFromBottom (20);
@@ -451,7 +540,10 @@ void DefeedbackAudioProcessorEditor::resized()
     auto bottom = r.removeFromBottom (juce::jlimit (170, 260, getHeight() / 3));
     r.removeFromBottom (10);
 
-    notchList.setBounds (r.removeFromRight (juce::jlimit (220, 320, getWidth() / 4)));
+    auto rightCol = r.removeFromRight (juce::jlimit (240, 320, getWidth() / 4));
+    fbSettings.setBounds (rightCol.removeFromBottom (juce::jmin (150, rightCol.getHeight() / 2)));
+    rightCol.removeFromBottom (8);
+    notchList.setBounds (rightCol);
     r.removeFromRight (10);
     spectrum.setBounds (r);
 
@@ -461,10 +553,10 @@ void DefeedbackAudioProcessorEditor::resized()
     bottom.removeFromRight (6);
     inMeter.setBounds (bottom.removeFromLeft (76).reduced (2, 0));
     bottom.removeFromLeft (6);
-    const int knobW = bottom.getWidth() / 3;
-    juce::Slider* knobs[] = { &feedbackKnob, &denoiseKnob, &dereverbKnob };
-    juce::Label* labels[] = { &feedbackLabel, &denoiseLabel, &dereverbLabel };
-    for (int i = 0; i < 3; ++i)
+    const int knobW = bottom.getWidth() / 4;
+    juce::Slider* knobs[] = { &feedbackKnob, &denoiseKnob, &deroomKnob, &dereverbKnob };
+    juce::Label* labels[] = { &feedbackLabel, &denoiseLabel, &deroomLabel, &dereverbLabel };
+    for (int i = 0; i < 4; ++i)
     {
         auto col = bottom.removeFromLeft (knobW).reduced (8, 4);
         labels[i]->setBounds (col.removeFromTop (24));
@@ -483,6 +575,7 @@ void DefeedbackAudioProcessorEditor::timerCallback()
     shownReduction = 0.8f * shownReduction + 0.2f * gr;
     inMeter.update();
     outMeter.update();
+    fbSettings.syncRatio();
     spectrum.repaint();
     notchList.repaint();
     repaint (getLocalBounds().removeFromBottom (32));

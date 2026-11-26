@@ -62,6 +62,25 @@ private:
 };
 
 //==============================================================================
+// DE-FEEDBACK settings: ratio 1:1 .. 1:4, attack, release
+class FeedbackSettings : public juce::Component
+{
+public:
+    explicit FeedbackSettings (DefeedbackAudioProcessor&);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void syncRatio();          // called from the editor timer
+
+private:
+    DefeedbackAudioProcessor& proc;
+    juce::AudioParameterChoice* ratioParam = nullptr;
+    std::array<juce::TextButton, 4> ratioButtons;
+    juce::Slider attack, release;
+    juce::Label attackLabel, releaseLabel, ratioLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAtt, releaseAtt;
+};
+
+//==============================================================================
 class DefeedbackAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -77,19 +96,21 @@ private:
 
     DefeedbackAudioProcessor& proc;
     DfbLookAndFeel lnf;
+    juce::TooltipWindow tooltipWindow { this, 600 };
 
     SpectrumView spectrum;
     NotchList notchList;
     LevelMeter inMeter, outMeter;
+    FeedbackSettings fbSettings;
 
-    juce::Slider feedbackKnob, denoiseKnob, dereverbKnob;
-    juce::Label feedbackLabel, denoiseLabel, dereverbLabel;
+    juce::Slider feedbackKnob, denoiseKnob, deroomKnob, dereverbKnob;
+    juce::Label feedbackLabel, denoiseLabel, deroomLabel, dereverbLabel;
     juce::ToggleButton muteButton { "MUTE" };
     juce::TextButton clearButton { "Clear notches" };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    std::unique_ptr<SliderAttachment> feedbackAtt, denoiseAtt, dereverbAtt;
+    std::unique_ptr<SliderAttachment> feedbackAtt, denoiseAtt, deroomAtt, dereverbAtt;
     std::unique_ptr<ButtonAttachment> muteAtt;
 
     float shownReduction = 0.0f;

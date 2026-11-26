@@ -106,6 +106,16 @@ public:
     }
 
     void setStrength (float s01) noexcept { strength = std::clamp (s01, 0.0f, 1.0f); }
+
+    // attack: time for a notch to reach its depth; release: time until a notch is gone after
+    // the feedback stopped (held for 70 %, faded out over the last 30 %);
+    // ratio 1..4 (1:1 .. 1:4): cut = howl excess * (1 - 1/ratio). 1:1 = detect & show only.
+    void setTiming (float attackMs, float releaseSeconds, int ratioN) noexcept
+    {
+        attackSec = std::clamp (attackMs, 1.0f, 1000.0f) * 0.001f;
+        releaseSec = std::clamp (releaseSeconds, 0.2f, 120.0f);
+        ratio = std::clamp (ratioN, 1, 4);
+    }
     void requestClear() noexcept { clearRequested.store (true); }
 
     void process (float* const* ch, int numCh, int numSamples) noexcept
@@ -137,7 +147,7 @@ public:
             // 3) apply active notches
             for (auto& n : notches)
             {
-                if (! n.active) continue;
+                if (! n.active || n.currentDb <= 0.0f) continue;
                 for (int c = 0; c < numCh; ++c)
                 {
                     float* d = ch[c] + pos;
@@ -198,10 +208,9 @@ private:
     };
 
     static constexpr float kQ = 12.0f;              // ~1/8 octave
-    static constexpr float kHoldSeconds = 15.0f;
-    static constexpr float kReleaseDbPerSec = 0.5f;
-    static constexpr float kAttackDbPerSec = 400.0f;
     static constexpr float kFastReleaseDbPerSec = 30.0f;
+    float ratioFactor() const noexcept { return ratio <= 1 ? 0.0f : 1.0f - 1.0f / (float) ratio; }
+    float maxDepthDb() const noexcept { return 9.0f + 21.0f * strength; }   // 9 .. 30 dB
 
     double now() const noexcept { return (double) sampleCount / sr; }
 
@@ -359,7 +368,7 @@ private:
 
             if (stable && (growing || persistent))
             {
-                triggerNotch (freqHz, t);
+                triggerNotch (freqHz, t, p.level - medianDb - 10.0f);
                 c.count = 1;
                 c.minBin = c.maxBin = c.bin;
                 c.firstLevel = c.lastLevel;
@@ -388,12 +397,12 @@ private:
         return false;
     }
 
-    void triggerNotch (float f, double t) noexcept
+    void triggerNotch (float f, double t, float excessDb) noexcept
     {
-        const float s = strength;
-        const float maxDepth = 9.0f + 21.0f * s;    // 9 .. 30 dB
-        const float firstDepth = std::min (maxDepth, 9.0f);
-        const float stepDb = 3.0f;
+        const float maxDepth = maxDepthDb();
+        const float rf = ratioFactor();                                   // 0 (1:1) .. 0.75 (1:4)
+        const float firstDepth = rf > 0.0f ? std::clamp (std::max (excessDb, 4.0f) * rf, 3.0f, maxDepth) : 0.0f;
+        const float stepDb = 3.0f * rf / 0.75f;
 
         // existing notch close by? (within 1/24 octave)
         Notch* hit = nullptr;
@@ -408,7 +417,7 @@ private:
         if (hit != nullptr)
         {
             hit->freq = 0.8f * hit->freq + 0.2f * f;
-            hit->targetDb = std::min (maxDepth, std::max (hit->targetDb, hit->currentDb) + stepDb);
+            hit->targetDb = rf > 0.0f ? std::min (maxDepth, std::max (hit->targetDb, hit->currentDb) + stepDb) : 0.0f;
             hit->lastHit = t;
             ++hit->hits;
             return;
@@ -436,13 +445,18 @@ private:
             auto& n = notches[i];
             if (n.active)
             {
+                const float holdSec = 0.7f * releaseSec;
+                const float fadeRate = maxDepthDb() / std::max (0.1f, 0.3f * releaseSec);
                 if (strength <= 0.001f)
+                {
                     n.targetDb = 0.0f;
-                else if (t - n.lastHit > kHoldSeconds)
-                    n.targetDb = std::max (0.0f, n.targetDb - kReleaseDbPerSec * dt);
+                    n.lastHit = -1e9;
+                }
+                else if (t - n.lastHit > holdSec)
+                    n.targetDb = std::max (0.0f, n.targetDb - fadeRate * dt);
 
-                // limit to current max depth if strength was lowered
-                n.targetDb = std::min (n.targetDb, 9.0f + 21.0f * strength);
+                if (ratio <= 1) n.targetDb = 0.0f;                 // 1:1 = detect & show only
+                n.targetDb = std::min (n.targetDb, maxDepthDb());  // knob lowered -> shallower
             }
 
             notchInfo[i].freq.store (n.active ? n.freq : 0.0f, std::memory_order_relaxed);
@@ -454,19 +468,24 @@ private:
     void updateNotchCoefficients() noexcept
     {
         const float dt = (float) kCoefInterval / (float) sr;
+        const double t = now();
+        const float relRate = std::max (kFastReleaseDbPerSec, maxDepthDb() / std::max (0.1f, 0.3f * releaseSec));
         for (auto& n : notches)
         {
             if (! n.active) continue;
 
             if (n.currentDb < n.targetDb)
-                n.currentDb = std::min (n.targetDb, n.currentDb + kAttackDbPerSec * dt);
+                n.currentDb = std::min (n.targetDb, n.currentDb + std::max (n.targetDb, 3.0f) / attackSec * dt);
             else if (n.currentDb > n.targetDb)
-                n.currentDb = std::max (n.targetDb, n.currentDb - kFastReleaseDbPerSec * dt);
+                n.currentDb = std::max (n.targetDb, n.currentDb - relRate * dt);
 
             if (n.targetDb <= 0.0f && n.currentDb <= 0.05f)
             {
-                n.active = false;
+                n.currentDb = 0.0f;
                 n.resetState();
+                n.b0 = 1.0; n.b1 = n.b2 = n.a1 = n.a2 = 0.0;
+                // keep listing it (detected frequency) until the release time is over
+                if (t - n.lastHit > releaseSec) n.active = false;
                 continue;
             }
 
@@ -514,6 +533,8 @@ private:
     int64_t sampleCount = 0;
 
     float strength = 0.5f;
+    float attackSec = 0.02f, releaseSec = 15.0f;
+    int ratio = 4;
     std::atomic<bool> clearRequested { false };
 
     std::array<Notch, kMaxNotches> notches {};

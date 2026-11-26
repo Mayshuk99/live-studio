@@ -4,6 +4,7 @@
 // Side chain : short STFT (512 @ 48 kHz, hop 128) of the input.
 //   * Noise    : minimum-statistics noise floor tracker (Martin) + decision-directed
 //                Wiener gain (Ephraim-Malah).  Adapts to hum, hiss, fans, HVAC, etc.
+//   * Room     : ReverbSuppressor::processRoom - early reflections + room resonances
 //   * Reverb   : ReverbSuppressor - blind room-T60 estimation + late-reverb model
 //                (Lebart / Habets) + decision-directed Wiener gain.
 // Audio path : the resulting gain curve is converted every hop into a short
@@ -54,7 +55,7 @@ public:
 
         auto z = [this] (std::vector<float>& v, float val = 0.0f) { v.assign ((size_t) bins, val); };
         z (P); z (Psm); z (Pns); z (noise);
-        z (gainN, 1.0f); z (gammaN, 1.0f); z (Gr, 1.0f);
+        z (gainN, 1.0f); z (gammaN, 1.0f); z (Gr, 1.0f); z (Groom, 1.0f);
         z (G, 1.0f); z (Gs, 1.0f); z (tmp, 1.0f);
 
         // minimum statistics: U sub-windows of V frames (~1.5 s total)
@@ -99,11 +100,14 @@ public:
         gainReductionDb.store (0.0f);
     }
 
-    void setAmounts (float noise01, float reverb01) noexcept
+    void setAmounts (float noise01, float reverb01, float room01 = 0.0f) noexcept
     {
         amtNoise = std::clamp (noise01, 0.0f, 1.0f);
         amtReverb = std::clamp (reverb01, 0.0f, 1.0f);
+        amtRoom = std::clamp (room01, 0.0f, 1.0f);
     }
+
+    ReverbSuppressor& getReverbSuppressor() noexcept { return reverb; }
 
     float getGainReductionDb() const noexcept { return gainReductionDb.load (std::memory_order_relaxed); }
     float getRoomT60() const noexcept { return reverb.getT60Mid(); }   // seconds, 0 = not measured yet
@@ -215,6 +219,7 @@ private:
         // ---- gains
         const bool useN = amtNoise > 0.001f;
         const bool useR = reverb.process (P.data(), noise.data(), amtReverb, Gr.data());
+        const bool useRoom = reverb.processRoom (noise.data(), amtRoom, Groom.data());
         const float aDD = 0.92f;
 
         const float overN = 1.0f + 3.0f * amtNoise;
@@ -238,6 +243,7 @@ private:
             }
 
             if (useR) g *= Gr[(size_t) k];
+            if (useRoom) g *= Groom[(size_t) k];
 
             G[(size_t) k] = std::max (g, 0.003f);   // never below -50 dB
         }
@@ -257,7 +263,7 @@ private:
             const float g = tmp[(size_t) k];
             float& s = Gs[(size_t) k];
             s = g > s ? (0.3f * s + 0.7f * g) : (0.6f * s + 0.4f * g);   // fast open, slower close
-            if (! useN && ! useR) s = 1.0f;
+            if (! useN && ! useR && ! useRoom) s = 1.0f;
             if (s < 0.999f) identity = false;
             num += (double) s * s * P[(size_t) k];
             den += P[(size_t) k];
@@ -325,7 +331,7 @@ private:
     std::vector<cfloat> buf, cep;
     std::vector<float> window, fadeWin;
     std::vector<float> ana[kMaxChannels], hist[kMaxChannels];
-    std::vector<float> P, Psm, Pns, noise, gainN, gammaN, Gr, G, Gs, tmp;
+    std::vector<float> P, Psm, Pns, noise, gainN, gammaN, Gr, Groom, G, Gs, tmp;
     std::vector<std::vector<float>> subMin;
     ReverbSuppressor reverb;
     std::vector<float> curMin;
@@ -336,7 +342,7 @@ private:
     long long frames = 0;
     bool oldIsIdentity = true, newIsIdentity = true;
 
-    float amtNoise = 0.0f, amtReverb = 0.0f;
+    float amtNoise = 0.0f, amtReverb = 0.0f, amtRoom = 0.0f;
     int analysisChannels = 0;
     std::atomic<float> gainReductionDb { 0.0f };
 };

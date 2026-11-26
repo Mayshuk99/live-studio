@@ -5,3 +5,6 @@ tests/*.txt
 tests/dsp_test
 tests/dsp_test_asan
 tests/*.exe
+tests/rooms/
+tests/train_room
+tests/dsp_test_old

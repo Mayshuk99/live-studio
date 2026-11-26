@@ -72,6 +72,7 @@ int main (int argc, char** argv)
         auto src = readF32 (argv[2]);
         auto ir = readF32 (argv[3]);
         const float gain = (float) atof (argv[5]);
+        if (const char* e = getenv ("DFB_FBT")) { float a = 20, r = 15; int q = 4; sscanf (e, "%f,%f,%d", &a, &r, &q); eng->setFeedbackTiming (a, r, q); }
         const float fb = (float) atof (argv[6]);
         const bool usePlugin = fb >= 0.0f;
         const int block = 64;

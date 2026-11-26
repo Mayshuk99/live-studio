@@ -56,6 +56,10 @@ private:
     std::atomic<float>* pDenoise = nullptr;
     std::atomic<float>* pDereverb = nullptr;
     std::atomic<float>* pMute = nullptr;
+    std::atomic<float>* pDeroom = nullptr;
+    std::atomic<float>* pAttack = nullptr;
+    std::atomic<float>* pRelease = nullptr;
+    std::atomic<float>* pRatio = nullptr;
     std::atomic<double> currentSampleRate { 48000.0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DefeedbackAudioProcessor)

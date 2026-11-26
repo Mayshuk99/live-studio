@@ -12,6 +12,13 @@
 //    -> a close vocal mic gets almost no processing, a distant/ambient mic gets full processing.
 // 3) Gain per bin = decision-directed Wiener gain on the signal-to-reverb ratio, which keeps
 //    random bins from "popping open" (the main weakness of plain spectral subtraction).
+// 4) DE-ROOM (processRoom): early reflections (5..40 ms) and room resonances.
+//    Early-reflection power = kappa_k * weighted sum of the power 2..40 ms ago, where kappa_k
+//    is measured PER FREQUENCY BIN at word endings (a running percentile of
+//    "energy left right after the word ends" / "energy just before").  Frequencies where the
+//    room resonates (boom, boxiness) keep more energy after offsets -> higher kappa -> more
+//    suppression there.  A dry signal drops instantly -> kappa ~ -30 dB -> left alone.
+//    Its parameters (RoomParams) were fitted on a set of simulated rooms (tests/train_room.cpp).
 // Works on the power spectrum delivered by SpectralCleaner; output is a gain per bin.
 
 #include <algorithm>
@@ -26,6 +33,34 @@ class ReverbSuppressor
 {
 public:
     static constexpr int kBands = 6;
+
+    struct RoomParams
+    {
+        // defaults = result of tests/train_room.cpp on 20 simulated rooms + 2 dry voices
+        float overMax = 4.0f;       // over-estimation at 100 %
+        float floorMaxDb = 12.0f;   // maximum cut at 100 %
+        float percentile = 0.6f;    // percentile of the post-offset energy ratio
+        float aDD = 0.8f;           // decision-directed smoothing
+        int dMin = 4;               // first lag (frames) counted as a reflection (~10 ms)
+        float endMs = 50.0f;        // last lag counted as early
+        float gateDb = -10.0f;      // bins whose room fraction is below this are left alone (trained)
+    };
+    void setRoomParams (const RoomParams& p) noexcept { room = p; }
+
+    struct ReverbParams
+    {
+        // defaults = result of tests/train_room.cpp ("reverb" mode), applied at knob 50 %
+        float overMax = 2.0f;        // over-estimation at 50 %
+        float floorMaxDb = 12.0f;    // maximum cut at 50 %
+        float lateStartMs0 = 50.0f;  // late boundary at 0 %
+        float lateStartMs1 = 35.0f;  // late boundary at 100 %
+        float aDD = 0.8f;
+        float gateDb = -9.0f;        // bands whose reverb fraction is below this are left alone
+        // knob 0..50 % = trained values above (reached at 50 %), 50..100 % = ramp to "strong"
+        float overStrong = 5.0f, floorStrongDb = 30.0f, lateStrongMs = 25.0f;
+    };
+    void setReverbParams (const ReverbParams& p) noexcept { rp = p; }
+    const RoomParams& getRoomParams() const noexcept { return room; }
 
     ReverbSuppressor()
     {
@@ -70,6 +105,12 @@ public:
         decayBin.assign ((size_t) bins, 1.0f);
         kappaBin.assign ((size_t) bins, 1.0f);
         Dref = std::clamp ((int) std::lround (0.04 / hopSec), 1, Dmax);
+        roomKappaDb.assign ((size_t) bins, kRoomKappaInitDb);
+        roomKappaS.assign ((size_t) bins, 0.0f);
+        roomGain.assign ((size_t) bins, 1.0f);
+        roomGammaPrev.assign ((size_t) bins, 1.0f);
+        roomEw.assign ((size_t) bins, 0.0f);
+        roomW.assign ((size_t) (Dmax + 1), 0.0f);
         gain.assign ((size_t) bins, 1.0f);
         gammaPrev.assign ((size_t) bins, 1.0f);
 
@@ -100,6 +141,10 @@ public:
             kPos[(size_t) b] = 0;
         }
         histPos = bandPos = frames = 0;
+        std::fill (roomKappaDb.begin(), roomKappaDb.end(), kRoomKappaInitDb);
+        std::fill (roomGain.begin(), roomGain.end(), 1.0f);
+        std::fill (roomGammaPrev.begin(), roomGammaPrev.end(), 1.0f);
+        lastWriteIdx = 0;
     }
 
     // P: power spectrum of this frame, noise: current noise-floor estimate (both 'bins' long).
@@ -131,6 +176,7 @@ public:
 
         // history ring (needed even while the knob is at 0, so turning it up works instantly)
         const int writeIdx = histPos;
+        lastWriteIdx = writeIdx;
         hist[(size_t) writeIdx] = PrF;
         histPos = (histPos + 1) % (Dmax + 1);
 
@@ -143,7 +189,10 @@ public:
         }
 
         const float a = amount;
-        const int D = std::clamp ((int) std::lround ((0.05 - 0.025 * a) / hopSec), 1, Dmax);
+        const float a1 = std::min (1.0f, 2.0f * a);            // trained range (0..50 %)
+        const float u = std::max (0.0f, 2.0f * a - 1.0f);       // strong range (50..100 %)
+        const float lateMs = rp.lateStartMs0 + (rp.lateStartMs1 - rp.lateStartMs0) * a1 + (rp.lateStrongMs - rp.lateStartMs1) * u;
+        const int D = std::clamp ((int) std::lround (lateMs * 0.001 / hopSec), 1, Dmax);
         const auto& past = hist[(size_t) ((writeIdx - D + Dmax + 1) % (Dmax + 1))];
         const float dSec = (float) (D * hopSec);
 
@@ -158,9 +207,9 @@ public:
             kappaBin[(size_t) k] = std::pow (10.0f, kd / 10.0f);
         }
 
-        const float over = 1.0f + 4.0f * a;                          // over-estimation 1 .. 5
-        const float floorG = std::pow (10.0f, -30.0f * a / 20.0f);   // 0 .. -30 dB
-        const float aDD = 0.9f;
+        const float over = 1.0f + (rp.overMax - 1.0f) * a1 + (rp.overStrong - rp.overMax) * u;
+        const float floorG = std::pow (10.0f, -(rp.floorMaxDb * a1 + (rp.floorStrongDb - rp.floorMaxDb) * u) / 20.0f);
+        const float aDD = rp.aDD;
 
         for (int k = 0; k < bins; ++k)
         {
@@ -171,10 +220,96 @@ public:
             const float g = std::max (xi / (1.0f + xi), floorG);
             gain[(size_t) k] = g;
             gammaPrev[(size_t) k] = gamma;
-            gainOut[k] = g;
+            const float kdB = 10.0f * std::log10 (kappaBin[(size_t) k] + 1e-12f);
+            const float wgt = std::clamp ((kdB - rp.gateDb) / 6.0f + 0.5f, 0.0f, 1.0f);
+            gainOut[k] = 1.0f - wgt * (1.0f - g);
         }
         return true;
     }
+
+    // DE-ROOM. Call right after process() for the same frame.
+    bool processRoom (const float* noise, float amount, float* gainOut) noexcept
+    {
+        const int ring = Dmax + 1;
+        const int dMin = std::clamp (room.dMin, 1, Dmax - 1);
+        const int dEnd = std::clamp ((int) std::lround (room.endMs * 0.001 / hopSec), dMin + 1, Dmax);
+
+        // lag weights follow the room decay
+        float t60mid = 0.0f;
+        for (int b = 2; b <= 4; ++b) t60mid += t60[(size_t) b] / 3.0f;
+        float wsum = 0.0f;
+        for (int d = dMin; d <= dEnd; ++d)
+        {
+            roomW[(size_t) d] = std::exp (-13.8f * (float) (d * hopSec) / std::max (0.15f, t60mid));
+            wsum += roomW[(size_t) d];
+        }
+        for (int d = dMin; d <= dEnd; ++d) roomW[(size_t) d] /= wsum;
+
+        std::fill (roomEw.begin(), roomEw.end(), 0.0f);
+        for (int d = dMin; d <= dEnd; ++d)
+        {
+            const auto& h = hist[(size_t) ((lastWriteIdx - d + ring) % ring)];
+            const float w = roomW[(size_t) d];
+            for (int k = 0; k < bins; ++k) roomEw[(size_t) k] += w * h[(size_t) k];
+        }
+
+        // per-bin room fraction, measured at offsets (always running, so the knob reacts at once)
+        if (frames > Dmax)
+        {
+            const auto& before = hist[(size_t) ((lastWriteIdx - dMin + ring) % ring)];
+            const float p = std::clamp (room.percentile, 0.02f, 0.98f);
+            for (int k = 1; k < bins; ++k)
+            {
+                const float then = before[(size_t) k];
+                const float now = PqF[(size_t) k];
+                if (then < 100.0f * noise[k] || now > 0.25f * then) continue;
+                const float r = 10.0f * std::log10 (now / (roomEw[(size_t) k] + 1e-20f) + 1e-12f);
+                float& q = roomKappaDb[(size_t) k];
+                q += r < q ? -kQuantStep * (1.0f - p) : kQuantStep * p;
+                q = std::clamp (q, -30.0f, 0.0f);
+            }
+            for (int k = 0; k < bins; ++k)
+            {
+                float s = 0.0f, w = 0.0f;
+                for (int j = -2; j <= 2; ++j)
+                {
+                    const int kk = std::clamp (k + j, 0, bins - 1);
+                    const float ww = (float) (3 - std::abs (j));
+                    s += ww * roomKappaDb[(size_t) kk]; w += ww;
+                }
+                roomKappaS[(size_t) k] = std::pow (10.0f, (s / w) / 10.0f);
+            }
+        }
+
+        if (amount <= 0.001f || frames <= Dmax)
+        {
+            std::fill (roomGain.begin(), roomGain.end(), 1.0f);
+            std::fill (roomGammaPrev.begin(), roomGammaPrev.end(), 1.0f);
+            for (int k = 0; k < bins; ++k) gainOut[k] = 1.0f;
+            return false;
+        }
+
+        const float over = 1.0f + (room.overMax - 1.0f) * amount;
+        const float floorG = std::pow (10.0f, -room.floorMaxDb * amount / 20.0f);
+        const float aDD = room.aDD;
+        for (int k = 0; k < bins; ++k)
+        {
+            const float er = over * roomKappaS[(size_t) k] * roomEw[(size_t) k] + 1e-12f;
+            const float gamma = std::min (PqF[(size_t) k] / er, 1.0e4f);
+            const float g0 = roomGain[(size_t) k];
+            const float xi = aDD * g0 * g0 * roomGammaPrev[(size_t) k] + (1.0f - aDD) * std::max (gamma - 1.0f, 0.0f);
+            const float g = std::max (xi / (1.0f + xi), floorG);
+            roomGain[(size_t) k] = g;
+            roomGammaPrev[(size_t) k] = gamma;
+            // soft gate on the measured room fraction (close mics: nothing to remove)
+            const float kdB = 10.0f * std::log10 (roomKappaS[(size_t) k] + 1e-12f);
+            const float wgt = std::clamp ((kdB - room.gateDb) / 6.0f + 0.5f, 0.0f, 1.0f);
+            gainOut[k] = 1.0f - wgt * (1.0f - g);
+        }
+        return true;
+    }
+
+    float getRoomKappaDb (int bin) const noexcept { return roomKappaDb[(size_t) bin]; }
 
     // estimated room T60 in seconds (0 = not measured yet); band 3 = 1-2 kHz
     float getT60 (int band) const noexcept { return t60Display[(size_t) band].load (std::memory_order_relaxed); }
@@ -191,6 +326,8 @@ private:
     static constexpr int kCand = 40;
     static constexpr float kDefaultKappaDb = -3.0f;
     static constexpr int kKappaCand = 64;
+    static constexpr float kRoomKappaInitDb = -15.0f;
+    static constexpr float kQuantStep = 1.0f;   // dB per event for the percentile tracker
 
     void updateT60 (const float* P, const float* noise) noexcept
     {
@@ -317,6 +454,10 @@ private:
     std::vector<std::vector<float>> hist;
     std::vector<float> Pr, PrF, Pq, PqF, decayBin, kappaBin, gain, gammaPrev;
     int Dref = 15;
+    int lastWriteIdx = 0;
+    RoomParams room;
+    ReverbParams rp;
+    std::vector<float> roomKappaDb, roomKappaS, roomGain, roomGammaPrev, roomEw, roomW;
     std::array<float, kBands> kappaDb {};
     std::array<std::array<float, kKappaCand>, kBands> kappaCand {};
     std::array<int, kBands> kCount {}, kPos {};
