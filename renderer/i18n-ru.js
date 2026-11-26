@@ -1248,7 +1248,8 @@ window.I18N_RU = {
     "White": "Белый",
     "Thin": "Узкий",
     "Wide": "Широкий",
-    "Width of the Live meter": "Ширина индикатора Live"
+    "Width of the Live meter": "Ширина индикатора Live",
+    "Width of the master meters (Live, and beside the phase view)": "Ширина мастер-индикаторов (Live и рядом с фазой)"
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],

@@ -2235,7 +2235,7 @@
       wrap.innerHTML = '';
       put(wrap,
         select(METER_FLOORS.map(f => [f, `0 … ${String(f).replace('-', '−')} dB`]), meterFloor(), v => { settings.meterFloor = +v; saveSettings(); logEvent('SETTINGS', `meter scale down to ${v} dB`); }, { title: 'Bottom of the meter scale' }),
-        select([['thin', 'Thin'], ['wide', 'Wide']], meterThin() ? 'thin' : 'wide', v => { settings.meterWidth = v; saveSettings(); logEvent('SETTINGS', `program meter ${v}`); document.querySelectorAll('.mon-meter-wrap.pgm').forEach(e => e.classList.toggle('thin', v === 'thin')); }, { title: 'Width of the Live meter' }),
+        select([['thin', 'Thin'], ['wide', 'Wide']], meterThin() ? 'thin' : 'wide', v => { settings.meterWidth = v; saveSettings(); logEvent('SETTINGS', `program meter ${v}`); document.querySelectorAll('.mon-meter-wrap.pgm, .master-meters').forEach(e => e.classList.toggle('thin', v === 'thin')); }, { title: 'Width of the master meters (Live, and beside the phase view)' }),
         ...Object.entries(METER_COLORS).map(([k, c]) => el('button', { class: 'meter-sw' + ((settings.meterColor || 'green') === k ? ' sel' : ''), title: c.name, style: `background:linear-gradient(to top, ${c.body} 0 62%, ${c.mid} 62% 86%, #ef4444 86%)`, onclick: () => { settings.meterColor = k; saveSettings(); logEvent('SETTINGS', `meter colour ${k}`); draw(); } })));
     };
     draw();
@@ -3753,6 +3753,7 @@
   RENDER.audio = body => {
     body.innerHTML = '';
     const m = show.audio.master;
+    masterCanvas.classList.toggle('thin', meterThin());
     const [bMon, bMono, bLim, bDyn, bFx, bAuto, bMix] = audioButtons();
     put(body, el('div', { class: 'aud2' },
       el('div', { class: 'master-top' },
@@ -4306,11 +4307,14 @@
       g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(x, y(rms), bw, top + mh - y(rms));
       g.fillStyle = hold > -3 ? '#ef4444' : '#f4f4f5'; g.fillRect(x, y(hold) - 1.5 * k, bw, 3 * k);
       g.fillStyle = clip ? '#ef4444' : '#2a1416'; g.fillRect(x, 2 * k, bw, 13 * k);
-      g.fillStyle = clip ? '#fff' : '#6b3a3d'; g.textAlign = 'center'; g.font = `700 ${9 * k}px Inter, Segoe UI, sans-serif`; g.fillText('MAX', x + bw / 2, 9 * k);
-      g.fillStyle = '#ececef'; g.font = `600 ${11 * k}px Consolas, monospace`; g.fillText(hold <= -60 ? '-∞' : hold.toFixed(1), x + bw / 2, H - 9 * k);
+      // (thin bars: "M" instead of "MAX", and one number for both under them — see below)
+      g.fillStyle = clip ? '#fff' : '#6b3a3d'; g.textAlign = 'center'; g.font = `700 ${9 * k}px Inter, Segoe UI, sans-serif`; g.fillText(thin ? 'M' : 'MAX', x + bw / 2, 9 * k);
+      if (!thin) { g.fillStyle = '#ececef'; g.font = `600 ${11 * k}px Consolas, monospace`; g.fillText(hold <= -60 ? '-∞' : hold.toFixed(1), x + bw / 2, H - 9 * k); }
     };
+    const thin = bw < 22 * k; // too narrow for a number under each bar
     bar(0, A.peakL, A.rmsL, A.holdL, A.clipL, 'L');
     bar(1, A.peakR, A.rmsR, A.holdR, A.clipR, 'R');
+    if (thin) { const hm = Math.max(A.holdL, A.holdR); g.fillStyle = '#ececef'; g.font = `600 ${11 * k}px Consolas, monospace`; g.fillText(hm <= -60 ? '-∞' : hm.toFixed(1), scaleW + gap + bw + gap / 2, H - 9 * k); }
     // YouTube's peak ceiling (−1 dB)
     g.strokeStyle = '#ef4444'; g.lineWidth = 1.5 * k; g.setLineDash([4 * k, 3 * k]); g.beginPath(); g.moveTo(scaleW, y(-1)); g.lineTo(W, y(-1)); g.stroke(); g.setLineDash([]);
     // phase correlation
