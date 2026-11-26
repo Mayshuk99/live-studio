@@ -1,0 +1,94 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+namespace ParamIDs
+{
+    static const juce::ParameterID feedback { "feedback", 1 };
+    static const juce::ParameterID denoise  { "denoise",  1 };
+    static const juce::ParameterID dereverb { "dereverb", 1 };
+    static const juce::ParameterID mute     { "mute",     1 };
+}
+
+DefeedbackAudioProcessor::DefeedbackAudioProcessor()
+    : AudioProcessor (BusesProperties()
+                          .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, "PARAMS", createParameterLayout())
+{
+    pFeedback = apvts.getRawParameterValue ("feedback");
+    pDenoise  = apvts.getRawParameterValue ("denoise");
+    pDereverb = apvts.getRawParameterValue ("dereverb");
+    pMute     = apvts.getRawParameterValue ("mute");
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout DefeedbackAudioProcessor::createParameterLayout()
+{
+    auto percent = juce::AudioParameterFloatAttributes()
+                       .withLabel ("%")
+                       .withStringFromValueFunction ([] (float v, int) { return juce::String (juce::roundToInt (v)) + " %"; });
+
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (ParamIDs::feedback, "De-Feedback",
+                                                                   juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 50.0f, percent));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (ParamIDs::denoise, "De-Noise",
+                                                                   juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f, percent));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (ParamIDs::dereverb, "De-Reverb",
+                                                                   juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f, percent));
+    params.push_back (std::make_unique<juce::AudioParameterBool> (ParamIDs::mute, "Mute", false));
+    return { params.begin(), params.end() };
+}
+
+bool DefeedbackAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+{
+    const auto in = layouts.getMainInputChannelSet();
+    const auto out = layouts.getMainOutputChannelSet();
+    if (in != out) return false;
+    return in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo();
+}
+
+void DefeedbackAudioProcessor::prepareToPlay (double sampleRate, int)
+{
+    currentSampleRate.store (sampleRate);
+    engine.prepare (sampleRate, 2);
+    setLatencySamples (0);
+}
+
+void DefeedbackAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    const int numIn = getTotalNumInputChannels();
+    const int numOut = getTotalNumOutputChannels();
+    const int n = buffer.getNumSamples();
+    for (int c = numIn; c < numOut; ++c) buffer.clear (c, 0, n);
+
+    engine.setParameters (pFeedback->load() * 0.01f,
+                          pDenoise->load() * 0.01f,
+                          pDereverb->load() * 0.01f,
+                          pMute->load() > 0.5f);
+
+    engine.process (buffer.getArrayOfWritePointers(), juce::jmin (numIn, 2, buffer.getNumChannels()), n);
+}
+
+juce::AudioProcessorEditor* DefeedbackAudioProcessor::createEditor()
+{
+    return new DefeedbackAudioProcessorEditor (*this);
+}
+
+void DefeedbackAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto xml = apvts.copyState().createXml())
+        copyXmlToBinary (*xml, destData);
+}
+
+void DefeedbackAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+        if (xml->hasTagName (apvts.state.getType()))
+            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new DefeedbackAudioProcessor();
+}

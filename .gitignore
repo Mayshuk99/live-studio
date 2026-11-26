@@ -1,0 +1,7 @@
+build/
+tests/*.f32
+tests/*.npy
+tests/*.txt
+tests/dsp_test
+tests/dsp_test_asan
+tests/*.exe

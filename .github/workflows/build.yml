@@ -1,0 +1,25 @@
+name: Build Windows VST3
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --target DefeedbackPlugin_VST3 DefeedbackPlugin_Standalone
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: DE-FEEDBACK-Windows-x64
+          path: |
+            build/DefeedbackPlugin_artefacts/Release/VST3
+            build/DefeedbackPlugin_artefacts/Release/Standalone/*.exe
