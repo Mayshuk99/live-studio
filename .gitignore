@@ -8,3 +8,4 @@ vsthost/build/
 i18n-found.json
 resources/ndi/
 ndihost/build/
+resources/poppler/

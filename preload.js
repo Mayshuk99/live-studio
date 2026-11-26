@@ -47,10 +47,16 @@ contextBridge.exposeInMainWorld('studio', {
   // reads a video/image file; the interface turns it into a playable in-memory URL
   readMedia: p => ipcRenderer.invoke('media:read', p),
   // converts a video the app can't play (e.g. ProRes .mov) into an MP4 copy; reports progress 0–100
-  convertMedia: (p, onProgress) => {
+  importDoc: (p, onProgress) => {
+    const h = (e, d) => { if (d.src === p && onProgress) onProgress(d); };
+    ipcRenderer.on('media:progress', h);
+    return ipcRenderer.invoke('media:doc', p).finally(() => ipcRenderer.removeListener('media:progress', h));
+  },
+  filesExist: list => ipcRenderer.invoke('media:exists', list),
+  convertMedia: (p, onProgress, kind) => {
     const h = (e, d) => { if (d && d.src === p && typeof onProgress === 'function') onProgress(d.percent); };
     ipcRenderer.on('media:progress', h);
-    return ipcRenderer.invoke('media:convert', p).finally(() => ipcRenderer.removeListener('media:progress', h));
+    return ipcRenderer.invoke('media:convert', p, kind || 'video').finally(() => ipcRenderer.removeListener('media:progress', h));
   },
   pickFolder: () => ipcRenderer.invoke('folder:pick'),
   openFolder: p => ipcRenderer.invoke('folder:open', p),

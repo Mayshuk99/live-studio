@@ -1,7 +1,7 @@
 {
   "name": "live-studio",
   "productName": "Live Studio",
-  "version": "1.45.0",
+  "version": "1.46.0",
   "description": "Live video production and streaming for Blackmagic capture cards and YouTube",
   "main": "main.js",
   "author": "Konstantin",
@@ -37,6 +37,7 @@
       "streamer.js",
       "native-engine.js",
       "vst-host.js",
+      "media-import.js",
       "renderer/**/*",
       "build/icon.png",
       "package.json"
@@ -66,6 +67,13 @@
       {
         "from": "resources/ndi",
         "to": "ndi",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/poppler",
+        "to": "poppler",
         "filter": [
           "**/*"
         ]

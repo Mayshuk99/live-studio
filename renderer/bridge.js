@@ -39,7 +39,10 @@
     saveShow: async obj => ls.set('ls.show', obj),
     loadSettings: async () => ls.get('ls.settings') || {},
     saveSettings: async obj => ls.set('ls.settings', obj),
-    pickMedia: () => new Promise(resolve => {
+    // tests can hand over files and documents (window.__pickNext, window.__importDoc, window.__convert)
+    importDoc: async (p, onProgress) => window.__importDoc ? window.__importDoc(p, onProgress) : { error: 'Slides need the installed app.' },
+    convertMedia: async (p, onPct, kind) => window.__convert ? window.__convert(p, kind) : { error: 'Converting needs the installed app.' },
+    pickMedia: () => window.__pickNext ? Promise.resolve(window.__pickNext.splice(0)) : new Promise(resolve => {
       const inp = document.createElement('input');
       inp.type = 'file'; inp.multiple = true; inp.accept = 'video/*,image/*,audio/*';
       inp.onchange = () => resolve([...inp.files].map(f => {

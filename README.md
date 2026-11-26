@@ -11,6 +11,8 @@ Your own live production and streaming program for Windows.
 - **Audio:** a mixer for your SSL audio interface, camera audio and video files.
 - **Output:** streams to YouTube (and Facebook or any RTMP / SRT server at the same time) and records to MP4; ISO recording puts every camera in its own ProRes / MJPEG / H.264 file.
 - **Network sources:** NDI, SRT and RTSP pictures as cameras (native engine).
+- **Files:** almost any video, picture or sound file (MOV/ProRes, AVI, WMV, MPEG, MXF, HEIC, TIFF, PSD, RAW, AIFF, WMA …) — what the player cannot play is converted once, by itself.
+- **Slides:** PDF, PowerPoint (with PowerPoint or LibreOffice on the computer) and text (TXT, RTF, Word, ODT) as slides, stepped with the buttons or a presentation clicker (Page Up / Page Down).
 - **Updates:** installs from a normal `Setup.exe`; tells you about new versions and installs them when you choose.
 
 ---
@@ -144,6 +146,9 @@ renderer/
 engine/            native engine in Go (OBS-style): reads capture cards through FFmpeg, composites in YUV,
                    feeds the stream / recording encoders; `go test ./...` runs its tests
 vsthost/           VST3 host in C++ (CMake; the Steinberg VST3 SDK is downloaded by the build, not stored here)
+media-import.js    bringing files in: which formats play as they are, FFmpeg conversion of the rest, PDF / PowerPoint
+                   pages (Poppler's pdftoppm, downloaded by the build into resources/poppler; PowerPoint / LibreOffice),
+                   text slides from TXT / RTF / DOCX / ODT
 ndihost/           NDI helper in C++ (ls-ndi: lists and receives NDI sources for the native engine); only the NDI
                    SDK's MIT-licensed headers are here — the NDI Runtime comes with the free NDI Tools
 i18n/              translation tools: extract.js, check.js, build.js, extra.tsv (English<TAB>Russian)

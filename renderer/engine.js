@@ -299,6 +299,13 @@
       s.patches.push(f);
       if (s.patches.length > 120) s.patches = s.patches.slice(-60); // never let a backlog build up
     }
+    // a new picture for an existing picture source (the next slide): no gap, the old one shows until it is uploaded
+    swapImage(id, el) {
+      const s = this.sources.get(id);
+      if (!s || s.kind !== 'image') return false;
+      s.el = el; s.dirty = true;
+      return true;
+    }
     removeSource(id) {
       const s = this.sources.get(id);
       if (s) {

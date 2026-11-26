@@ -347,3 +347,39 @@ Thin	Узкий
 Wide	Широкий
 Width of the Live meter	Ширина индикатора Live
 Width of the master meters (Live, and beside the phase view)	Ширина мастер-индикаторов (Live и рядом с фазой)
+{0} · slide {1} of {2}	{0} · слайд {1} из {2}
+Text	Текст
+Slides	Слайды
+Opening…	Открываю…
+Opening {0}… {1}%	Открываю {0}… {1}%
+Opening… {0}%	Открываю… {0}%
+Converting the sound… {0}%	Перевожу звук… {0}%
+Opening the picture… {0}%	Открываю картинку… {0}%
+Converting to MP4… {0}%	Перевожу в MP4… {0}%
++ Add video / picture / music / slides	+ Добавить видео / картинку / музыку / слайды
+Video (MP4, MOV/ProRes, AVI, WMV, MPEG, MXF, MKV …), pictures (JPEG, PNG, HEIC, TIFF, PSD, RAW …), sound (MP3, WAV, AIFF, WMA, FLAC …), slides (PDF, PowerPoint, Word, text)	Видео (MP4, MOV/ProRes, AVI, WMV, MPEG, MXF, MKV …), картинки (JPEG, PNG, HEIC, TIFF, PSD, RAW …), звук (MP3, WAV, AIFF, WMA, FLAC …), слайды (PDF, PowerPoint, Word, текст)
+Slides (PDF / PowerPoint / text)	Слайды (PDF / PowerPoint / текст)
+Next slide (presentation clickers send this)	Следующий слайд (эту клавишу шлют пульты-кликеры)
+Previous slide	Предыдущий слайд
+No slides on air or in Preview.	В эфире и в Preview нет слайдов.
+Slide — PageUp / PageDown to step through	Слайд — листать клавишами PageUp / PageDown
+Previous slide (Page Up)	Предыдущий слайд (Page Up)
+Next slide (Page Down)	Следующий слайд (Page Down)
+Slide {0}: {1}	Слайд {0}: {1}
+The slides could not be made again — is the document still there?	Не удалось заново сделать слайды — документ на месте?
+Slides need the installed app.	Слайдам нужна установленная программа.
+This music file can't be played directly.	Этот звуковой файл не воспроизводится напрямую.
+This video format can't be played directly.	Этот формат видео не воспроизводится напрямую.
+There is no picture in this file.	В этом файле нет картинки.
+There is no sound in this file.	В этом файле нет звука.
+This file could not be converted.	Этот файл не удалось перевести.
+This picture could not be opened.	Эту картинку не удалось открыть.
+This iPhone photo (HEIC) could not be opened. Install “HEIF Image Extensions” and “HEVC Video Extensions” from the Microsoft Store, or export it as JPEG.	Это фото iPhone (HEIC) не открылось. Установите «Расширения для изображений HEIF» и «Расширения для видео HEVC» из Microsoft Store или сохраните фото как JPEG.
+This camera RAW photo could not be opened. Install “Raw Image Extension” from the Microsoft Store, or export it as JPEG.	Это RAW-фото с камеры не открылось. Установите «Расширение для изображений RAW» из Microsoft Store или сохраните фото как JPEG.
+This PDF is locked with a password — save it without one.	Этот PDF защищён паролем — сохраните его без пароля.
+The PDF reader is missing from this installation — update Live Studio.	В этой установке нет модуля чтения PDF — обновите Live Studio.
+This PDF could not be opened.	Этот PDF не удалось открыть.
+Keynote files cannot be opened on Windows. In Keynote: File → Export To → PDF (or PowerPoint), then add that file.	Файлы Keynote не открываются в Windows. В Keynote: Файл → Экспортировать в → PDF (или PowerPoint), затем добавьте этот файл.
+Pages files cannot be opened on Windows. In Pages: File → Export To → PDF (or Word), then add that file.	Файлы Pages не открываются в Windows. В Pages: Файл → Экспортировать в → PDF (или Word), затем добавьте этот файл.
+There is no text in this file.	В этом файле нет текста.
+PowerPoint files are opened with PowerPoint or the free LibreOffice — install one of them, or save the presentation as PDF. ({0})	Файлы PowerPoint открываются через PowerPoint или бесплатный LibreOffice — установите одну из программ или сохраните презентацию как PDF. ({0})

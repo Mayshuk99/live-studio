@@ -732,3 +732,5 @@ textarea { width: 100%; box-sizing: border-box; }
 .meter-ctl select { font-size: .82em; padding: 3px 6px; min-height: 0; }
 .meter-sw { width: calc(22px * var(--scale)); height: calc(22px * var(--scale)); min-height: 0; padding: 0; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
 .meter-sw.sel { border-color: #fff; box-shadow: 0 0 0 2px var(--accent, #3b82f6); }
+/* a shot showing slides: which slide is up */
+.shot .deck-tile { position: absolute; left: 6px; bottom: 44px; background: rgba(0,0,0,.72); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: .8em; font-weight: 700; font-variant-numeric: tabular-nums; }

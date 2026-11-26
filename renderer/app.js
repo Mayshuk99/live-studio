@@ -265,7 +265,7 @@
     const o = [];
     if (includeNone) o.push(['', '— none —']);
     show.cameras.forEach(c => o.push([c.id, `🎥 ${c.name}`]));
-    show.files.filter(f => f.kind !== 'audio').forEach(f => o.push([f.id, `${f.kind === 'image' ? '🖼' : '🎞'} ${f.name}`]));
+    show.files.filter(f => f.kind !== 'audio').forEach(f => o.push([f.id, `${f.kind === 'image' ? '🖼' : f.kind === 'deck' ? '📄' : '🎞'} ${f.name}`]));
     BUILTIN.forEach(b => o.push(b));
     return o;
   }
@@ -751,8 +751,17 @@
     rt.files.set(f.id, { ok: false, text: 'Loading…' });
     let v = null;
     try {
-      const url = await urlForFile(f);
-      if (f.kind === 'image') {
+      const url = f.kind === 'deck' ? null : await urlForFile(f);
+      if (f.kind === 'deck') {
+        const n = deckCount(f);
+        if (!n) throw new Error('no slides');
+        const D = deckState(f);
+        D.page = clamp(D.page || 0, 0, n - 1);
+        const img = await deckImage(f, D.page);
+        engine.setSource(f.id, img, 'image');
+        rt.files.set(f.id, { ok: true, el: img, url: null, text: deckText(f) });
+        deckPreload(f);
+      } else if (f.kind === 'image') {
         const img = new Image(); img.src = url; await img.decode();
         engine.setSource(f.id, img, 'image');
         rt.files.set(f.id, { ok: true, el: img, url, text: `${img.naturalWidth}×${img.naturalHeight}` });
@@ -763,7 +772,7 @@
         $('#sourceBin').append(v);
         await new Promise((res, rej) => {
           v.addEventListener('loadedmetadata', res, { once: true });
-          v.addEventListener('error', () => rej(new Error('This music file can\'t be played. Use MP3, WAV or M4A.')), { once: true });
+          v.addEventListener('error', () => { const err = new Error('This music file can\'t be played directly.'); err.unsupported = true; rej(err); }, { once: true });
         });
         v.pause(); v.currentTime = 0;
         mixer.attachMedia(f.id, v);
@@ -787,6 +796,9 @@
       }
     } catch (e) {
       if (v) { v.removeAttribute('src'); v.remove(); }
+      // not playable as it is (ProRes, ALAC, PCM in MOV …): converted once, by itself
+      if (e.unsupported && S.convertMedia && !f.autoConverted) { f.autoConverted = true; convertFile(f); return; }
+      if (f.kind === 'deck' && f.doc && S.importDoc && !rt.deckRemade.has(f.id)) { rt.deckRemade.add(f.id); reimportDeck(f); return; }
       if (e.unsupported) rt.files.set(f.id, { ok: false, unsupported: true, text: `${e.message} Click “Convert to MP4”.` });
       else rt.files.set(f.id, { ok: false, text: S.isApp ? `Missing or unreadable: ${e.message}` : 'Re-add this file (browser mode)' });
     }
@@ -797,13 +809,130 @@
     const picked = await S.pickMedia();
     const added = [];
     for (const p of picked || []) {
-      const kind = /\.(png|jpe?g|jfif|webp|gif|bmp|avif)$/i.test(p.name) ? 'image' : /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|wma)$/i.test(p.name) ? 'audio' : 'video';
+      const kind = p.kind || (/\.(png|jpe?g|jfif|webp|gif|bmp|avif)$/i.test(p.name) ? 'image' : /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|wma)$/i.test(p.name) ? 'audio' : 'video');
+      if (kind === 'doc' || kind === 'text') { const d = await addDeck(p); if (d) added.push(d); continue; }
       const f = { id: uid('file'), name: p.name.replace(/\.[^.]+$/, ''), path: p.path, kind, loop: false, color: clone(NEUTRAL) };
       show.files.push(f); added.push(f);
-      await loadFile(f);
+      logEvent('FILES', `added ${p.name} (${kind}${p.convert ? ', converting' : ''})`);
+      if (p.convert && S.convertMedia) { f.autoConverted = true; refreshAll(); await convertFile(f); } else await loadFile(f);
     }
     if (added.length) { changed(); refreshAll(); }
     return added;
+  }
+  /* ---------- slides: PDF / PowerPoint pages (pictures made by the app) or text slides drawn here. One file =
+     one deck; the shot shows its current slide; ◀ ▶, PageUp / PageDown (presentation clickers) step through it. */
+  const deckCount = f => (f.pages || f.textPages || []).length;
+  const deckState = f => { let D = rt.decks.get(f.id); if (!D) { D = { page: 0, cache: new Map() }; rt.decks.set(f.id, D); } return D; };
+  rt.decks = new Map(); rt.deckRemade = new Set();
+  const deckKind = f => f.textPages ? 'Text' : /\.pdf$/i.test(f.doc || '') ? 'PDF' : /\.(odp)$/i.test(f.doc || '') ? 'Slides' : 'PowerPoint';
+  const deckText = f => `${deckKind(f)} · slide ${deckState(f).page + 1} of ${deckCount(f)}`;
+  // a slide as a 1920×1080 picture: pages of another shape get black bars, so nothing is stretched
+  async function deckImage(f, i) {
+    const D = deckState(f);
+    if (D.cache.has(i)) return D.cache.get(i);
+    let src;
+    if (f.textPages) src = textSlide(f.textPages[i]);
+    else {
+      const url = await urlForFile({ path: f.pages[i] });
+      const img = new Image(); img.src = url; await img.decode();
+      if (Math.abs(img.naturalWidth / img.naturalHeight - 16 / 9) < 0.02) src = img;
+      else {
+        const c = document.createElement('canvas'); c.width = 1920; c.height = 1080;
+        const g = c.getContext('2d'), k = Math.min(1920 / img.naturalWidth, 1080 / img.naturalHeight), w = img.naturalWidth * k, h = img.naturalHeight * k;
+        g.fillStyle = '#000'; g.fillRect(0, 0, 1920, 1080); g.drawImage(img, (1920 - w) / 2, (1080 - h) / 2, w, h);
+        src = c;
+      }
+      if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+    }
+    D.cache.set(i, src);
+    // keep a few slides around the current one, no more
+    for (const k of [...D.cache.keys()]) if (Math.abs(k - D.page) > 3) D.cache.delete(k);
+    return src;
+  }
+  // text slide: white words on the dark background, as large as fits
+  function textSlide(text) {
+    const W = 1920, H = 1080, c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    const bg = g.createLinearGradient(0, 0, W, H); bg.addColorStop(0, '#0b1023'); bg.addColorStop(1, '#1a1f3d');
+    g.fillStyle = bg; g.fillRect(0, 0, W, H);
+    const maxW = W * 0.86, maxH = H * 0.8, paras = String(text || '').split('\n');
+    const wrap = size => {
+      g.font = `600 ${size}px Inter, "Segoe UI", sans-serif`;
+      const out = [];
+      for (const p of paras) {
+        const words = p.split(/(\s+)/); let line = '';
+        for (const w of words) { const t = line + w; if (line && g.measureText(t.trimEnd()).width > maxW) { out.push(line.trimEnd()); line = w.trimStart(); } else line = t; }
+        out.push(line.trimEnd());
+      }
+      return out;
+    };
+    let size = 112, lines = wrap(size);
+    while (size > 26 && (lines.length * size * 1.28 > maxH || lines.some(l => g.measureText(l).width > maxW))) { size -= 4; lines = wrap(size); }
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.shadowColor = 'rgba(0,0,0,.45)'; g.shadowBlur = size * 0.12;
+    const lh = size * 1.28, y0 = H / 2 - (lines.length - 1) * lh / 2;
+    lines.forEach((l, i) => g.fillText(l, W / 2, y0 + i * lh));
+    return c;
+  }
+  function deckPreload(f) { const D = deckState(f); for (const i of [D.page + 1, D.page - 1]) if (i >= 0 && i < deckCount(f)) deckImage(f, i).catch(() => {}); }
+  async function deckGo(f, i) {
+    const n = deckCount(f); if (!n) return;
+    const D = deckState(f); i = clamp(i, 0, n - 1);
+    if (i === D.page && rt.files.get(f.id) && rt.files.get(f.id).ok) return;
+    D.page = i; rt.lastDeck = f.id;
+    try {
+      const img = await deckImage(f, i);
+      if (D.page !== i) return; // stepped on meanwhile
+      if (!engine.swapImage(f.id, img)) engine.setSource(f.id, img, 'image');
+      rt.files.set(f.id, { ok: true, el: img, text: deckText(f) });
+      document.querySelectorAll(`[data-file-status="${f.id}"]`).forEach(n => { n.textContent = T(deckText(f)); });
+      document.querySelectorAll(`[data-deck-page="${f.id}"]`).forEach(n => { if (document.activeElement !== n) n.value = i + 1; });
+      document.querySelectorAll(`[data-deck-tile="${f.id}"]`).forEach(n => { n.textContent = `${i + 1}/${n.dataset.total}`; });
+      deckPreload(f);
+    } catch (e) { toast(`Slide ${i + 1}: ${e.message}`, 'error'); }
+  }
+  // the deck the clicker drives: the one on air, otherwise the one in Preview, otherwise the last one used
+  function deckStep(d) {
+    const deckOf = id => { const sh = getShot(id); if (!sh) return null; for (const s of [sh.main && sh.main.source, sh.pip && sh.pip.enabled ? sh.pip.source : null]) { const f = fileById(s); if (f && f.kind === 'deck') return f; } return null; };
+    const f = deckOf(engine.programId) || deckOf(rt.previewId) || fileById(rt.lastDeck);
+    if (!f || f.kind !== 'deck') { toast('No slides on air or in Preview.', ''); return; }
+    deckGo(f, deckState(f).page + d);
+  }
+  function deckControls(f) {
+    const n = deckCount(f), D = deckState(f);
+    return el('div', { class: 'row', style: 'margin-top:5px;gap:6px;align-items:center' },
+      el('button', { class: 'btn small', title: 'Previous slide (Page Up)', onclick: () => deckGo(f, deckState(f).page - 1) }, '◀'),
+      el('input', { type: 'number', min: 1, max: n, value: D.page + 1, style: 'width:64px', dataset: { deckPage: f.id }, onchange: e => deckGo(f, (+e.target.value || 1) - 1) }),
+      el('span', { class: 'muted' }, `/ ${n}`),
+      el('button', { class: 'btn small', title: 'Next slide (Page Down)', onclick: () => deckGo(f, deckState(f).page + 1) }, '▶'));
+  }
+  // PDF / PowerPoint / text → a deck
+  async function addDeck(p) {
+    if (!S.importDoc) { toast('Slides need the installed app.', 'error'); return null; }
+    const f = { id: uid('file'), name: p.name.replace(/\.[^.]+$/, ''), path: p.path, doc: p.path, kind: 'deck', loop: false, color: clone(NEUTRAL) };
+    show.files.push(f); rt.files.set(f.id, { ok: false, text: 'Opening…' }); refreshAll();
+    logEvent('FILES', `added ${p.name} (slides)`);
+    const r = await importInto(f);
+    if (!r) { show.files = show.files.filter(x => x !== f); rt.files.delete(f.id); refreshAll(); return null; }
+    changed(); await loadFile(f);
+    return f;
+  }
+  async function importInto(f) {
+    const r = await S.importDoc(f.doc, d => {
+      const t = `Opening ${d.stage || ''}… ${d.percent || 0}%`.replace(' …', '…');
+      rt.files.set(f.id, { ok: false, text: t });
+      document.querySelectorAll(`[data-file-status="${f.id}"]`).forEach(n => { n.textContent = T(t); });
+    }).catch(e => ({ error: e.message }));
+    if (!r || r.error) { toast(`${f.name}: ${r ? r.error : 'could not be opened'}`, 'error'); logEvent('FILES', `${f.name}: ${r ? r.error : 'failed'}`); return null; }
+    if (r.pages) { f.pages = r.pages; delete f.textPages; } else { f.textPages = r.text; delete f.pages; }
+    rt.decks.delete(f.id);
+    logEvent('FILES', `${f.name}: ${deckCount(f)} slides${r.reused ? ' (made before)' : ''}`);
+    return r;
+  }
+  // the slide pictures were removed (another computer, cleaned up): made again from the document
+  async function reimportDeck(f) {
+    rt.files.set(f.id, { ok: false, text: 'Opening…' }); refresh('inputs');
+    if (await importInto(f)) { changed(); await loadFile(f); } else { rt.files.set(f.id, { ok: false, text: 'The slides could not be made again — is the document still there?' }); refresh('inputs'); }
   }
   // the files a shot plays: its video(s) and the music under it
   const mediaOf = shot => shot ? [shot.main && shot.main.source, shot.pip && shot.pip.enabled ? shot.pip.source : null, shot.music || null]
@@ -2351,6 +2480,7 @@
         thumbFor(s.id),
         el('span', { class: 'badge' }),
         mediaOf(s).length ? el('span', { class: 'film' }, '🎞') : null,
+        (() => { const f = fileById(s.main && s.main.source); return f && f.kind === 'deck' ? el('span', { class: 'deck-tile', title: 'Slide — PageUp / PageDown to step through', dataset: { deckTile: f.id, total: deckCount(f) } }, `${deckState(f).page + 1}/${deckCount(f)}`) : null; })(),
         el('button', { class: 'edit', title: 'Edit shot', onclick: e => { e.stopPropagation(); editShot(s.id); } }, '✎'),
         el('button', { class: 'edit hide-btn', title: hid ? 'Show this shot again' : 'Hide this shot from the list', onclick: e => { e.stopPropagation(); s.hidden = !hid; changed(); refresh('shots'); } }, hid ? '👁 Show' : '🚫'),
         el('div', { class: 'meta' }, el('span', { class: 'nm' }, s.name), hid ? el('span', { class: 'muted', style: 'font-size:.75em' }, 'hidden') : keyChip('shot:' + s.id)));
@@ -3309,12 +3439,13 @@
   }
   async function convertFile(f) {
     if (!S.convertMedia) { toast('Converting needs the installed app.', 'error'); return; }
-    rt.files.set(f.id, { ok: false, text: 'Converting to MP4… 0%' }); refresh('inputs'); refresh('media');
+    const what = f.kind === 'audio' ? 'Converting the sound' : f.kind === 'image' ? 'Opening the picture' : 'Converting to MP4';
+    rt.files.set(f.id, { ok: false, text: `${what}… 0%` }); refresh('inputs'); refresh('media');
     const r = await S.convertMedia(f.path, pct => {
-      rt.files.set(f.id, { ok: false, text: `Converting to MP4… ${pct}%` });
-      document.querySelectorAll(`[data-file-status="${f.id}"]`).forEach(n => { n.textContent = `Converting to MP4… ${pct}%`; });
-    });
-    if (r && r.path) { f.path = r.path; changed(); toast(`Converted “${f.name}”.`, 'ok'); await loadFile(f); }
+      rt.files.set(f.id, { ok: false, text: `${what}… ${pct}%` });
+      document.querySelectorAll(`[data-file-status="${f.id}"]`).forEach(n => { n.textContent = T(`${what}… ${pct}%`); });
+    }, f.kind);
+    if (r && r.path) { if (!f.orig) f.orig = f.path; f.path = r.path; changed(); logEvent('FILES', `${f.name}: ${r.reused ? 'using the copy made before' : 'converted'} → ${r.path}`); if (!r.reused && f.kind !== 'image') toast(`Converted “${f.name}”.`, 'ok'); await loadFile(f); }
     else { rt.files.set(f.id, { ok: false, text: `Could not convert: ${(r && r.error) || 'unknown error'}` }); refresh('inputs'); refresh('media'); }
   }
   function fileStatus(id) {
@@ -4654,10 +4785,10 @@
           el('div', { class: 'row' }, el('input', { type: 'text', class: 'grow', value: f.name, oninput: e => { f.name = e.target.value; changed(); } }),
             el('button', { class: 'btn small danger', title: 'Remove file', onclick: () => removeFile(f) }, '✕')),
           fileStatus(f.id),
-          f.kind !== 'image' ? el('div', { style: 'margin-top:5px' }, check(' Loop', f.loop, v => { f.loop = v; const m = rt.files.get(f.id); if (m && m.el) m.el.loop = v; changed(); })) : null,
+          f.kind === 'deck' ? deckControls(f) : f.kind !== 'image' ? el('div', { style: 'margin-top:5px' }, check(' Loop', f.loop, v => { f.loop = v; const m = rt.files.get(f.id); if (m && m.el) m.el.loop = v; changed(); })) : null,
           !st.ok ? el('button', { class: 'btn small', style: 'margin-top:5px', onclick: () => loadFile(f) }, 'Try again') : null)));
     }
-    put(body, el('button', { class: 'btn', onclick: addFiles }, '+ Add video / picture / music'));
+    put(body, el('button', { class: 'btn', title: 'Video (MP4, MOV/ProRes, AVI, WMV, MPEG, MXF, MKV …), pictures (JPEG, PNG, HEIC, TIFF, PSD, RAW …), sound (MP3, WAV, AIFF, WMA, FLAC …), slides (PDF, PowerPoint, Word, text)', onclick: addFiles }, '+ Add video / picture / music / slides'));
     refreshInputStatus();
   };
   function addNetSource() {
@@ -5077,6 +5208,8 @@
     const visShots = show.shots.filter(x => !shotHidden(x)); // number keys follow the order you see
     visShots.forEach((sh, i) => A('shot:' + sh.id, 'Shots — put in Preview', sh.name, i < 9 ? `Digit${i + 1}` : '', () => { setPreview(sh.id); editShot(sh.id, true); }));
     visShots.forEach((sh, i) => A('air:' + sh.id, 'Shots — straight to air', sh.name, i < 9 ? `Shift+Digit${i + 1}` : '', () => takeShot(sh.id, 'auto')));
+    A('deckNext', 'Slides (PDF / PowerPoint / text)', 'Next slide (presentation clickers send this)', 'PageDown', () => deckStep(1));
+    A('deckPrev', 'Slides (PDF / PowerPoint / text)', 'Previous slide', 'PageUp', () => deckStep(-1));
     A('goLive', 'Streaming', 'Go live', '', () => { if (!rt.live) goLive(); });
     A('endLive', 'Streaming', 'End stream (press twice)', '', () => { if (rt.live) $('#btnLive').click(); });
     A('rec', 'Streaming', 'Start / stop recording (stop: press twice)', '', () => $('#btnRec').click());
@@ -5370,5 +5503,5 @@
   function markGlitch() { logEvent('MARK', '>>> F9 pressed: glitch seen on screen / YouTube <<<'); logFlush(); toast('Marked in the log ✓ (F9)', 'ok'); }
   document.addEventListener('keydown', e => { if (e.key === 'F9') { e.preventDefault(); markGlitch(); } });
   startServiceLog();
-  window.__live = { Feed, engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, startService, endService, showHold, toggleLabel, setBlack, toggleWeb, markGlitch, logFlush, switchEngine, NAT, goLive, togglePic, VSTR, vstSync, openDynamics, openSettings, openServiceEdit, openHoldDesigner, openMixer, openShortcuts, openYouTube, setLanguage };
+  window.__live = { Feed, engine, mixer, get show() { return show; }, settings, rt, take, takeShot, setPreview, addFiles, deckStep, refreshAll, startService, endService, showHold, toggleLabel, setBlack, toggleWeb, markGlitch, logFlush, switchEngine, NAT, goLive, togglePic, VSTR, vstSync, openDynamics, openSettings, openServiceEdit, openHoldDesigner, openMixer, openShortcuts, openYouTube, setLanguage };
 })();

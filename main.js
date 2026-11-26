@@ -152,6 +152,8 @@ const UI_RU = {
   'Cancel': 'Отмена', 'Close without saving': 'Закрыть без сохранения', 'Could not save': 'Не удалось сохранить',
   'Your changes could not be saved.': 'Не удалось сохранить изменения.',
   'Add video, picture or music': 'Добавить видео, картинку или музыку', 'Video, pictures & music': 'Видео, картинки и музыка', 'All files': 'Все файлы',
+  'Add video, picture, music or slides': 'Добавить видео, картинку, музыку или слайды', 'Everything Live Studio opens': 'Всё, что открывает Live Studio',
+  'Video': 'Видео', 'Pictures and photos': 'Картинки и фото', 'Music and sound': 'Музыка и звук', 'Slides: PDF, PowerPoint, text': 'Слайды: PDF, PowerPoint, текст',
   'Save show': 'Сохранить шоу', 'Open show': 'Открыть шоу', 'Live Studio show': 'Шоу Live Studio',
   'Folder for recordings': 'Папка для записей',
   'Save': 'Сохранить', "Don't save": 'Не сохранять', 'Save changes?': 'Сохранить изменения?',
@@ -384,42 +386,47 @@ ipcMain.handle('settings:save', (e, obj) => {
   return true;
 });
 
+/* files: video, pictures, sound, documents (see media-import.js) */
+const MI = require('./media-import');
+function pdftoppmPath() {
+  const exe = process.platform === 'win32' ? 'pdftoppm.exe' : 'pdftoppm';
+  for (const c of [path.join(process.resourcesPath || '', 'poppler', exe), path.join(__dirname, 'resources', 'poppler', exe)]) if (fs.existsSync(c)) return c;
+  return exe;
+}
+const mediaDir = () => path.join(userDir(), 'media');
 ipcMain.handle('media:pick', async () => {
+  const E = MI.EXT;
   const r = await dialog.showOpenDialog(win, {
-    title: T('Add video, picture or music'), properties: ['openFile', 'multiSelections'],
+    title: T('Add video, picture, music or slides'), properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: T('Video, pictures & music'), extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'jfif', 'bmp', 'avif', 'webp', 'gif', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'flac'] },
+      { name: T('Everything Live Studio opens'), extensions: MI.ALL_EXT },
+      { name: T('Video'), extensions: E.video },
+      { name: T('Pictures and photos'), extensions: E.image },
+      { name: T('Music and sound'), extensions: E.audio },
+      { name: T('Slides: PDF, PowerPoint, text'), extensions: [...E.doc, ...E.text] },
       { name: T('All files'), extensions: ['*'] }
     ]
   });
   if (r.canceled) return [];
-  return r.filePaths.map(p => ({ path: p, name: path.basename(p), size: fs.statSync(p).size }));
+  return r.filePaths.map(p => Object.assign({ path: p, name: path.basename(p), size: fs.statSync(p).size }, MI.classify(p)));
 });
 ipcMain.handle('media:read', async (e, p) => {
   const buf = await fs.promises.readFile(p);
   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 });
-ipcMain.handle('media:convert', (e, src) => new Promise(resolve => {
-  const dir = path.join(userDir(), 'media');
-  fs.mkdirSync(dir, { recursive: true });
-  const out = path.join(dir, `${path.basename(src).replace(/\.[^.]+$/, '')} (converted ${Date.now().toString(36)}).mp4`);
-  const p = spawn(ffmpegPath(), ['-hide_banner', '-y', '-i', src, '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
-    '-movflags', '+faststart', out], { windowsHide: true });
-  let dur = 0, buf = '', last = -1;
-  p.stderr.on('data', d => {
-    buf = (buf + d.toString()).slice(-4000);
-    const dm = buf.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
-    if (dm && !dur) dur = (+dm[1]) * 3600 + (+dm[2]) * 60 + (+dm[3]);
-    const tm = [...buf.matchAll(/time=\s*(\d+):(\d+):([\d.]+)/g)].pop();
-    if (tm && dur) {
-      const pct = Math.min(99, Math.round(((+tm[1]) * 3600 + (+tm[2]) * 60 + (+tm[3])) / dur * 100));
-      if (pct !== last && win && !win.isDestroyed()) { last = pct; win.webContents.send('media:progress', { src, percent: pct }); }
-    }
-  });
-  p.on('error', err => resolve({ error: `Encoder could not start: ${err.message}` }));
-  p.on('exit', code => resolve(code === 0 && fs.existsSync(out) ? { path: out } : { error: 'This file could not be converted.' }));
+// a copy the player plays: video → MP4, sound → FLAC, picture → PNG (kept and reused)
+ipcMain.handle('media:convert', async (e, src, kind) => {
+  const prog = pct => { if (win && !win.isDestroyed()) win.webContents.send('media:progress', { src, percent: pct }); };
+  try {
+    const fn = kind === 'audio' ? MI.convertAudio : kind === 'image' ? MI.convertImage : MI.convertVideo;
+    return await fn(ffmpegPath(), src, mediaDir(), prog);
+  } catch (err) { return { error: err.message }; }
+});
+// slides: PDF / PowerPoint pages as pictures, or the words of a text file
+ipcMain.handle('media:doc', (e, src) => MI.importDoc({ pdftoppm: pdftoppmPath() }, src, mediaDir(), p => {
+  if (win && !win.isDestroyed()) win.webContents.send('media:progress', Object.assign({ src }, p));
 }));
+ipcMain.handle('media:exists', (e, list) => (list || []).map(p => { try { return fs.statSync(p).isFile(); } catch (err) { return false; } }));
 ipcMain.handle('folder:pick', async () => {
   const r = await dialog.showOpenDialog(win, { title: T('Folder for recordings'), properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : r.filePaths[0];

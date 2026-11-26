@@ -103,6 +103,30 @@ jobs:
       - name: "Test the plug-in host (SDK sample plug-ins: echo, limiter, bypass, saved settings)"
         run: node scripts/vst-selftest.js resources/vst/ls-vst.exe vsthost/build
 
+      # PDF slides are drawn by Poppler (pdftoppm), the open-source PDF library; the Windows build from
+      # github.com/oschwartz10612/poppler-windows is put next to Live Studio (resources/poppler)
+      - name: Get the PDF reader (Poppler)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $rel = Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:GH_TOKEN" } -Uri "https://api.github.com/repos/oschwartz10612/poppler-windows/releases/latest"
+          $asset = $rel.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
+          if (-not $asset) { throw 'no Poppler download found' }
+          Write-Host "Poppler: $($rel.tag_name) $($asset.name)"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile poppler.zip
+          Expand-Archive poppler.zip -DestinationPath poppler-tmp
+          $bin = Get-ChildItem poppler-tmp -Recurse -Filter pdftoppm.exe | Select-Object -First 1
+          if (-not $bin) { throw 'pdftoppm.exe not in the Poppler download' }
+          New-Item -ItemType Directory -Force -Path resources/poppler | Out-Null
+          Copy-Item (Join-Path $bin.DirectoryName 'pdftoppm.exe'), (Join-Path $bin.DirectoryName 'pdfinfo.exe') resources/poppler -Force
+          Copy-Item (Join-Path $bin.DirectoryName '*.dll') resources/poppler -Force
+          $mb = [Math]::Round(((Get-ChildItem resources/poppler | Measure-Object Length -Sum).Sum) / 1MB, 1)
+          Write-Host "resources/poppler: $mb MB"
+
+      - name: "Test bringing files in (video, sound, pictures, PDF, text, PowerPoint message)"
+        run: node scripts/media-selftest.js resources/ffmpeg/ffmpeg.exe resources/poppler/pdftoppm.exe
+
       - name: Build the NDI helper (NDI network sources)
         shell: pwsh
         run: |
