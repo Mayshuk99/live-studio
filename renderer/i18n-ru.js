@@ -1242,7 +1242,10 @@ window.I18N_RU = {
     "NETWORK": "СЕТЬ",
     "Cameras:": "Камеры:",
     "Format": "Формат",
-    "NDI® is a registered trademark of Vizrt NDI AB (ndi.video). NDI sources need the free NDI Tools on this computer.": "NDI® — зарегистрированный товарный знак Vizrt NDI AB (ndi.video). Для NDI-источников на этом компьютере нужны бесплатные NDI Tools."
+    "NDI® is a registered trademark of Vizrt NDI AB (ndi.video). NDI sources need the free NDI Tools on this computer.": "NDI® — зарегистрированный товарный знак Vizrt NDI AB (ndi.video). Для NDI-источников на этом компьютере нужны бесплатные NDI Tools.",
+    "Bottom of the meter scale": "Нижняя граница шкалы",
+    "Amber": "Янтарный",
+    "White": "Белый"
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
@@ -1424,6 +1427,7 @@ window.I18N_RU = {
     ["{0} starting…", "{0} запускается…"],
     ["{0} · {1}×{2} · native", "{0} · {1}×{2} · встроенный"],
     ["{0}: {1} — trying again…", "{0}: {1} — пробую снова…"],
-    ["{0} reconnecting…", "{0} переподключение…"]
+    ["{0} reconnecting…", "{0} переподключение…"],
+    ["0 … {0} dB", "0 … {0} дБ"]
   ]
 };

@@ -2201,7 +2201,7 @@
   }
   function setPvListen(on) { rt.pvListen = !!on; mixer.resume(); mixer.setListen(on ? 'preview' : 'program'); updatePfl(); }
   const METER_PTS = [[-60, 0], [-40, 0.1], [-30, 0.2], [-20, 0.36], [-12, 0.56], [-6, 0.75], [-3, 0.87], [0, 1]];
-  function meterFrac(db) {
+  function meterFrac60(db) {
     if (db <= -60) return 0; if (db >= 0) return 1;
     for (let i = 1; i < METER_PTS.length; i++) {
       const [d1, f1] = METER_PTS[i];
@@ -2209,7 +2209,36 @@
     }
     return 1;
   }
-  const METER_TICKS = [0, -3, -6, -9, -12, -15, -18, -24, -30, -40, -60];
+  /* the master meters' scale and colour (Audio panel, right of the meters): the bottom of the scale is −60, −40,
+     −32 or −24 dB — a shorter scale spreads the loud part over the whole height — and one of four colours */
+  const METER_FLOORS = [-60, -40, -32, -24];
+  const METER_COLORS = {
+    green: { name: 'Green', dark: '#15803d', body: '#22c55e', mid: '#eab308' },
+    blue: { name: 'Blue', dark: '#1d4ed8', body: '#3b82f6', mid: '#38bdf8' },
+    white: { name: 'White', dark: '#71717a', body: '#d4d4d8', mid: '#fafafa' },
+    amber: { name: 'Amber', dark: '#b45309', body: '#f59e0b', mid: '#fcd34d' }
+  };
+  const meterFloor = () => METER_FLOORS.includes(settings.meterFloor) ? settings.meterFloor : -60;
+  const meterCol = () => METER_COLORS[settings.meterColor] || METER_COLORS.green;
+  function meterFrac(db) {
+    const F = meterFloor();
+    if (db <= F) return 0; if (db >= 0) return 1;
+    const f0 = meterFrac60(F);
+    return (meterFrac60(db) - f0) / (1 - f0);
+  }
+  const METER_TICKS_ALL = [0, -3, -6, -9, -12, -15, -18, -24, -30, -40, -60];
+  const meterTicks = () => { const F = meterFloor(); return [...METER_TICKS_ALL.filter(d => d > F), F]; };
+  function meterControls() {
+    const wrap = el('div', { class: 'meter-ctl' });
+    const draw = () => {
+      wrap.innerHTML = '';
+      put(wrap,
+        select(METER_FLOORS.map(f => [f, `0 … ${String(f).replace('-', '−')} dB`]), meterFloor(), v => { settings.meterFloor = +v; saveSettings(); logEvent('SETTINGS', `meter scale down to ${v} dB`); }, { title: 'Bottom of the meter scale' }),
+        ...Object.entries(METER_COLORS).map(([k, c]) => el('button', { class: 'meter-sw' + ((settings.meterColor || 'green') === k ? ' sel' : ''), title: c.name, style: `background:linear-gradient(to top, ${c.body} 0 62%, ${c.mid} 62% 86%, #ef4444 86%)`, onclick: () => { settings.meterColor = k; saveSettings(); logEvent('SETTINGS', `meter colour ${k}`); draw(); } })));
+    };
+    draw();
+    return wrap;
+  }
   /* level meter beside a monitor: dB scale from 0 down to −60 (green / yellow above −18 / red above −6),
      peak-hold line, and the loudest recent peak as a number underneath. scaleSide = which side the numbers go */
   function drawMonMeter(A, cv = monMeterMain, scaleSide = 'left', gr = null) {
@@ -2221,7 +2250,7 @@
     g.clearRect(0, 0, w, h);
     const fs = Math.round(10.5 * k), top = 7 * k, foot = fs * 2.7, mh = h - top - foot;
     if (mh < 20) return;
-    const y = db => top + mh * (1 - meterFrac(db));
+    const y = db => top + mh * (1 - meterFrac(db)), F = meterFloor(), C = meterCol();
     const labW = Math.round(fs * 2.1), gap = 4 * k;
     const bx = scaleSide === 'left' ? labW + gap : 0, bwAll = w - labW - gap;
     // with the limiter on, a third, thin bar shows how much it is turning the sound down (grows from the top)
@@ -2231,7 +2260,7 @@
     g.textAlign = scaleSide === 'left' ? 'right' : 'left';
     const tx = scaleSide === 'left' ? labW - k : bwAll + gap + k;
     let lastY = -1e9;
-    for (const db of METER_TICKS) {
+    for (const db of meterTicks()) {
       const yy = Math.round(y(db));
       if (yy - lastY < fs * 1.15) continue;
       lastY = yy;
@@ -2240,7 +2269,7 @@
       g.fillStyle = 'rgba(255,255,255,.18)';
       g.fillRect(bx, yy, bwAll, Math.max(1, k * 0.6));
     }
-    const zones = [[-60, -18, '#22c55e'], [-18, -6, '#eab308'], [-6, 0, '#ef4444']];
+    const zones = [[F, -18, C.body], [-18, -6, C.mid], [-6, 0, '#ef4444']];
     [[A.peakL, A.holdL, A.clipL], [A.peakR, A.holdR, A.clipR]].forEach(([p, hd, clip], i) => {
       const x = bx + i * (bw + 3 * k);
       g.fillStyle = '#09090b'; g.fillRect(x, top, bw, mh);
@@ -2249,7 +2278,7 @@
         const y1 = y(Math.min(p, b2)), y0 = y(a);
         g.fillStyle = col; g.fillRect(x, y1, bw, y0 - y1);
       }
-      if (hd > -60) { g.fillStyle = '#fff'; g.fillRect(x, y(hd) - k, bw, 2 * k); }
+      if (hd > F) { g.fillStyle = '#fff'; g.fillRect(x, y(hd) - k, bw, 2 * k); }
       g.fillStyle = clip ? '#ef4444' : '#27272a'; g.fillRect(x, 0, bw, 4 * k);
     });
     if (gr !== null) {
@@ -2285,7 +2314,8 @@
         el('div', { class: 'monitor program' }, el('div', { class: 'screen' }, engine.canvas, progInfo, progBar), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot red' }), el('span', { class: 'tagtxt' }, 'Live'), pgName)),
         el('div', { class: 'mon-meter-wrap pgm', title: 'Program sound — what the stream hears. Numbers are dB (0 = maximum). Number underneath = loudest recent peak. Dot = phase (green good, red out of phase). LIM bar = how much the limiter is turning the sound down right now (orange; red above 6 dB)' }, monMeter)),
       timeline,
-      el('div', { class: 'trans-bar' },
+      // the switching buttons in the middle; the master meter's scale and colour on the right, under that meter
+      el('div', { class: 'trans-bar' }, el('div', { class: 'tb-side' }), el('div', { class: 'tb-mid' },
         el('button', { class: 'btn cut-btn', onclick: () => take('cut') }, 'CUT', keyChip('cut')),
         durSel,
         el('button', { class: 'btn take-btn', onclick: () => take('auto') }, 'TAKE ➜', keyChip('take')),
@@ -2293,7 +2323,8 @@
         el('button', { class: 'btn ftb-btn', id: 'ftbBtn', onclick: () => setBlack(!engine.isBlack) }, 'FADE TO BLACK', keyChip('ftb')),
         el('button', { class: 'btn small ghost', onclick: openShortcuts, title: 'Keyboard shortcuts' }, '⌨'),
         // with the Audio panel hidden (big-monitor layout), its buttons and the loudness sit here
-        curLayout().some(x => x.id === 'audio' && !x.hidden) ? null : el('div', { class: 'mini-audio' }, ...audioButtons(), miniLufs))));
+        curLayout().some(x => x.id === 'audio' && !x.hidden) ? null : el('div', { class: 'mini-audio' }, ...audioButtons(), miniLufs)),
+        el('div', { class: 'tb-side right' }, meterControls()))));
     renderTally();
   };
 
@@ -4261,12 +4292,13 @@
     const scaleW = 24 * k, gap = 5 * k, bw = (W - scaleW - gap * 3) / 2;
     g.font = `${10 * k}px Inter, Segoe UI, sans-serif`; g.textAlign = 'right'; g.textBaseline = 'middle';
     let lastY = -1e9;
-    for (const d of METER_TICKS) { const yy = y(d); if (yy - lastY < 11 * k) continue; lastY = yy; g.fillStyle = d >= -6 ? '#d4d4d8' : '#8d8d96'; g.fillText(String(d), scaleW - 4 * k, yy); g.fillStyle = '#2a2a2f'; g.fillRect(scaleW, yy, W - scaleW, 1); }
+    const C = meterCol();
+    for (const d of meterTicks()) { const yy = y(d); if (yy - lastY < 11 * k) continue; lastY = yy; g.fillStyle = d >= -6 ? '#d4d4d8' : '#8d8d96'; g.fillText(String(d), scaleW - 4 * k, yy); g.fillStyle = '#2a2a2f'; g.fillRect(scaleW, yy, W - scaleW, 1); }
     const bar = (i, peak, rms, hold, clip, label) => {
       const x = scaleW + gap + i * (bw + gap);
       g.fillStyle = '#0a0a0c'; g.fillRect(x, top, bw, mh);
       const grad = g.createLinearGradient(0, top + mh, 0, top);
-      grad.addColorStop(0, '#15803d'); grad.addColorStop(meterFrac(-18), '#22c55e'); grad.addColorStop(meterFrac(-12), '#eab308'); grad.addColorStop(meterFrac(-6), '#f97316'); grad.addColorStop(meterFrac(-2), '#ef4444');
+      grad.addColorStop(0, C.dark); grad.addColorStop(meterFrac(-18), C.body); grad.addColorStop(meterFrac(-12), C.mid); grad.addColorStop(meterFrac(-6), '#f97316'); grad.addColorStop(meterFrac(-2), '#ef4444');
       g.fillStyle = grad; g.fillRect(x, y(peak), bw, top + mh - y(peak));
       g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(x, y(rms), bw, top + mh - y(rms));
       g.fillStyle = hold > -3 ? '#ef4444' : '#f4f4f5'; g.fillRect(x, y(hold) - 1.5 * k, bw, 3 * k);

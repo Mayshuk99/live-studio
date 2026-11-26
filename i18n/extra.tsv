@@ -339,3 +339,7 @@ NETWORK	СЕТЬ
 Cameras:	Камеры:
 Format	Формат
 NDI® is a registered trademark of Vizrt NDI AB (ndi.video). NDI sources need the free NDI Tools on this computer.	NDI® — зарегистрированный товарный знак Vizrt NDI AB (ndi.video). Для NDI-источников на этом компьютере нужны бесплатные NDI Tools.
+Bottom of the meter scale	Нижняя граница шкалы
+0 … {0} dB	0 … {0} дБ
+Amber	Янтарный
+White	Белый
