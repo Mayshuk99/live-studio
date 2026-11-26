@@ -19,10 +19,11 @@ function pdf(file, pages) {
   const objs = [];
   const add = s => { objs.push(s); return objs.length; };
   const catalog = add(''), tree = add('');
-  const kids = pages.map(([w, h, rgb]) => {
-    const body = `${rgb.join(' ')} rg 0 0 ${w} ${h} re f`;
+  const font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const kids = pages.map(([w, h, rgb, text]) => {
+    const body = `${rgb.join(' ')} rg 0 0 ${w} ${h} re f` + (text ? ` 0 0 0 rg BT /F1 72 Tf 60 ${h / 2} Td (${text}) Tj ET` : '');
     const content = add(`<< /Length ${body.length} >>\nstream\n${body}\nendstream`);
-    return add(`<< /Type /Page /Parent ${tree} 0 R /MediaBox [0 0 ${w} ${h}] /Contents ${content} 0 R >>`);
+    return add(`<< /Type /Page /Parent ${tree} 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${content} 0 R >>`);
   });
   objs[catalog - 1] = `<< /Type /Catalog /Pages ${tree} 0 R >>`;
   objs[tree - 1] = `<< /Type /Pages /Kids [${kids.map(k => `${k} 0 R`).join(' ')}] /Count ${kids.length} >>`;
@@ -91,12 +92,18 @@ function zip(file, entries) {
   if (process.platform === 'win32') {
     const png = mk('wic.png', ['-f', 'lavfi', '-i', 'testsrc2=s=640x480', '-frames:v', '1']), wdp = path.join(dir, 'wic.wdp');
     spawnSync('powershell.exe', ['-NoProfile', '-Command', `Add-Type -AssemblyName PresentationCore; $d = [System.Windows.Media.Imaging.BitmapDecoder]::Create([Uri]'${png}', 'None', 'OnLoad'); $e = New-Object System.Windows.Media.Imaging.WmpBitmapEncoder; $e.Frames.Add($d.Frames[0]); $s = [IO.File]::Create('${wdp}'); $e.Save($s); $s.Close()`]);
-    if (fs.existsSync(wdp)) { const r = await MI.convertImage(ff, wdp, out); ok(r.path && /png.*640x480/.test(look(r.path)), `picture wic.wdp (JPEG XR, through Windows) → ${r.path ? path.basename(r.path) : r.error}`); }
+    if (fs.existsSync(wdp)) { const r = await MI.convertImage(ff, wdp, out); ok(r.path && /png.*640x480/.test(look(r.path)), `picture wic.wdp (JPEG XR, through Windows) → ${r.path ? path.basename(r.path) : `${r.error} | Windows: ${r.detail}`}`); }
     else console.log('(could not make a JPEG XR picture here)');
   }
   // --- PDF: a 16:9 page and a portrait page → pictures, long side 1920
-  const pr = await MI.importDoc({ pdftoppm }, pdf(path.join(dir, 'slides.pdf'), [[960, 540, [0.1, 0.2, 0.7]], [595, 842, [0.7, 0.1, 0.1]]]), out, () => {});
-  ok(pr.pages && pr.pages.length === 2 && /1920x1080/.test(look(pr.pages[0])) && /x1920/.test(look(pr.pages[1])), `PDF → ${pr.pages ? pr.pages.length + ' pages' : pr.error}`);
+  const pr = await MI.importDoc({ pdftoppm }, pdf(path.join(dir, 'slides.pdf'), [[960, 540, [0.1, 0.2, 0.7]], [595, 842, [0.7, 0.1, 0.1]], [960, 540, [1, 1, 1], 'Hello Live Studio']]), out, () => {});
+  ok(pr.pages && pr.pages.length === 3 && /1920x1080/.test(look(pr.pages[0])) && /x1920/.test(look(pr.pages[1])), `PDF → ${pr.pages ? pr.pages.length + ' pages' : pr.error}`);
+  if (pr.pages && pr.pages[2]) {
+    // the words on the white page were drawn (dark pixels), with a font that is not inside the PDF
+    const t = String(spawnSync(ff, ['-hide_banner', '-i', pr.pages[2], '-vf', 'format=gray,signalstats,metadata=print:key=lavfi.signalstats.YMIN', '-f', 'null', '-']).stderr);
+    const ymin = +((/YMIN=(\d+)/.exec(t) || [])[1] ?? 255);
+    ok(ymin < 80, `PDF text without its font drawn (darkest ${ymin})`);
+  }
   // --- text: UTF-8 / UTF-16 TXT, RTF (code page 1251 + \\u letters), DOCX, ODT, Markdown
   const B = String.fromCharCode(92);
   fs.writeFileSync(path.join(dir, 'a.txt'), 'Слава Богу\nАминь\n\nВторая страница\n');

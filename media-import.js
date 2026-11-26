@@ -114,19 +114,25 @@ async function convertImage(ff, src, dir) {
   if (process.platform === 'win32') {
     const w = await powershell(`$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationCore
-$d = [System.Windows.Media.Imaging.BitmapDecoder]::Create([Uri]${psQ(path.resolve(src))}, [System.Windows.Media.Imaging.BitmapCreateOptions]::PreservePixelFormat, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+$fs = [IO.File]::OpenRead(${psQ(path.resolve(src))})
+$d = [System.Windows.Media.Imaging.BitmapDecoder]::Create($fs, [System.Windows.Media.Imaging.BitmapCreateOptions]::None, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+$fs.Close()
 $f = $d.Frames[0]
 $k = [Math]::Min(1.0, [Math]::Min(3840.0 / $f.PixelWidth, 2160.0 / $f.PixelHeight))
-$src = $f
-if ($k -lt 1.0) { $src = New-Object System.Windows.Media.Imaging.TransformedBitmap($f, (New-Object System.Windows.Media.ScaleTransform($k, $k))) }
+$pic = $f
+if ($k -lt 1.0) { $pic = New-Object System.Windows.Media.Imaging.TransformedBitmap($f, (New-Object System.Windows.Media.ScaleTransform($k, $k))) }
+# (every picture as 8-bit BGRA, which the PNG encoder always takes)
+$pic = New-Object System.Windows.Media.Imaging.FormatConvertedBitmap($pic, [System.Windows.Media.PixelFormats]::Bgra32, $null, 0)
 $e = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
-$e.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($src))
+$e.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($pic))
 $s = [IO.File]::Create(${psQ(out)}); $e.Save($s); $s.Close()`, { timeoutMs: 120000 });
     if (w.code === 0 && fs.existsSync(out) && fs.statSync(out).size > 0) return { path: out };
+    try { fs.unlinkSync(out); } catch (e) { /* none */ }
+    var wicErr = lastLine(w.err);
     if (/heic|heif|hif/i.test(extOf(src))) return { error: 'This iPhone photo (HEIC) could not be opened. Install “HEIF Image Extensions” and “HEVC Video Extensions” from the Microsoft Store, or export it as JPEG.' };
     if (/^(cr2|cr3|crw|nef|nrw|arw|srf|sr2|orf|rw2|raf|srw|pef|x3f|erf|kdc|dcr|mrw|3fr|iiq|dng)$/i.test(extOf(src))) return { error: 'This camera RAW photo could not be opened. Install “Raw Image Extension” from the Microsoft Store, or export it as JPEG.' };
   }
-  return { error: lastLine(r.err) || 'This picture could not be opened.' };
+  return { error: lastLine(r.err) || 'This picture could not be opened.', detail: typeof wicErr === 'string' ? wicErr : '' };
 }
 const lastLine = t => String(t || '').trim().split(/\r?\n/).filter(l => !/^\s*$/.test(l)).pop() || '';
 function progressOf(dur, onPct) {

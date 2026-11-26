@@ -120,7 +120,12 @@ jobs:
           if (-not $bin) { throw 'pdftoppm.exe not in the Poppler download' }
           New-Item -ItemType Directory -Force -Path resources/poppler | Out-Null
           Copy-Item (Join-Path $bin.DirectoryName 'pdftoppm.exe'), (Join-Path $bin.DirectoryName 'pdfinfo.exe') resources/poppler -Force
-          Copy-Item (Join-Path $bin.DirectoryName '*.dll') resources/poppler -Force
+          # only the DLLs these two programs load (the download has many more)
+          $dlls = node scripts/pe-deps.js $bin.DirectoryName pdftoppm.exe pdfinfo.exe
+          foreach ($d in $dlls) { Copy-Item (Join-Path $bin.DirectoryName $d) resources/poppler -Force }
+          Write-Host "DLLs: $($dlls -join ', ')"
+          & resources/poppler/pdftoppm.exe -v
+          if ($LASTEXITCODE -ne 0) { throw 'pdftoppm does not start' }
           $mb = [Math]::Round(((Get-ChildItem resources/poppler | Measure-Object Length -Sum).Sum) / 1MB, 1)
           Write-Host "resources/poppler: $mb MB"
 
