@@ -2220,6 +2220,7 @@
   };
   const meterFloor = () => METER_FLOORS.includes(settings.meterFloor) ? settings.meterFloor : -60;
   const meterCol = () => METER_COLORS[settings.meterColor] || METER_COLORS.green;
+  const meterThin = () => settings.meterWidth !== 'wide'; // the Live meter: thin (half the bar width) or wide
   function meterFrac(db) {
     const F = meterFloor();
     if (db <= F) return 0; if (db >= 0) return 1;
@@ -2234,6 +2235,7 @@
       wrap.innerHTML = '';
       put(wrap,
         select(METER_FLOORS.map(f => [f, `0 … ${String(f).replace('-', '−')} dB`]), meterFloor(), v => { settings.meterFloor = +v; saveSettings(); logEvent('SETTINGS', `meter scale down to ${v} dB`); }, { title: 'Bottom of the meter scale' }),
+        select([['thin', 'Thin'], ['wide', 'Wide']], meterThin() ? 'thin' : 'wide', v => { settings.meterWidth = v; saveSettings(); logEvent('SETTINGS', `program meter ${v}`); document.querySelectorAll('.mon-meter-wrap.pgm').forEach(e => e.classList.toggle('thin', v === 'thin')); }, { title: 'Width of the Live meter' }),
         ...Object.entries(METER_COLORS).map(([k, c]) => el('button', { class: 'meter-sw' + ((settings.meterColor || 'green') === k ? ' sel' : ''), title: c.name, style: `background:linear-gradient(to top, ${c.body} 0 62%, ${c.mid} 62% 86%, #ef4444 86%)`, onclick: () => { settings.meterColor = k; saveSettings(); logEvent('SETTINGS', `meter colour ${k}`); draw(); } })));
     };
     draw();
@@ -2288,7 +2290,8 @@
       if (gr > 0.1) { g.fillStyle = gr > 6 ? '#ef4444' : '#f59e0b'; g.fillRect(x, top, gw, mh * Math.min(1, gr / 12)); }
       g.font = `700 ${Math.round(fs * 0.75)}px Consolas, ui-monospace, monospace`; g.textAlign = 'right';
       g.fillStyle = gr > 0.1 ? '#fbbf24' : '#71717a';
-      g.fillText('LIM', w - k, top + mh + fs * 2.1);
+      // (on a narrow meter the word would sit on the R: then only the bar)
+      if (w - k - g.measureText('LIM').width > bx + bw * 1.5 + 3 * k + fs * 0.45) g.fillText('LIM', w - k, top + mh + fs * 2.1);
     }
     // readout: loudest recent peak, and L / R under the bars
     const peak = Math.max(A.holdL, A.holdR), cx = bx + (gr === null ? bwAll : 2 * bw + 3 * k) / 2;
@@ -2312,7 +2315,7 @@
         el('div', { class: 'mon-meter-wrap pv', title: 'Preview sound — what the Preview shot will sound like on air. Numbers are dB (0 = maximum); number underneath = loudest recent peak' }, pvMeter),
         el('div', { class: 'monitor preview' }, el('div', { class: 'screen' }, previewCanvas), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot green' }), el('span', { class: 'tagtxt' }, 'Preview'), pvName, el('span', { class: 'grow' }), pvListen)),
         el('div', { class: 'monitor program' }, el('div', { class: 'screen' }, engine.canvas, progInfo, progBar), el('div', { class: 'monitor-label' }, el('span', { class: 'ldot red' }), el('span', { class: 'tagtxt' }, 'Live'), pgName)),
-        el('div', { class: 'mon-meter-wrap pgm', title: 'Program sound — what the stream hears. Numbers are dB (0 = maximum). Number underneath = loudest recent peak. Dot = phase (green good, red out of phase). LIM bar = how much the limiter is turning the sound down right now (orange; red above 6 dB)' }, monMeter)),
+        el('div', { class: 'mon-meter-wrap pgm' + (meterThin() ? ' thin' : ''), title: 'Program sound — what the stream hears. Numbers are dB (0 = maximum). Number underneath = loudest recent peak. Dot = phase (green good, red out of phase). LIM bar = how much the limiter is turning the sound down right now (orange; red above 6 dB)' }, monMeter)),
       timeline,
       // the switching buttons in the middle; the master meter's scale and colour on the right, under that meter
       el('div', { class: 'trans-bar' }, el('div', { class: 'tb-side' }), el('div', { class: 'tb-mid' },

@@ -1245,7 +1245,10 @@ window.I18N_RU = {
     "NDI® is a registered trademark of Vizrt NDI AB (ndi.video). NDI sources need the free NDI Tools on this computer.": "NDI® — зарегистрированный товарный знак Vizrt NDI AB (ndi.video). Для NDI-источников на этом компьютере нужны бесплатные NDI Tools.",
     "Bottom of the meter scale": "Нижняя граница шкалы",
     "Amber": "Янтарный",
-    "White": "Белый"
+    "White": "Белый",
+    "Thin": "Узкий",
+    "Wide": "Широкий",
+    "Width of the Live meter": "Ширина индикатора Live"
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],

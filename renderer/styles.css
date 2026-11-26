@@ -665,6 +665,7 @@ textarea { width: 100%; box-sizing: border-box; }
 .tbtn.working.hard { background: #ef4444; border-color: #ef4444; color: #fff; }
 .tbtn[data-akey="limiter"], .tbtn[data-akey="dyn"] { min-width: 7.4em; text-align: center; font-variant-numeric: tabular-nums; }
 .mon-meter-wrap.pgm { width: calc(78px * var(--scale)); }
+.mon-meter-wrap.pgm.thin { width: calc(52px * var(--scale)); } /* thin: the bars half as wide, the numbers keep their size */
 /* Titles & Graphics: titles / pictures / pages as clean name buttons */
 .gfx-body .tile-row { flex-wrap: wrap; align-content: flex-start; overflow-y: auto; overflow-x: hidden; }
 .gtile.chip { flex: 0 0 auto; min-width: calc(130px * var(--scale)); max-width: calc(260px * var(--scale)); min-height: 0; max-height: none; height: calc(44px * var(--scale)); padding: 0 34px 0 10px; border-top-width: 2px; border-left: 5px solid #a855f7; justify-content: center; }
