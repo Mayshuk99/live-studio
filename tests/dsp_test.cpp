@@ -47,7 +47,7 @@ int main (int argc, char** argv)
         const float fb = (float) atof (argv[4]), nr = (float) atof (argv[5]), rv = (float) atof (argv[6]);
         const int block = argc > 7 ? atoi (argv[7]) : 256;
         eng->prepare (SR, 1);
-        eng->setParameters (fb, nr, rv, false);
+        eng->setParameters (fb, nr, rv, false, getenv ("DFB_ROOM_AMT") ? (float) atof (getenv ("DFB_ROOM_AMT")) : 0.0f);
         int maxNotches = 0;
         for (size_t p = 0; p < x.size(); p += (size_t) block)
         {

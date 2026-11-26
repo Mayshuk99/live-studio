@@ -216,7 +216,7 @@ public:
             const float late = over * kappaBin[(size_t) k] * decayBin[(size_t) k] * past[(size_t) k] + 1e-12f;
             const float gamma = std::min (PqF[(size_t) k] / late, 1.0e4f);
             const float g0 = gain[(size_t) k];
-            const float xi = aDD * g0 * g0 * gammaPrev[(size_t) k] + (1.0f - aDD) * std::max (gamma - 1.0f, 0.0f);
+            const float xi = onsetXi (aDD * g0 * g0 * gammaPrev[(size_t) k] + (1.0f - aDD) * std::max (gamma - 1.0f, 0.0f), gamma);
             const float g = std::max (xi / (1.0f + xi), floorG);
             gain[(size_t) k] = g;
             gammaPrev[(size_t) k] = gamma;
@@ -297,7 +297,7 @@ public:
             const float er = over * roomKappaS[(size_t) k] * roomEw[(size_t) k] + 1e-12f;
             const float gamma = std::min (PqF[(size_t) k] / er, 1.0e4f);
             const float g0 = roomGain[(size_t) k];
-            const float xi = aDD * g0 * g0 * roomGammaPrev[(size_t) k] + (1.0f - aDD) * std::max (gamma - 1.0f, 0.0f);
+            const float xi = onsetXi (aDD * g0 * g0 * roomGammaPrev[(size_t) k] + (1.0f - aDD) * std::max (gamma - 1.0f, 0.0f), gamma);
             const float g = std::max (xi / (1.0f + xi), floorG);
             roomGain[(size_t) k] = g;
             roomGammaPrev[(size_t) k] = gamma;

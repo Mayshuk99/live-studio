@@ -8,7 +8,8 @@ namespace Colours
     const juce::Colour text         { 0xffe6e9ee };
     const juce::Colour textDim      { 0xff8a93a0 };
     const juce::Colour grid         { 0xff343b45 };
-    const juce::Colour spectrum     { 0xff5aa9e6 };
+    const juce::Colour spectrum     { 0xff5aa9e6 };   // input (unprocessed)
+    const juce::Colour output       { 0xff7cf08a };   // output (processed)
     const juce::Colour feedback     { 0xffff5a4e };   // problem frequencies
     const juce::Colour filterCurve  { 0xffffb347 };
     const juce::Colour knobFeedback { 0xffff6b5e };
@@ -142,8 +143,23 @@ void SpectrumView::paint (juce::Graphics& g)
     g.setGradientFill (juce::ColourGradient (Colours::spectrum.withAlpha (0.35f), 0.0f, plot.getY(),
                                              Colours::spectrum.withAlpha (0.02f), 0.0f, plot.getBottom(), false));
     g.fillPath (fill);
-    g.setColour (Colours::spectrum);
-    g.strokePath (line, juce::PathStrokeType (1.5f));
+    g.setColour (Colours::spectrum.withAlpha (0.9f));
+    g.strokePath (line, juce::PathStrokeType (1.3f));
+
+    // processed output on top of the input
+    {
+        juce::Path outLine;
+        for (int i = 0; i < dfb::SpectrumAnalyzer::kDisplayPoints; ++i)
+        {
+            const float x = xForFreq (plot, dfb::FeedbackSuppressor::displayFreq (i));
+            const float y = yForDb (plot, proc.engine.outputSpectrum.getDisplayDb (i));
+            if (i == 0) outLine.startNewSubPath (x, y); else outLine.lineTo (x, y);
+        }
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.strokePath (outLine, juce::PathStrokeType (3.5f));
+        g.setColour (Colours::output);
+        g.strokePath (outLine, juce::PathStrokeType (1.8f));
+    }
 
     // combined notch filter curve (0 dB at the top, 3 px per dB)
     bool anyNotch = false;
@@ -193,11 +209,20 @@ void SpectrumView::paint (juce::Graphics& g)
         g.drawText (freqText (f), box, juce::Justification::centred);
     }
 
-    g.setColour (Colours::textDim);
-    g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("INPUT SPECTRUM", area.reduced (10.0f, 4.0f).removeFromTop (14.0f), juce::Justification::topLeft);
-    g.setColour (Colours::filterCurve);
-    g.drawText ("notch filters", area.reduced (10.0f, 4.0f).removeFromTop (14.0f), juce::Justification::topRight);
+    // legend
+    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    auto legend = area.reduced (10.0f, 4.0f).removeFromTop (14.0f);
+    auto item = [&g, &legend] (juce::Colour c, const juce::String& text, float w) {
+        auto r = legend.removeFromLeft (w);
+        g.setColour (c);
+        g.fillRoundedRectangle (r.removeFromLeft (14.0f).reduced (0.0f, 5.0f), 1.5f);
+        r.removeFromLeft (4.0f);
+        g.drawText (text, r, juce::Justification::centredLeft);
+    };
+    item (Colours::spectrum, "INPUT (unprocessed)", 150.0f);
+    item (Colours::output, "OUTPUT (processed)", 150.0f);
+    item (Colours::filterCurve, "notch filters", 110.0f);
+    item (Colours::feedback, "feedback frequencies", 160.0f);
 }
 
 //==============================================================================

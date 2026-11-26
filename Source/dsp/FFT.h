@@ -2,6 +2,7 @@
 // Simple iterative radix-2 complex FFT. No external dependencies, so the DSP core
 // can be compiled and tested without JUCE.
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <vector>
@@ -83,6 +84,16 @@ private:
     std::vector<cfloat> twiddle;
     std::vector<int> bitrev;
 };
+
+// Decision-directed a-priori SNR with fast onset: when a bin suddenly is far above the
+// noise / reverb estimate (consonants, sibilants, attacks) the gain opens immediately
+// instead of ramping up over several frames.
+inline float onsetXi (float xiDD, float gamma) noexcept
+{
+    constexpr float kOnsetGamma = 4.0f;   // 6 dB above the estimate
+    constexpr float kOnsetWeight = 0.5f;
+    return gamma > kOnsetGamma ? std::max (xiDD, kOnsetWeight * (gamma - 1.0f)) : xiDD;
+}
 
 inline int nextPow2 (int v)
 {

@@ -11,6 +11,9 @@
 //              MINIMUM-PHASE FIR filter (cepstral method) and the audio is filtered
 //              directly in the time domain, with a crossfade between filters.
 //              => no block delay, plugin latency = 0 samples.
+// Transient guard: a ~1 ms detector on the high-passed input catches consonants / attacks
+//              that the 10 ms analysis window cannot see yet and lets them through almost
+//              unprocessed for ~12 ms, so "s", "t", "k" keep their brightness.
 
 #include "FFT.h"
 #include "ReverbSuppressor.h"
@@ -69,6 +72,11 @@ public:
         hOld.assign ((size_t) L, 0.0f);
         hNew.assign ((size_t) L, 0.0f);
         hDesign.assign ((size_t) L, 0.0f);
+        aFast = 1.0f - std::exp (-1.0f / (float) (0.001 * sr));
+        aSlow = 1.0f - std::exp (-1.0f / (float) (0.04 * sr));
+        gAtt = 1.0f - std::exp (-1.0f / (float) (0.0005 * sr));
+        gRel = 1.0f - std::exp (-1.0f / (float) (0.015 * sr));
+        guardHoldSamples = (int) std::lround (0.012 * sr);
         fadeWin.resize ((size_t) hop);
         for (int i = 0; i < hop; ++i)
             fadeWin[(size_t) i] = 0.5f - 0.5f * (float) std::cos (kPi * (i + 0.5) / hop);
@@ -97,6 +105,8 @@ public:
         frames = 0;
         oldIsIdentity = newIsIdentity = true;
         fadePos = hop;
+        tdPrev = eFast = eSlow = guardMix = 0.0f;
+        guardHold = 0;
         gainReductionDb.store (0.0f);
     }
 
@@ -138,6 +148,23 @@ public:
                 analyse (analysisChannels > 0 ? std::min (analysisChannels, numCh) : numCh);
             }
 
+            // transient guard (mono detector on the analysed channels)
+            {
+                const int nA = analysisChannels > 0 ? std::min (analysisChannels, numCh) : numCh;
+                float m = 0.0f;
+                for (int c = 0; c < nA; ++c) m += ch[c][i];
+                m /= (float) std::max (1, nA);
+                const float hp = m - tdPrev;
+                tdPrev = m;
+                const float e = hp * hp;
+                eFast += aFast * (e - eFast);
+                eSlow += aSlow * (e - eSlow);
+                if (eFast > kGuardRatio * eSlow && eFast > 1.0e-9f) guardHold = guardHoldSamples;
+                const float target = guardHold > 0 ? kGuardAmount : 0.0f;
+                if (guardHold > 0) --guardHold;
+                guardMix += (target > guardMix ? gAtt : gRel) * (target - guardMix);
+            }
+
             // filter
             for (int c = 0; c < numCh; ++c)
             {
@@ -152,6 +179,7 @@ public:
                     const float r = fadeWin[(size_t) fadePos];
                     y = yOld + r * (yNew - yOld);
                 }
+                if (guardMix > 1.0e-4f) y += guardMix * (x - y);
                 ch[c][i] = y;
             }
             if (fadePos < hop) ++fadePos;
@@ -233,8 +261,8 @@ private:
             if (useN)
             {
                 const float gamma = std::min (p / (overN * noise[(size_t) k] + 1e-12f), 1e4f);
-                const float xi = aDD * gainN[(size_t) k] * gainN[(size_t) k] * gammaN[(size_t) k]
-                               + (1.0f - aDD) * std::max (gamma - 1.0f, 0.0f);
+                const float xi = onsetXi (aDD * gainN[(size_t) k] * gainN[(size_t) k] * gammaN[(size_t) k]
+                               + (1.0f - aDD) * std::max (gamma - 1.0f, 0.0f), gamma);
                 float gn = xi / (1.0f + xi);
                 gn = std::max (gn, floorN);
                 gainN[(size_t) k] = gn;
@@ -262,7 +290,7 @@ private:
         {
             const float g = tmp[(size_t) k];
             float& s = Gs[(size_t) k];
-            s = g > s ? (0.3f * s + 0.7f * g) : (0.6f * s + 0.4f * g);   // fast open, slower close
+            s = g > s ? (0.1f * s + 0.9f * g) : (0.6f * s + 0.4f * g);   // (almost) instant open, slower close
             if (! useN && ! useR && ! useRoom) s = 1.0f;
             if (s < 0.999f) identity = false;
             num += (double) s * s * P[(size_t) k];
@@ -344,6 +372,13 @@ private:
 
     float amtNoise = 0.0f, amtReverb = 0.0f, amtRoom = 0.0f;
     int analysisChannels = 0;
+
+    // transient guard
+    static constexpr float kGuardRatio = 6.0f;    // ~8 dB jump of high-frequency energy
+    static constexpr float kGuardAmount = 0.8f;   // 80 % dry during the attack
+    float tdPrev = 0.0f, eFast = 0.0f, eSlow = 0.0f, guardMix = 0.0f;
+    float aFast = 0.02f, aSlow = 0.0005f, gAtt = 0.04f, gRel = 0.0014f;
+    int guardHold = 0, guardHoldSamples = 576;
     std::atomic<float> gainReductionDb { 0.0f };
 };
 } // namespace dfb

@@ -4,6 +4,7 @@
 
 #include "FeedbackSuppressor.h"
 #include "SpectralCleaner.h"
+#include "SpectrumAnalyzer.h"
 
 namespace dfb
 {
@@ -15,6 +16,7 @@ public:
         sr = sampleRate;
         feedback.prepare (sampleRate, numChannels);
         cleaner.prepare (sampleRate, numChannels);
+        outputSpectrum.prepare (sampleRate);
         muteGain = muteTarget;
         muteStep = 1.0f / (float) (0.005 * sampleRate);   // 5 ms ramp
     }
@@ -43,17 +45,21 @@ public:
         feedback.process (ch, numCh, numSamples);
         cleaner.process (ch, numCh, numSamples);
 
-        if (muteGain == muteTarget && muteGain == 1.0f) return;
-        for (int i = 0; i < numSamples; ++i)
+        if (! (muteGain == muteTarget && muteGain == 1.0f))
         {
-            if (muteGain < muteTarget) muteGain = std::min (muteTarget, muteGain + muteStep);
-            else if (muteGain > muteTarget) muteGain = std::max (muteTarget, muteGain - muteStep);
-            for (int c = 0; c < numCh; ++c) ch[c][i] *= muteGain;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                if (muteGain < muteTarget) muteGain = std::min (muteTarget, muteGain + muteStep);
+                else if (muteGain > muteTarget) muteGain = std::max (muteTarget, muteGain - muteStep);
+                for (int c = 0; c < numCh; ++c) ch[c][i] *= muteGain;
+            }
         }
+        outputSpectrum.process (ch, numCh, numSamples);
     }
 
     FeedbackSuppressor feedback;
     SpectralCleaner cleaner;
+    SpectrumAnalyzer outputSpectrum;   // processed signal, for the graph
 
 private:
     double sr = 48000.0;

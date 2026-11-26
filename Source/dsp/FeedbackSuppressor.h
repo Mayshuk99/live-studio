@@ -203,12 +203,14 @@ private:
         float bin = 0.0f;
         int count = 0;
         int missed = 0;
-        float firstLevel = 0.0f, lastLevel = 0.0f;
+        float firstLevel = 0.0f, lastLevel = 0.0f;   // relative to the rest of the spectrum
+        float absFirst = 0.0f, absLast = 0.0f;       // absolute level (dBFS)
         float minBin = 0.0f, maxBin = 0.0f;
     };
 
     static constexpr float kQ = 12.0f;              // ~1/8 octave
     static constexpr float kFastReleaseDbPerSec = 30.0f;
+    static constexpr float kSubharmonicDb = 20.0f;   // fundamental within 20 dB -> it's a harmonic
     float ratioFactor() const noexcept { return ratio <= 1 ? 0.0f : 1.0f - 1.0f / (float) ratio; }
     float maxDepthDb() const noexcept { return 9.0f + 21.0f * strength; }   // 9 .. 30 dB
 
@@ -266,6 +268,7 @@ private:
         const int framesFast = (int) std::lround (10.0f - 4.0f * s);    // ~107 .. 64 ms
         const int framesSlow = (int) std::lround (45.0f - 25.0f * s);   // ~480 .. 215 ms
         const float growThr = 12.0f - 6.0f * s;                          // 12 .. 6 dB relative growth
+        const float ringThr = 9.0f - 3.0f * s;                           // tone outlives the rest by 9 .. 6 dB
 
         // total band power (for "relative level" = peak vs. everything else)
         double bandPow = 0.0;
@@ -277,7 +280,7 @@ private:
         }
 
         // collect peaks that pass the instantaneous tests
-        struct Peak { float bin; float level; float rel; };
+        struct Peak { float bin; float level; float rel; bool harmonic; };
         std::array<Peak, 8> peaks {};
         int numPeaks = 0;
 
@@ -295,6 +298,24 @@ private:
             if (2 * k < bins - 3 && L - maxAround (2 * k, 2) < phprThr) continue;
             if (3 * k < bins - 3 && L - maxAround (3 * k, 3) < phprThr) continue;
 
+            // voice / instrument harmonic? A howl has no harmonic series below it, a harmonic does:
+            // the fundamental AND every harmonic in between must be present as peaks.
+            // (Only slows the "steady tone" trigger; a growing howl is always caught at once.)
+            auto isPeakNear = [this, L] (int kc) {
+                if (kc < 4) return false;
+                const float Lp = maxAround (kc, 1);
+                const float side = std::max (binLevel (kc - 4), binLevel (kc + 4));
+                return Lp > L - kSubharmonicDb && Lp > side + 6.0f;
+            };
+            bool isHarmonic = false;
+            for (int h = 2; h <= 4 && ! isHarmonic; ++h)
+            {
+                const float kf = (float) k / (float) h;
+                bool series = true;
+                for (int j = 1; j < h && series; ++j) series = isPeakNear ((int) std::lround (kf * (float) j));
+                isHarmonic = series;
+            }
+
             // parabolic interpolation for a precise frequency
             const float a = levelDb[(size_t) k - 1], b = L, c = levelDb[(size_t) k + 1];
             const float den = a - 2.0f * b + c;
@@ -306,7 +327,7 @@ private:
             const double restPow = std::max (bandPow - peakPow, bandPow * 1e-6);
             const float rel = L - (float) (10.0 * std::log10 (restPow + 1e-30));
 
-            const Peak p { (float) k + delta, L, rel };
+            const Peak p { (float) k + delta, L, rel, isHarmonic };
             if (numPeaks < (int) peaks.size()) peaks[(size_t) numPeaks++] = p;
             else
             {
@@ -339,6 +360,7 @@ private:
                 it->used = true;
                 it->bin = it->minBin = it->maxBin = p.bin;
                 it->firstLevel = it->lastLevel = p.rel;
+                it->absFirst = it->absLast = p.level;
                 it->count = 1;
                 best = (int) (it - candidates.begin());
             }
@@ -349,6 +371,7 @@ private:
                 c.minBin = std::min (c.minBin, p.bin);
                 c.maxBin = std::max (c.maxBin, p.bin);
                 c.lastLevel = p.rel;
+                c.absLast = p.level;
                 ++c.count;
                 c.missed = 0;
             }
@@ -360,18 +383,29 @@ private:
             const float relGrowth = c.lastLevel - c.firstLevel;   // growth vs. rest of spectrum
 
             // A) isolated tone that keeps growing faster than everything else -> feedback building up
-            const bool growing = c.count >= framesFast && relGrowth >= growThr;
+            //    It must grow in absolute level too (a voice onset after a decaying reverb tail only
+            //    grows relative to the spectrum).
+            const float hk = p.harmonic ? 1.5f : 1.0f;   // extra evidence for harmonic-looking tones (ringing)
+            const bool growing = c.count >= framesFast && relGrowth >= growThr
+                              && (c.absLast - c.absFirst) >= 0.7f * growThr;
             // B) steady isolated tone that just won't go away (ringing / saturated howl).
             //    Already-notched frequencies that persist are deepened quickly.
-            const int needed = isNearActiveNotch (freqHz) ? framesFast : framesSlow;
-            const bool persistent = c.count >= needed && relGrowth > -3.0f;
+            //    A tone that looks like part of a voice's harmonic series must last 3x longer
+            //    (reverb tails of a voice decay away, a loop keeps ringing).
+            const int needed = isNearActiveNotch (freqHz) ? framesFast : (p.harmonic ? 3 * framesSlow : framesSlow);
+            const bool persistent = c.count >= needed && relGrowth > -3.0f && (c.absLast - c.absFirst) > -3.0f;
+            // C) ringing: after the sound stops one tone outlives the rest of the spectrum by far
+            //    (loop close to howling). Reverb tails decay together, so they do not qualify.
+            const bool ringing = c.count >= 2 * framesFast && (c.absLast - c.absFirst) <= 0.0f
+                              && relGrowth >= ringThr * hk;
 
-            if (stable && (growing || persistent))
+            if (stable && (growing || persistent || ringing))
             {
                 triggerNotch (freqHz, t, p.level - medianDb - 10.0f);
                 c.count = 1;
                 c.minBin = c.maxBin = c.bin;
                 c.firstLevel = c.lastLevel;
+                c.absFirst = c.absLast;
             }
             else if (! stable)
             {
@@ -379,6 +413,7 @@ private:
                 c.count = 1;
                 c.minBin = c.maxBin = c.bin;
                 c.firstLevel = c.lastLevel;
+                c.absFirst = c.absLast;
             }
         }
 
