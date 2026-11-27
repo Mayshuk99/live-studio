@@ -24,6 +24,16 @@
       { path: 'C:\\Program Files\\Common Files\\VST3\\FabFilter Pro-Q 3.vst3', cid: '72C4DB717A4D459AB97E51745D84B39D', name: 'Pro-Q 3', vendor: 'FabFilter', sub: 'Fx|EQ' },
       { path: 'C:\\Program Files\\Common Files\\VST3\\Synth.vst3', cid: '00000000000000000000000000000001', name: 'Some Synth', vendor: 'X', sub: 'Instrument|Synth' }] };
 
+  /* test picture in the native engine's window format (engine/preview.go): colour bars on top, fine black/white lines
+     below, Y then U | V side by side, BT.709 video range */
+  function natTestYUV(w, h, n) {
+    const out = new Uint8Array(w * h * 3 / 2), bars = [[191, 191, 191], [191, 191, 0], [0, 191, 191], [0, 191, 0], [191, 0, 191], [191, 0, 0], [0, 0, 191]];
+    const yuv = ([r, g, b]) => { r /= 255; g /= 255; b /= 255; const y = 0.2126 * r + 0.7152 * g + 0.0722 * b; return [16 + 219 * y, 128 + 224 * (b - y) / 1.8556, 128 + 224 * (r - y) / 1.5748].map(Math.round); };
+    const at = (x, y) => y < h * 0.6 ? yuv(bars[Math.min(6, Math.floor(x * 7 / w))]) : ((x + (y >> 2) + n) % 4 < 2 ? [16, 128, 128] : [235, 128, 128]);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = at(x, y)[0];
+    for (let y = 0; y < h / 2; y++) for (let x = 0; x < w / 2; x++) { const c = at(x * 2, y * 2); out[w * h + y * w + x] = c[1]; out[w * h + y * w + w / 2 + x] = c[2]; }
+    return out;
+  }
   window.studio = {
     isApp: false,
     platform: 'browser',
@@ -90,7 +100,10 @@
     onOutEvent: cb => outListeners.push(cb),
     // native engine stand-in for tests: remembers every command, answers ready, sends small camera pictures
     nativeStart: async opts => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.opts = opts; setTimeout(() => L.cbs.forEach(cb => cb({ ev: 'ready', w: opts.w, h: opts.h })), 50); clearInterval(L.timer);
-      L.timer = setInterval(() => { for (const c of L.sent.filter(m => m.cmd === 'camera' && !m.closed)) { const w = 64, h = 36, px = new Uint8Array(w * h * 4); for (let i = 0; i < w * h; i++) { px[i * 4] = (L.n || 0) * 7 % 255; px[i * 4 + 1] = 120; px[i * 4 + 2] = c.id.length * 30; px[i * 4 + 3] = 255; } L.cbs.forEach(cb => cb({ ev: 'cam-frame', id: c.id, w, h }, px)); } L.n = (L.n || 0) + 1;
+      L.timer = setInterval(() => { const pv = L.sent.filter(m => m.cmd === 'preview').pop(), yuv = pv && pv.cam && pv.cam.fmt === 'yuv';
+        for (const c of L.sent.filter(m => m.cmd === 'camera' && !m.closed)) {
+          if (yuv) { const { w, h } = pv.cam; L.cbs.forEach(cb => cb({ ev: 'cam-frame', id: c.id, w, h, fmt: 'yuv' }, natTestYUV(w, h, L.n || 0))); continue; }
+          const w = 64, h = 36, px = new Uint8Array(w * h * 4); for (let i = 0; i < w * h; i++) { px[i * 4] = (L.n || 0) * 7 % 255; px[i * 4 + 1] = 120; px[i * 4 + 2] = c.id.length * 30; px[i * 4 + 3] = 255; } L.cbs.forEach(cb => cb({ ev: 'cam-frame', id: c.id, w, h }, px)); } L.n = (L.n || 0) + 1;
         L.cbs.forEach(cb => cb({ ev: 'stats', ticks: 60, late: 0, repeat: 0, skip: 0, clock: '', phaseMs: 0, renderMs: 0.4, renderMaxMs: 1, cams: {}, videos: {}, outputs: {}, audioMs: 60, audioUnder: 0, audioOver: 0, audioPpm: 12 })); }, 1000);
       return { ok: true }; },
     nativeStop: async () => { const L = window.__nat; if (L) clearInterval(L.timer); return true; },

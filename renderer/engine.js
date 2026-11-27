@@ -41,10 +41,24 @@
   uniform vec2 u_ckC;        // key colour as Cb, Cr (BT.709)
   uniform vec3 u_ckP;        // strength (similarity), edge softness, spill
   uniform int u_matte;       // show the cut-out in black & white (setting up the green screen, Preview only)
+  uniform int u_yuv;         // native-engine camera: one channel, Y on top, then U | V side by side (BT.709, video range)
+  vec4 pix(vec2 uv) {
+    if (u_yuv == 0) return texture(u_tex, uv);
+    vec2 ts = vec2(textureSize(u_tex, 0));
+    float H = ts.y * (2.0 / 3.0);
+    vec2 cs = vec2(ts.x * 0.5, H * 0.5);                       // size of the U and V pictures
+    float yv = texture(u_tex, vec2(uv.x, clamp(uv.y, 0.5 / H, 1.0 - 0.5 / H) * (H / ts.y))).r;
+    vec2 c = clamp(uv, 0.5 / cs, 1.0 - 0.5 / cs);              // never blend U with V, or Y with colour
+    float cy = (H + c.y * cs.y) / ts.y;
+    float u = texture(u_tex, vec2(c.x * 0.5, cy)).r - 0.501961;
+    float v = texture(u_tex, vec2(0.5 + c.x * 0.5, cy)).r - 0.501961;
+    float l = (yv - 0.062745) * 1.164384;
+    return vec4(clamp(vec3(l + 1.792741 * v, l - 0.213249 * u - 0.532909 * v, l + 2.112402 * u), 0.0, 1.0), 1.0);
+  }
   void main() {
     if (u_mode == 2) { o = vec4(u_solid.rgb, u_solid.a * u_opacity); return; }
-    vec4 t = texture(u_tex, v_uv);
-    if (u_deint > 0.0) t = 0.5 * (t + texture(u_tex, v_uv + vec2(0.0, u_deint)));
+    vec4 t = pix(v_uv);
+    if (u_deint > 0.0) t = 0.5 * (t + pix(v_uv + vec2(0.0, u_deint)));
     if (u_bgra == 1) { t = vec4(t.b, t.g, t.r, t.a); if (t.a > 0.0) t.rgb = t.rgb / t.a; }
     if (u_mode == 1) {
       float a = t.a;
@@ -189,7 +203,7 @@
       gl.useProgram(p);
       this.u = {};
       ['u_dst', 'u_src', 'u_tex', 'u_mode', 'u_solid', 'u_opacity', 'u_exposure', 'u_contrast', 'u_saturation',
-        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra', 'u_keyOn', 'u_keyColor', 'u_keyTol', 'u_bgra', 'u_ck', 'u_ckC', 'u_ckP', 'u_matte', 'u_deint'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
+        'u_temp', 'u_tint', 'u_gamma', 'u_black', 'u_zebra', 'u_keyOn', 'u_keyColor', 'u_keyTol', 'u_bgra', 'u_ck', 'u_ckC', 'u_ckP', 'u_matte', 'u_deint', 'u_yuv'].forEach(n => { this.u[n] = gl.getUniformLocation(p, n); });
       const vao = gl.createVertexArray();
       gl.bindVertexArray(vao);
       const buf = gl.createBuffer();
@@ -333,10 +347,19 @@
         if (!s.patches.length) return s;
         gl.bindTexture(gl.TEXTURE_2D, s.tex);
         for (const f of s.patches) {
-          if (f.full || f.w !== s.w || f.h !== s.h) {
+          if (f.yuv) {                       // native-engine camera picture (see engine/preview.go): one channel, w × h·3/2
+            gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+            if (s.yuv && s.uploaded && f.w === s.w && f.h === s.h) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, f.w, f.h * 3 / 2, gl.RED, gl.UNSIGNED_BYTE, f.data);
+            else gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, f.w, f.h * 3 / 2, 0, gl.RED, gl.UNSIGNED_BYTE, f.data);
+            gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+            s.w = f.w; s.h = f.h; s.yuv = true; s.uploaded = true; s.ready = true;
+            continue;
+          }
+          if (f.full || f.w !== s.w || f.h !== s.h || s.yuv) {
             if (!f.full) continue;           // a piece for a size we don't have yet: wait for the whole picture
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, f.w, f.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, f.data);
-            s.w = f.w; s.h = f.h; s.uploaded = true; s.ready = true;
+            if (s.uploaded && !s.yuv && f.w === s.w && f.h === s.h) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, f.w, f.h, gl.RGBA, gl.UNSIGNED_BYTE, f.data);
+            else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, f.w, f.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, f.data);
+            s.w = f.w; s.h = f.h; s.yuv = false; s.uploaded = true; s.ready = true;
           } else if (s.uploaded) {
             gl.texSubImage2D(gl.TEXTURE_2D, 0, f.x, f.y, f.rw, f.rh, gl.RGBA, gl.UNSIGNED_BYTE, f.data);
           }
@@ -557,12 +580,14 @@
       gl.uniform1i(this.u.u_ck, key ? 1 : 0);
       const dz = s.kind === 'video' && this.deint.has(sourceId) && this.sourceSize(sourceId); // (native cameras arrive deinterlaced already)
       if (dz) gl.uniform1f(this.u.u_deint, 1 / dz.h);
+      if (s.yuv) gl.uniform1i(this.u.u_yuv, 1);
       if (key) { gl.uniform2f(this.u.u_ckC, key.cb, key.cr); gl.uniform3f(this.u.u_ckP, key.sim, key.smooth, key.spill); gl.uniform1i(this.u.u_matte, matte ? 1 : 0); }
       gl.uniform4fv(this.u.u_dst, rect);
       gl.uniform4fv(this.u.u_src, uv);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       if (key) { gl.uniform1i(this.u.u_ck, 0); gl.uniform1i(this.u.u_matte, 0); }
       if (dz) gl.uniform1f(this.u.u_deint, 0);
+      if (s.yuv) gl.uniform1i(this.u.u_yuv, 0);
     }
     _drawShot(shot, opacity, smooth, zebra, matte) {
       const W = this.W, H = this.H;

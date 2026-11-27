@@ -93,6 +93,7 @@ type Engine struct {
 
 	pvPgmW, pvPgmH, pvPgmEvery int
 	pvCamW, pvCamH, pvCamEvery int
+	pvCamYUV                   bool // the window takes YUV 4:2:0 pictures (sharper for the same data)
 	pvCams                     []string
 	kA, kS                     []byte // green screen: alpha and colour kept, per colour sample
 	pipFrame                   *Frame // the small picture, drawn at its own size
@@ -350,6 +351,7 @@ func (e *Engine) command(cmd string, m Msg, payload []byte) {
 		}
 		if p := m.obj("cam"); p != nil {
 			e.pvCamW, e.pvCamH, e.pvCamEvery = int(p.num("w")), int(p.num("h")), int(p.num("every"))
+			e.pvCamYUV = p.str("fmt") == "yuv"
 		}
 		if m.has("cams") {
 			e.pvCams = m.strs("cams")
@@ -813,11 +815,15 @@ func (e *Engine) tick(n uint64, now time.Time) time.Duration {
 	}
 	e.dispatch(of, pcm)
 	pgmW, pgmH, pgmEvery := e.pvPgmW, e.pvPgmH, e.pvPgmEvery
-	camW, camH, camEvery := e.pvCamW, e.pvCamH, e.pvCamEvery
+	camW, camH, camEvery, camYUV := e.pvCamW, e.pvCamH, e.pvCamEvery, e.pvCamYUV
 	var pvCams []*Camera
 	var pvIDs []string
-	if camEvery > 0 && n%uint64(camEvery) == uint64(camEvery/2) {
-		for _, id := range e.pvCams {
+	if camEvery > 0 && camW > 0 && camH > 0 {
+		// the cameras take turns (one on this frame, the next on the next), so the work is spread out
+		for i, id := range e.pvCams {
+			if (n+uint64(i))%uint64(camEvery) != uint64(camEvery/2) {
+				continue
+			}
 			if c := e.cams[id]; c != nil {
 				pvCams = append(pvCams, c)
 				pvIDs = append(pvIDs, id)
@@ -841,7 +847,12 @@ func (e *Engine) tick(n uint64, now time.Time) time.Duration {
 			break
 		}
 		f, _, _ := c.acquire()
-		if f != nil {
+		if f != nil && camYUV {
+			pw, ph := camW&^1, camH&^1
+			p := packetFill(Msg{"ev": "cam-frame", "id": pvIDs[i], "w": pw, "h": ph, "fmt": "yuv"}, pw*ph*3/2, func(b []byte) { toYUVSmall(f, pw, ph, b) })
+			c.release()
+			sendLossyPacket(p)
+		} else if f != nil {
 			buf := make([]byte, camW*camH*4)
 			toRGBA(f, camW, camH, buf)
 			c.release()

@@ -144,7 +144,9 @@ renderer/
   *-worklet.js, pcm-tap.js, ebml-scan.js   audio worklets (limiter, sync test, sound tap) and the
                    WebM/Matroska scanner for the shared encoder
 engine/            native engine in Go (OBS-style): reads capture cards through FFmpeg, composites in YUV,
-                   feeds the stream / recording encoders; `go test ./...` runs its tests
+                   feeds the stream / recording encoders; `go test ./...` runs its tests. preview.go makes the
+                   cameras' pictures for the window's monitors (area-averaged, YUV 4:2:0; size set in Settings →
+                   Video output → Cameras on the screen); renderer/engine.js turns them into colour (u_yuv)
 vsthost/           VST3 host in C++ (CMake; the Steinberg VST3 SDK is downloaded by the build, not stored here)
 media-import.js    bringing files in: which formats play as they are, FFmpeg conversion of the rest, PDF / PowerPoint
                    pages (Poppler's pdftoppm, downloaded by the build into resources/poppler; PowerPoint / LibreOffice),

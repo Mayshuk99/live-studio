@@ -75,11 +75,28 @@ func packet(h Msg, payload []byte) []byte {
 
 func send(h Msg, payload []byte) { outq <- packet(h, payload) }
 
+// a packet whose payload is written straight into it (a big picture is not copied a second time)
+func packetFill(h Msg, n int, fill func([]byte)) []byte {
+	hb, _ := json.Marshal(h)
+	p := make([]byte, 8+len(hb)+n)
+	binary.LittleEndian.PutUint32(p[0:], uint32(len(hb)))
+	binary.LittleEndian.PutUint32(p[4:], uint32(n))
+	copy(p[8:], hb)
+	fill(p[8+len(hb):])
+	return p
+}
+
 // pictures for the monitors: skipped when Live Studio is behind
 func sendRoom() bool { return len(outq) < 24 }
 func sendLossy(h Msg, payload []byte) {
 	select {
 	case outq <- packet(h, payload):
+	default:
+	}
+}
+func sendLossyPacket(p []byte) {
+	select {
+	case outq <- p:
 	default:
 	}
 }

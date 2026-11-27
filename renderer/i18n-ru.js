@@ -1276,7 +1276,13 @@ window.I18N_RU = {
     "This PDF could not be opened.": "Этот PDF не удалось открыть.",
     "Keynote files cannot be opened on Windows. In Keynote: File → Export To → PDF (or PowerPoint), then add that file.": "Файлы Keynote не открываются в Windows. В Keynote: Файл → Экспортировать в → PDF (или PowerPoint), затем добавьте этот файл.",
     "Pages files cannot be opened on Windows. In Pages: File → Export To → PDF (or Word), then add that file.": "Файлы Pages не открываются в Windows. В Pages: Файл → Экспортировать в → PDF (или Word), затем добавьте этот файл.",
-    "There is no text in this file.": "В этом файле нет текста."
+    "There is no text in this file.": "В этом файле нет текста.",
+    "Economy — 384×216, 20 fps": "Экономно — 384×216, 20 к/с",
+    "Normal — 640×360, 30 fps": "Обычно — 640×360, 30 к/с",
+    "Sharp — 960×540, 30 fps": "Чётко — 960×540, 30 к/с",
+    "Highest — 1280×720, 30 fps": "Максимум — 1280×720, 30 к/с",
+    "Cameras on the screen (native)": "Камеры на экране (встроенный)",
+    "Only how the monitors in this window look — YouTube and the recording always get the full picture. Higher uses a little more of the processor.": "Только то, как выглядят мониторы в этом окне — в YouTube и в запись всегда идёт полная картинка. Чем выше, тем чуть больше нагрузка на процессор."
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],

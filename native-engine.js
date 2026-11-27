@@ -17,13 +17,13 @@ function enginePath(app) {
 }
 
 class NativeEngine extends EventEmitter {
-  constructor() { super(); this.proc = null; this.buf = Buffer.alloc(0); this.ready = false; this.queue = 0; }
+  constructor() { super(); this.proc = null; this.pre = Buffer.alloc(0); this.pk = null; this.ready = false; this.queue = 0; }
 
   start(exe, hello) {
     if (this.proc) return true;
     let p;
     try { p = spawn(exe, [], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); } catch (e) { this.emit('msg', { ev: 'exit', code: -1, error: e.message }); return false; }
-    this.proc = p; this.ready = false; this.buf = Buffer.alloc(0);
+    this.proc = p; this.ready = false; this.pre = Buffer.alloc(0); this.pk = null;
     p.stdin.on('error', () => {});
     p.stdout.on('data', d => this._data(d));
     p.stderr.on('data', d => { for (const l of String(d).split(/\r?\n/)) if (l.trim()) this.emit('msg', { ev: 'log', line: 'engine: ' + l.trim() }); });
@@ -33,17 +33,26 @@ class NativeEngine extends EventEmitter {
     return true;
   }
 
+  /* packets: 8 bytes (header length, payload length), the JSON header, the payload. A big picture arrives in many
+     pieces; each packet gets one buffer of its full size and the pieces are copied into it once (gluing the pieces
+     together again and again would copy a 1 MB picture dozens of times). */
   _data(d) {
-    this.buf = this.buf.length ? Buffer.concat([this.buf, d]) : d;
-    for (;;) {
-      if (this.buf.length < 8) return;
-      const hl = this.buf.readUInt32LE(0), pl = this.buf.readUInt32LE(4);
-      if (this.buf.length < 8 + hl + pl) return;
+    while (d.length) {
+      if (!this.pk) {
+        const need = 8 - this.pre.length;
+        if (d.length < need) { this.pre = Buffer.concat([this.pre, d]); return; }
+        const pre = this.pre.length ? Buffer.concat([this.pre, d.subarray(0, need)]) : d.subarray(0, 8);
+        d = d.subarray(need); this.pre = Buffer.alloc(0);
+        const hl = pre.readUInt32LE(0), pl = pre.readUInt32LE(4);
+        this.pk = { hl, pl, buf: Buffer.allocUnsafe(hl + pl), got: 0 };
+      }
+      const pk = this.pk, n = Math.min(d.length, pk.buf.length - pk.got);
+      d.copy(pk.buf, pk.got, 0, n); pk.got += n; d = d.subarray(n);
+      if (pk.got < pk.buf.length) return;
+      this.pk = null;
       let h;
-      try { h = JSON.parse(this.buf.toString('utf8', 8, 8 + hl)); } catch (e) { h = { ev: 'bad' }; }
-      const payload = pl ? this.buf.subarray(8 + hl, 8 + hl + pl) : null;
-      this.buf = this.buf.subarray(8 + hl + pl);
-      if (!this.buf.length) this.buf = Buffer.alloc(0);
+      try { h = JSON.parse(pk.buf.toString('utf8', 0, pk.hl)); } catch (e) { h = { ev: 'bad' }; }
+      const payload = pk.pl ? pk.buf.subarray(pk.hl) : null;
       if (h.ev === 'ready') this.ready = true;
       this.emit('msg', h, payload);
     }

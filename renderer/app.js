@@ -459,7 +459,22 @@
     }
     return { deint: null };
   }
-  function natPreviewCams() { S.nativeSend({ cmd: 'preview', cam: { w: 384, h: 216, every: 3 }, cams: [...NAT.cams.keys()], pgm: { w: 0, h: 0, every: 0 } }); }
+  /* how sharp the cameras look in the window's monitors with the native engine (the stream and the recording always get
+     the full picture). Sent as YUV 4:2:0 and turned into colour by the graphics card; the cameras take turns frame by
+     frame, so two cameras at "every 2" means each one 30 times a second. */
+  const NAT_MON = {
+    eco: { w: 384, h: 216, every: 3, label: 'Economy — 384×216, 20 fps' },
+    normal: { w: 640, h: 360, every: 2, label: 'Normal — 640×360, 30 fps' },
+    sharp: { w: 960, h: 540, every: 2, label: 'Sharp — 960×540, 30 fps' },
+    max: { w: 1280, h: 720, every: 2, label: 'Highest — 1280×720, 30 fps' }
+  };
+  const natMon = () => NAT_MON[settings.output.natMon] || NAT_MON.sharp;
+  function natPreviewCams() {
+    const m = natMon(), fps = Math.round((settings.output.fps || 59.94) / m.every);
+    S.nativeSend({ cmd: 'preview', cam: { w: m.w, h: m.h, every: m.every, fmt: 'yuv' }, cams: [...NAT.cams.keys()], pgm: { w: 0, h: 0, every: 0 } });
+    const said = `${m.w}×${m.h} at ${fps} fps`;
+    if (NAT.monSaid !== said) { NAT.monSaid = said; logEvent('ENGINE', `cameras in the window's monitors: ${said} (stream and recording get the full picture)`); }
+  }
   function natOpenCamera(cam) {
     if (!engine.sources.has(cam.id) || engine.sources.get(cam.id).kind !== 'raw') engine.setRawSource(cam.id);
     if (cam.net) { natOpenNet(cam); return; }
@@ -496,7 +511,7 @@
   function natCloseCamera(id) { if (NAT.cams.delete(id) && NAT.ready) { S.nativeSend({ cmd: 'camera-close', id }); natPreviewCams(); } }
   if (S.onNative) S.onNative((h, payload) => {
     switch (h.ev) {
-      case 'ready': NAT.ready = true; logEvent('ENGINE', `ready · ${h.w}×${h.h} · ${h.threads} threads`); natResync(); break;
+      case 'ready': NAT.ready = true; NAT.monSaid = null; logEvent('ENGINE', `ready · ${h.w}×${h.h} · ${h.threads} threads`); natResync(); break;
       case 'cam-status': {
         const cam = camById(h.id), d = NAT.cams.get(h.id);
         rt.camStatus.set(h.id, { ok: h.ok, text: h.ok ? (d && d.dev.net ? `${d.dev.name} · ${d.dev.w}×${d.dev.h} · native` : d && d.dev.deint ? `${d.dev.label} · deinterlaced · native (${d.dev.name} ${d.dev.n + 1})` : `${d ? d.dev.w : natW()}×${d ? d.dev.h : natH()} · ${settings.output.fps} fps · native${d ? ` (${d.dev.name} ${d.dev.n + 1})` : ''}`) : h.text });
@@ -504,7 +519,7 @@
         if (cam) logEvent('NATIVE', `camera ${cam.name}: ${h.ok ? 'picture is coming in' : h.text}`);
         break;
       }
-      case 'cam-frame': if (payload && NAT.cams.has(h.id)) engine.rawPatch(h.id, { full: true, w: h.w, h: h.h, data: payload }); break;
+      case 'cam-frame': if (payload && NAT.cams.has(h.id)) engine.rawPatch(h.id, { full: true, w: h.w, h: h.h, data: payload, yuv: h.fmt === 'yuv' }); break;
       case 'stats': rt.engStats = h; natAuto(h); isoCheck(h); break;
       case 'audio-port-ok': NAT.portOK = true; logEvent('ENGINE', 'sound goes straight from the sound thread to the engine'); break;
       case 'log': logEvent('ENGINE', h.line); break;
@@ -5065,7 +5080,10 @@
         })),
         (o.engine || 'classic') === 'native' ? el('div', { class: 'field' }, el('span', null, 'Sound/picture sync (native)'), el('div', { class: 'row' },
           el('input', { type: 'number', min: 0, max: 500, step: 10, value: o.videoDelayMs ?? 20, style: 'width:90px', onchange: e => { o.videoDelayMs = Math.max(0, Math.min(500, Math.round(+e.target.value || 0))); saveSettings(); } }),
-          el('span', { class: 'muted' }, 'ms the picture waits for the sound (if lips move before you hear the words, raise it; starts with the next stream/recording)'))) : null),
+          el('span', { class: 'muted' }, 'ms the picture waits for the sound (if lips move before you hear the words, raise it; starts with the next stream/recording)'))) : null,
+        (o.engine || 'classic') === 'native' ? el('div', { class: 'field' }, el('span', null, 'Cameras on the screen (native)'),
+          select(Object.entries(NAT_MON).map(([k, m]) => [k, m.label]), NAT_MON[o.natMon] ? o.natMon : 'sharp', v => { o.natMon = v; saveSettings(); if (NAT.ready) natPreviewCams(); }),
+          el('span', { class: 'muted', style: 'font-size:.85em' }, 'Only how the monitors in this window look — YouTube and the recording always get the full picture. Higher uses a little more of the processor.')) : null),
       outWarn,
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free. Set the frame rate to exactly what the cameras send (Blackmagic at 59.94 → 59.94).'),
       rt.encFallback && rt.encFallback.for === o.encoder ? el('div', { class: 'status-bad', style: 'font-size:.9em;margin-top:6px' }, rt.encFallback.level >= 2 ? `This encoder would not start, so the software encoder is being used until the program is restarted. Updating the graphics card driver usually fixes it. Reported: ${rt.encFallback.detail || 'no details'}` : 'This encoder refused the tuned settings; plain settings are being used.') : null,
