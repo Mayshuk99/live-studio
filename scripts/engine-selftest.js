@@ -30,7 +30,15 @@ e.send({ cmd: 'camera', id: 'A', args: ['-re', '-f', 'lavfi', '-i', `testsrc2=si
 e.send({ cmd: 'preview', cam: { w: PW, h: PH, every: 2, fmt: 'yuv' }, cams: ['A'], pgm: { w: 0, h: 0, every: 0 } });
 const ow = 400, oh = 80, px = new Uint8Array(ow * oh * 4).fill(200);
 let ph = 0;
-const aud = setInterval(() => { const n = 480, f = new Float32Array(n * 2); for (let i = 0; i < n; i++) { f[i * 2] = f[i * 2 + 1] = 0.2 * Math.sin(ph); ph += 2 * Math.PI * 440 / 48000; } e.send({ cmd: 'audio', rate: 48000, ch: 2 }, f); }, 10);
+// sound like the program's sound thread makes it: exactly as many samples as time has passed. When this script is held up
+// (a timer that fires late, a big buffer being built) the missing sound follows in one piece — late, but nothing is lost.
+let audT0 = 0, audSent = 0;
+const aud = setInterval(() => {
+  const now = Date.now(); if (!audT0) audT0 = now - 10;
+  const n = Math.min(48000, Math.round((now - audT0) * 48) - audSent); if (n <= 0) return;
+  const f = new Float32Array(n * 2); for (let i = 0; i < n; i++) { f[i * 2] = f[i * 2 + 1] = 0.2 * Math.sin(ph); ph += 2 * Math.PI * 440 / 48000; }
+  audSent += n; e.send({ cmd: 'audio', rate: 48000, ch: 2 }, f);
+}, 10);
 const at = (s, fn) => setTimeout(fn, s * 1000);
 const part = path.join(dir, 'rec.mp4');
 at(1, () => e.send({ cmd: 'program', base: { src: 'A' }, ms: 500 }));
@@ -49,7 +57,8 @@ at(6.5, () => { e.send({ cmd: 'video', id: 'v1', path: vid, name: 'Test clip', l
 // Sound has its own line to the engine and pictures are prepared on a thread of their own (engine/main.go), with 0.4 s of sound in reserve.
 let gaps = 0, gapsBig = 0, bigOn = false, bigGot = 0;
 e.on('msg', h => { if (h.ev === 'stats') { gaps += h.audioUnder || 0; if (bigOn) gapsBig += h.audioUnder || 0; } });
-at(8.5, () => { bigOn = true; const big = new Uint8Array(3840 * 2160 * 4); for (let i = 0; i < big.length; i += 4) { big[i] = i & 255; big[i + 3] = 255; } for (const id of ['b1', 'b2', 'b3']) e.send({ cmd: 'overlay', id, sw: 3840, sh: 2160, x: 0, y: 0, w: W, h: H, premult: false, visible: false, fadeMs: 200, z: 5 }, big); e.send({ cmd: 'still', id: 'last', w: 64, h: 36 }, new Uint8Array(64 * 36 * 4)); bigGot = Date.now(); });
+const big = new Uint8Array(3840 * 2160 * 4); for (let i = 0; i < big.length; i += 4) { big[i] = i & 255; big[i + 3] = 255; }
+at(8.5, () => { bigOn = true; for (const id of ['b1', 'b2', 'b3']) e.send({ cmd: 'overlay', id, sw: 3840, sh: 2160, x: 0, y: 0, w: W, h: H, premult: false, visible: false, fadeMs: 200, z: 5 }, big); e.send({ cmd: 'still', id: 'last', w: 64, h: 36 }, new Uint8Array(64 * 36 * 4)); bigGot = Date.now(); });
 at(12, async () => {
   clearInterval(aud);
   await e.stop();

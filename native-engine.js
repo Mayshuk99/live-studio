@@ -99,6 +99,17 @@ class NativeEngine extends EventEmitter {
       if (this.soundWait) return true; // the sound line is just opening
       if (this.sound && this.sound.writable) { this.sound.write(frame(header, payload)); return true; }
     }
+    // a big picture: its bytes go as they are, without first being copied into one buffer with the header
+    const n = payload ? (payload.byteLength !== undefined ? payload.byteLength : payload.length) : 0;
+    if (n > 256 << 10) {
+      const hb = Buffer.from(JSON.stringify(header)), pre = Buffer.alloc(8);
+      pre.writeUInt32LE(hb.length, 0); pre.writeUInt32LE(n, 4);
+      p.stdin.cork();
+      p.stdin.write(Buffer.concat([pre, hb]));
+      p.stdin.write(Buffer.from(payload.buffer ? payload.buffer : payload, payload.byteOffset || 0, n));
+      p.stdin.uncork();
+      return true;
+    }
     p.stdin.write(frame(header, payload));
     return true;
   }
