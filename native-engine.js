@@ -135,6 +135,10 @@ class NativeEngine extends EventEmitter {
 /* the engine keeps 400 ms of sound waiting (engine/audio.go targetSec) instead of the 60 ms the "Sound/picture sync"
    setting was tuned with, so window stalls no longer cut the sound: the picture waits the 340 ms more */
 const SOUND_RESERVE_EXTRA_MS = 340;
+/* …and every file / stream fed by the engine starts that much later (an output option): without it each would begin
+   with 0.34 s of sound and no picture — a frozen first picture in the recording, and the recording and its ISO files
+   22 pictures apart */
+const engineTrim = () => ['-ss', (SOUND_RESERVE_EXTRA_MS / 1000).toFixed(3)];
 function engineInput(o) {
   const fps = o.fps || 59.94;
   const rate = fps === 59.94 ? '60000/1001' : fps === 29.97 ? '30000/1001' : String(fps);
@@ -148,4 +152,4 @@ function engineInput(o) {
   ];
 }
 
-module.exports = { NativeEngine, enginePath, engineInput, SOUND_RESERVE_EXTRA_MS };
+module.exports = { NativeEngine, enginePath, engineInput, engineTrim, SOUND_RESERVE_EXTRA_MS };

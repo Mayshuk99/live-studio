@@ -45,10 +45,10 @@ const hwDecode = o => {
 const pixFmt = o => zeroCopy(o) ? [] : ['-pix_fmt', 'yuv420p'];
 /* where the picture comes from: Live Studio's window (Matroska from the browser's encoder), or the native engine
    (raw frames on the pipe + sound from a local connection) */
-const { engineInput } = require('./native-engine');
+const { engineInput, engineTrim } = require('./native-engine');
 // the engine already delivers exactly one frame per frame time: nothing to repeat or drop
 const cfr = (o, fps) => o.engine ? [] : ['-r', rate(fps), '-fps_mode', 'cfr'];
-const inputOf = o => o.engine ? [...engineInput(o), '-map', '1:v:0', '-map', '0:a:0'] : [...hwDecode(o), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?'];
+const inputOf = o => o.engine ? [...engineInput(o), '-map', '1:v:0', '-map', '0:a:0', ...engineTrim()] : [...hwDecode(o), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?'];
 
 function streamArgs(o) {
   // own encoder settings (Settings → Live stream → Stream encoder settings, like Wirecast's encoder presets)
