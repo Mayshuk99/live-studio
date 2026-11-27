@@ -2,7 +2,11 @@ name: Build Windows VST3
 
 on:
   push:
+    branches: [defeedback-plugin]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   windows:
@@ -16,10 +20,34 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --target DefeedbackPlugin_VST3 DefeedbackPlugin_Standalone
 
-      - name: Upload plugin
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item -Recurse build/DefeedbackPlugin_artefacts/Release/VST3/DE-FEEDBACK.vst3 out/
+          Copy-Item build/DefeedbackPlugin_artefacts/Release/Standalone/DE-FEEDBACK.exe out/
+          Copy-Item README.md out/
+          Compress-Archive -Path out/* -DestinationPath DE-FEEDBACK-Windows-x64.zip -Force
+
+      - name: Upload plugin (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: DE-FEEDBACK-Windows-x64
-          path: |
-            build/DefeedbackPlugin_artefacts/Release/VST3
-            build/DefeedbackPlugin_artefacts/Release/Standalone/*.exe
+          path: DE-FEEDBACK-Windows-x64.zip
+
+      # Direct download without logging in:
+      # https://github.com/<owner>/<repo>/raw/defeedback-builds/DE-FEEDBACK-Windows-x64.zip
+      - name: Publish to the defeedback-builds branch
+        shell: bash
+        run: |
+          cp DE-FEEDBACK-Windows-x64.zip "$RUNNER_TEMP/"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan builds-tmp
+          git rm -rf --quiet .
+          git clean -fdxq
+          cp "$RUNNER_TEMP/DE-FEEDBACK-Windows-x64.zip" .
+          echo "DE-FEEDBACK build from ${GITHUB_SHA::7} ($(date -u +%Y-%m-%d))" > BUILD.txt
+          git add DE-FEEDBACK-Windows-x64.zip BUILD.txt
+          git commit --quiet -m "DE-FEEDBACK build ${GITHUB_SHA::7}"
+          git push --force origin HEAD:defeedback-builds
