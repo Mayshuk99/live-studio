@@ -147,8 +147,9 @@ engine/            native engine in Go (OBS-style): reads capture cards through 
                    feeds the stream / recording encoders; `go test ./...` runs its tests. preview.go makes the
                    cameras' pictures for the window's monitors (area-averaged, YUV 4:2:0; size set in Settings →
                    Video output → Cameras on the screen); renderer/engine.js turns them into colour (u_yuv).
-                   main.go takes sound straight off the command line and carries out everything else in order on
-                   its own thread, so a big picture being prepared never holds the sound up; audio.go keeps 0.4 s
+                   Sound has its own line to it (a local connection, opened by native-engine.js; main.go serveSound),
+                   and every other command is carried out in order on a thread of its own, so a big picture being
+                   sent or prepared never holds the sound up; audio.go keeps 0.4 s
                    of sound in reserve (the encoders delay the picture to match: SOUND_RESERVE_EXTRA_MS).
                    Pictures for it (slides, graphics) are made off the window's thread (natPix in renderer/app.js),
                    ahead of time; captions are drawn as just the band they cover (natBand)

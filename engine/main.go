@@ -13,11 +13,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -170,7 +172,9 @@ func main() {
 			}
 			eng = newEngine(m)
 			go eng.run()
-			send(Msg{"ev": "ready", "w": eng.W, "h": eng.H, "threads": runtime.NumCPU()}, nil)
+			soundEng.Store(eng)
+			soundKey.Store(m.str("soundKey"))
+			send(Msg{"ev": "ready", "w": eng.W, "h": eng.H, "threads": runtime.NumCPU(), "soundPort": soundLine()}, nil)
 			continue
 		}
 		if eng == nil {
@@ -186,6 +190,73 @@ func main() {
 			continue
 		}
 		work.add(eng, cmd, m, payload)
+	}
+}
+
+// Sound has a line of its own (a local connection), so it never queues up behind pictures on the command line:
+// 100 MB of graphics on that line held the sound back for half a second on a slow PC.
+var (
+	soundEng  atomic.Pointer[Engine]
+	soundKey  atomic.Value // string: what the program must say first on the sound line
+	soundOnce sync.Once
+	soundPort int
+)
+
+func soundLine() int {
+	soundOnce.Do(func() {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return
+		}
+		soundPort = ln.Addr().(*net.TCPAddr).Port
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go serveSound(c)
+			}
+		}()
+	})
+	return soundPort
+}
+
+func serveSound(c net.Conn) {
+	defer c.Close()
+	r := bufio.NewReaderSize(c, 256<<10)
+	known := false
+	for {
+		var pre [8]byte
+		if _, err := io.ReadFull(r, pre[:]); err != nil {
+			return
+		}
+		hl, pl := binary.LittleEndian.Uint32(pre[0:4]), binary.LittleEndian.Uint32(pre[4:8])
+		if hl > 4096 || pl > 4<<20 { // not ours
+			return
+		}
+		hb, payload := make([]byte, hl), make([]byte, pl)
+		if _, err := io.ReadFull(r, hb); err != nil {
+			return
+		}
+		if _, err := io.ReadFull(r, payload); err != nil {
+			return
+		}
+		var m Msg
+		if json.Unmarshal(hb, &m) != nil {
+			return
+		}
+		if !known {
+			key, _ := soundKey.Load().(string)
+			if m.str("cmd") != "sound-hello" || key == "" || m.str("key") != key {
+				return
+			}
+			known = true
+			continue
+		}
+		if e := soundEng.Load(); e != nil && m.str("cmd") == "audio" {
+			e.command("audio", m, payload)
+		}
 	}
 }
 

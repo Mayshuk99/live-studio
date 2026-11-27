@@ -112,7 +112,7 @@ ipcMain.handle('ndi:list', () => new Promise(resolve => {
     catch (x) { resolve({ error: err ? err.message : 'no answer from the NDI helper' }); }
   });
 }));
-ipcMain.on('native:audio', (e, rate, pcm) => { if (nat.backlog < 64 << 20) nat.send({ cmd: 'audio', rate, ch: 2 }, pcm); });
+ipcMain.on('native:audio', (e, rate, pcm) => { if (nat.soundRoom) nat.send({ cmd: 'audio', rate, ch: 2 }, pcm); });
 // the direct line from the window's sound thread (does not wait for the window when it is busy)
 ipcMain.on('native:audio-port', e => {
   const port = e.ports && e.ports[0];
@@ -122,7 +122,7 @@ ipcMain.on('native:audio-port', e => {
     const d = ev.data;
     if (!d || !d.pcm) return;
     if (first) { first = false; natSendEv({ ev: 'audio-port-ok' }); }
-    if (nat.backlog < 64 << 20) nat.send({ cmd: 'audio', rate: d.rate, ch: 2 }, d.pcm);
+    if (nat.soundRoom) nat.send({ cmd: 'audio', rate: d.rate, ch: 2 }, d.pcm);
   });
   port.start();
 });

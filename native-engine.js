@@ -4,6 +4,8 @@
  */
 'use strict';
 const { spawn } = require('child_process');
+const crypto = require('crypto');
+const net = require('net');
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
@@ -16,8 +18,17 @@ function enginePath(app) {
   return cands.find(p => { try { return fs.statSync(p).isFile(); } catch (e) { return false; } }) || null;
 }
 
+// one packet: 8 bytes (header length, payload length), the JSON header, the payload (Buffer / typed array / nothing)
+function frame(header, payload) {
+  const hb = Buffer.from(JSON.stringify(header));
+  const pb = payload ? Buffer.from(payload.buffer ? payload.buffer : payload, payload.byteOffset || 0, payload.byteLength !== undefined ? payload.byteLength : payload.length) : null;
+  const pre = Buffer.alloc(8);
+  pre.writeUInt32LE(hb.length, 0); pre.writeUInt32LE(pb ? pb.length : 0, 4);
+  return pb ? Buffer.concat([pre, hb, pb]) : Buffer.concat([pre, hb]);
+}
+
 class NativeEngine extends EventEmitter {
-  constructor() { super(); this.proc = null; this.pre = Buffer.alloc(0); this.pk = null; this.ready = false; this.queue = 0; }
+  constructor() { super(); this.proc = null; this.pre = Buffer.alloc(0); this.pk = null; this.ready = false; this.queue = 0; this.sound = null; this.soundWait = false; }
 
   start(exe, hello) {
     if (this.proc) return true;
@@ -28,9 +39,31 @@ class NativeEngine extends EventEmitter {
     p.stdout.on('data', d => this._data(d));
     p.stderr.on('data', d => { for (const l of String(d).split(/\r?\n/)) if (l.trim()) this.emit('msg', { ev: 'log', line: 'engine: ' + l.trim() }); });
     p.on('error', e => this.emit('msg', { ev: 'exit', code: -1, error: e.message }));
-    p.on('exit', (code) => { this.proc = null; this.ready = false; this.emit('msg', { ev: 'exit', code }); });
-    this.send(Object.assign({ cmd: 'hello' }, hello));
+    p.on('exit', (code) => { this.proc = null; this.ready = false; this.soundWait = false; if (this.sound) { this.sound.destroy(); this.sound = null; } this.emit('msg', { ev: 'exit', code }); });
+    this.soundKey = crypto.randomBytes(16).toString('hex');
+    this.send(Object.assign({ cmd: 'hello', soundKey: this.soundKey }, hello));
     return true;
+  }
+
+  /* Sound has its own line to the engine (a local connection): on the command line it would queue up behind
+     pictures — 100 MB of graphics held it back half a second on a slow PC, and the stream got a gap.
+     Until the line is open (a few ms after "ready") sound is not sent at all, so nothing can arrive out of order;
+     if it can't be opened, sound goes down the command line as before. */
+  _soundLine(port) {
+    const p = this.proc, s = net.connect({ port, host: '127.0.0.1' });
+    this.soundWait = true;
+    const give = () => { if (this.soundWait && this.proc === p && this.sound !== s) { this.soundWait = false; this.emit('msg', { ev: 'log', line: 'sound goes to the engine down the command line (its own line did not open)' }); } };
+    const t = setTimeout(() => { give(); if (this.sound !== s) s.destroy(); }, 2000);
+    s.setNoDelay(true);
+    s.on('connect', () => {
+      clearTimeout(t);
+      if (this.proc !== p) { s.destroy(); return; }
+      s.write(frame({ cmd: 'sound-hello', key: this.soundKey }));
+      this.sound = s; this.soundWait = false;
+      this.emit('msg', { ev: 'log', line: 'sound has its own line to the engine (it cannot wait behind pictures)' });
+    });
+    s.on('error', () => { clearTimeout(t); give(); });
+    s.on('close', () => { if (this.sound === s) this.sound = null; });
   }
 
   /* packets: 8 bytes (header length, payload length), the JSON header, the payload. A big picture arrives in many
@@ -53,7 +86,7 @@ class NativeEngine extends EventEmitter {
       let h;
       try { h = JSON.parse(pk.buf.toString('utf8', 0, pk.hl)); } catch (e) { h = { ev: 'bad' }; }
       const payload = pk.pl ? pk.buf.subarray(pk.hl) : null;
-      if (h.ev === 'ready') this.ready = true;
+      if (h.ev === 'ready') { this.ready = true; if (h.soundPort && !this.sound) this._soundLine(h.soundPort); }
       this.emit('msg', h, payload);
     }
   }
@@ -62,16 +95,18 @@ class NativeEngine extends EventEmitter {
   send(header, payload) {
     const p = this.proc;
     if (!p || !p.stdin.writable) return false;
-    const hb = Buffer.from(JSON.stringify(header));
-    const pb = payload ? Buffer.from(payload.buffer ? payload.buffer : payload, payload.byteOffset || 0, payload.byteLength !== undefined ? payload.byteLength : payload.length) : null;
-    const pre = Buffer.alloc(8);
-    pre.writeUInt32LE(hb.length, 0); pre.writeUInt32LE(pb ? pb.length : 0, 4);
-    p.stdin.write(pb ? Buffer.concat([pre, hb, pb]) : Buffer.concat([pre, hb]));
+    if (header.cmd === 'audio') {
+      if (this.soundWait) return true; // the sound line is just opening
+      if (this.sound && this.sound.writable) { this.sound.write(frame(header, payload)); return true; }
+    }
+    p.stdin.write(frame(header, payload));
     return true;
   }
 
   // how much is waiting to be written to the engine (to skip non-essential messages when it is behind)
   get backlog() { return this.proc ? this.proc.stdin.writableLength : 0; }
+  // may sound be sent? (not when far too much is already waiting: the engine has stopped reading)
+  get soundRoom() { return this.sound && this.sound.writable ? this.sound.writableLength < (8 << 20) : this.backlog < (64 << 20); }
 
   stop() {
     const p = this.proc;
