@@ -86,10 +86,13 @@ class NativeEngine extends EventEmitter {
 
 /* FFmpeg options for an encoder fed by the engine: sound from a local connection, picture from the pipe.
    The picture is delayed a little (videoDelayMs) because it arrives sooner than the sound. */
+/* the engine keeps 400 ms of sound waiting (engine/audio.go targetSec) instead of the 60 ms the "Sound/picture sync"
+   setting was tuned with, so window stalls no longer cut the sound: the picture waits the 340 ms more */
+const SOUND_RESERVE_EXTRA_MS = 340;
 function engineInput(o) {
   const fps = o.fps || 59.94;
   const rate = fps === 59.94 ? '60000/1001' : fps === 29.97 ? '30000/1001' : String(fps);
-  const d = Math.max(0, o.videoDelayMs === undefined ? 20 : o.videoDelayMs) / 1000;
+  const d = (Math.max(0, o.videoDelayMs === undefined ? 20 : o.videoDelayMs) + SOUND_RESERVE_EXTRA_MS) / 1000;
   return [
     // no probing: the formats are known, and probing would wait for sound before reading any picture
     '-thread_queue_size', '2048', '-probesize', '32', '-analyzeduration', '0', '-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'tcp://127.0.0.1:{AUDIOPORT}',
@@ -99,4 +102,4 @@ function engineInput(o) {
   ];
 }
 
-module.exports = { NativeEngine, enginePath, engineInput };
+module.exports = { NativeEngine, enginePath, engineInput, SOUND_RESERVE_EXTRA_MS };

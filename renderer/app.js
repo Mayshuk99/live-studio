@@ -625,21 +625,120 @@
   }
   function natNote(M, key, text) { if (!M.noted.has(key)) { M.noted.add(key); logEvent('NATIVE', text); } }
   const natCanvas = (() => { let c = null; return (w, h) => { if (!c) { const cv = document.createElement('canvas'); c = { cv, ctx: cv.getContext('2d', { willReadFrequently: true }) }; } if (c.cv.width !== w || c.cv.height !== h) { c.cv.width = w; c.cv.height = h; } return c; }; })();
-  // the pixels of a picture (straight alpha RGBA), at most 3840 wide
-  function natPixels(el2) {
-    const nw = el2.naturalWidth || el2.videoWidth || el2.width, nh = el2.naturalHeight || el2.videoHeight || el2.height;
+  const natFit = (nw, nh, maxW, maxH) => { const s = Math.min(1, maxW / nw, maxH / nh); return [Math.max(2, Math.round(nw * s)), Math.max(2, Math.round(nh * s))]; };
+  const natSize = el2 => [el2.naturalWidth || el2.videoWidth || el2.width || 0, el2.naturalHeight || el2.videoHeight || el2.height || 0];
+  // the pixels of a picture (straight alpha RGBA) made right here — only when the background way below can't be used
+  function natPixels(el2, maxW = 3840, maxH = 3840) {
+    const [nw, nh] = natSize(el2);
     if (!nw || !nh) return null;
-    const s = Math.min(1, 3840 / Math.max(nw, nh)), w = Math.max(2, Math.round(nw * s)), h = Math.max(2, Math.round(nh * s));
+    const [w, h] = natFit(nw, nh, maxW, maxH);
     const c = natCanvas(w, h); c.ctx.clearRect(0, 0, w, h); c.ctx.drawImage(el2, 0, 0, w, h);
-    return { w, h, px: new Uint8Array(c.ctx.getImageData(0, 0, w, h).data.buffer) };
+    return { w, h, px: new Uint8Array(c.ctx.getImageData(0, 0, w, h).data.buffer), how: 'here' };
   }
-  function natStill(M, id, so) {
-    const ver = so.ver || 0, prev = M.stills.get(id);
-    if (prev && prev.el === so.el && (prev.ver === ver || performance.now() - prev.at < 1000)) return; // a slide that redraws itself: at most once a second
-    const p = natPixels(so.el);
-    if (!p) return;
-    S.nativeSend({ cmd: 'still', id, w: p.w, h: p.h }, p.px);
-    M.stills.set(id, { el: so.el, ver, at: performance.now() });
+  // pictures for the engine without holding up this window (a big slide took 0.1–0.4 s here, the stream's sound and the buttons waited):
+  // a worker reads the file, the browser decodes and scales it on its own threads, and the worker hands back the pixels. One at a time.
+  const natPix = (() => {
+    let wk = null, seq = 0, chain = Promise.resolve();
+    const wait = new Map();
+    const code = `const read = async d => {
+        let bmp = d.bmp;
+        if (!bmp) {
+          let bl = d.blob;
+          if (!bl) { const r = await fetch(d.url); if (!r.ok) throw new Error('read ' + r.status); bl = await r.blob(); }
+          bmp = await createImageBitmap(bl, d.w && d.h ? { resizeWidth: d.w, resizeHeight: d.h, resizeQuality: 'high' } : {});
+        }
+        const c = new OffscreenCanvas(bmp.width, bmp.height), x = c.getContext('2d', { willReadFrequently: true });
+        x.drawImage(bmp, 0, 0); bmp.close();
+        return { w: c.width, h: c.height, data: x.getImageData(0, 0, c.width, c.height).data };
+      };
+      onmessage = e => { const d = e.data; read(d).then(r => postMessage({ id: d.id, w: r.w, h: r.h, buf: r.data.buffer }, [r.data.buffer]), err => postMessage({ id: d.id, err: String((err && err.message) || err) })); };`;
+    const worker = () => {
+      if (wk === null) {
+        try {
+          wk = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+          wk.onmessage = e => { const r = wait.get(e.data.id); if (r) { wait.delete(e.data.id); r(e.data); } };
+          wk.onerror = () => { wk = false; for (const r of wait.values()) r({ err: 'the worker stopped' }); wait.clear(); };
+        } catch (e) { wk = false; }
+      }
+      return wk;
+    };
+    const ask = (W, msg, tr) => new Promise(res => {
+      const id = ++seq, t = setTimeout(() => { if (wait.delete(id)) res({ err: 'no answer in 8 s' }); }, 8000);
+      wait.set(id, r => { clearTimeout(t); res(r); });
+      W.postMessage(Object.assign({ id }, msg), tr || []);
+    });
+    async function one(el2, maxW, maxH) {
+      const [nw, nh] = natSize(el2);
+      if (!nw || !nh) return null;
+      const [w, h] = natFit(nw, nh, maxW, maxH), W = worker();
+      if (W && typeof createImageBitmap === 'function') {
+        const url = el2.tagName === 'IMG' ? el2.currentSrc || el2.src : '', blob = pictureBlob.get(el2), same = w === nw && h === nh;
+        // a picture from a file: everything off this window's thread
+        if (blob || /^blob:/.test(url)) {
+          const r = await ask(W, { blob, url, w: same ? 0 : w, h: same ? 0 : h });
+          if (!r.err) return { w: r.w, h: r.h, px: new Uint8Array(r.buf), how: 'worker' };
+        }
+        // anything else (a drawn slide, the hold screen): a quick snapshot here, the slow part in the worker
+        try {
+          const bmp = await createImageBitmap(el2, w === nw && h === nh ? {} : { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
+          const r = await ask(W, { bmp }, [bmp]);
+          if (!r.err) return { w: r.w, h: r.h, px: new Uint8Array(r.buf), how: 'snapshot' };
+        } catch (e) { /* the old way below */ }
+      }
+      return natPixels(el2, maxW, maxH);
+    }
+    return (el2, maxW, maxH) => { const p = chain.then(() => one(el2, maxW, maxH)).catch(() => null); chain = p; return p; };
+  })();
+  // which version of a picture the engine has: a new picture element, or a drawn one (canvas) that was redrawn
+  const natElId = (() => { const m = new WeakMap(); let n = 0; return el2 => { let v = m.get(el2); if (!v) { v = ++n; m.set(el2, v); } return v; }; })();
+  const natVer = so => natElId(so.el) + (/^(IMG|VIDEO)$/.test(so.el.tagName || '') ? '' : ':' + (so.ver || 0));
+  const natLoaded = el2 => el2.tagName === 'IMG' ? !!(el2.complete && el2.naturalWidth) : el2.tagName === 'VIDEO' ? el2.readyState >= 2 : !!(el2.width && el2.height);
+  const natName = id => { const f = fileById(id), sh = f ? null : show.shots.find(x => x.main && x.main.source === id); return f ? f.name || id : sh ? sh.name || id : id; };
+  const natHow = p => p.how === 'here' ? 'in this window' : p.how === 'snapshot' ? 'in the background (from a snapshot)' : 'in the background';
+  // how far a shot zooms into this picture (more pixels kept for that, up to 2× the program size)
+  function natZoom(id) {
+    let z = 1;
+    for (const sh of show.shots) {
+      if (sh.main && sh.main.source === id) z = Math.max(z, (sh.main.frame && sh.main.frame.zoom) || 1);
+      if (sh.pip && sh.pip.source === id) z = Math.max(z, (sh.pip.frame && sh.pip.frame.zoom) || 1);
+    }
+    return Math.min(2, z);
+  }
+  // a picture used as a shot. It is made in the background the first time (usually already while the shot sits in Preview);
+  // false only while that first picture is still being made (a take waits for it, at most 1.5 s)
+  function natStill(M, id, so, ahead) {
+    const ver = natVer(so), now = performance.now();
+    let st = M.stills.get(id);
+    if (!st) { st = { ok: false }; M.stills.set(id, st); }
+    const wait = () => st.ok || now - st.since > 1500;
+    if (st.busy) return wait();                                           // being made
+    if (st.ver === ver) return true;                                      // up to date
+    if (ahead && st.ok && st.el === so.el) return true;                   // not on air: a drawn slide (the holding screen's clock) is brought up to date when it is
+    if (st.ok && st.el === so.el && now - st.at < 1000) return true;      // a slide that redraws itself: at most once a second
+    if (!natLoaded(so.el)) return true;
+    st.busy = ver; st.since = now;
+    const z = natZoom(id), el2 = so.el;
+    natPix(el2, natW() * z, natH() * z).then(p => {
+      st.busy = null;
+      if (NAT.M !== M || M.stills.get(id) !== st) return;
+      st.ver = ver; st.el = el2; st.at = performance.now();
+      if (!p) return; // nothing to show (it keeps what it had)
+      S.nativeSend({ cmd: 'still', id, w: p.w, h: p.h }, p.px);
+      st.ok = true;
+      natNote(M, 'still' + id, `picture “${natName(id)}” is in the native engine: ${p.w}×${p.h}, made ${natHow(p)} (${Math.round(st.at - now)} ms)`);
+    });
+    return st.ok;
+  }
+  // the pictures of every shot go to the engine ahead of time (in the background, one after another), so taking a slide is instant
+  function natPrepare(M) {
+    let n = 0;
+    for (const sh of show.shots) {
+      const g = window.LiveEngine.greenOf(sh);
+      for (const src of [sh.main && sh.main.source, sh.pip && sh.pip.enabled && sh.pip.source, g && g.bg]) {
+        const so = src && !camById(src) && engine.sources.get(src);
+        if (so && so.el && so.kind === 'image' && n++ < 48) natStill(M, src, so, true);
+      }
+    }
   }
   // the engine's name for one of this window's sources (sent to it the first time)
   function natSource(M, src) {
@@ -660,25 +759,28 @@
       return src;
     }
     const so = engine.sources.get(src);
-    if (so && so.el && so.kind === 'image') { natStill(M, src, so); return src; }
+    if (so && so.el && so.kind === 'image') return natStill(M, src, so) ? src : false; // false: being made, a moment
     return null;
   }
   function natBase(M, id) {
     const sh = id ? getShot(id) : null;
     if (!sh || !sh.main || !sh.main.source) return null;
     const src = natSource(M, sh.main.source);
+    if (src === false) return false;
     if (!src) { natNote(M, 'src' + sh.id, `“${sh.name}”: its picture is not in the native engine yet`); return null; }
     const fr = sh.main.frame || {};
     const b = { key: sh.id, src, zoom: fr.zoom || 1, x: fr.x ?? 0.5, y: fr.y ?? 0.5 };
     const g = window.LiveEngine.greenOf(sh);
     if (g) {
       const bg = natSource(M, g.bg);
+      if (bg === false) return false;
       if (!bg && g.bg) natNote(M, 'gbg' + sh.id, `“${sh.name}”: the green screen background is not in the native engine yet — black for now`);
       b.green = { cb: +g.cb.toFixed(4), cr: +g.cr.toFixed(4), sim: +g.sim.toFixed(4), smooth: +g.smooth.toFixed(4), spill: +g.spill.toFixed(4), bg: bg ? { src: bg } : null };
     }
     const p = sh.pip;
     if (p && p.enabled && p.source) {
       const ps = natSource(M, p.source);
+      if (ps === false) return false;
       if (ps) {
         const r = window.LiveEngine.pipRect(p, engine.W, engine.H), pf = p.frame || {};
         b.pip = { key: sh.id + ':p', src: ps, zoom: pf.zoom || 1, x: pf.x ?? 0.5, y: pf.y ?? 0.5, rect: r.map(v => +v.toFixed(4)), border: p.border !== false };
@@ -686,38 +788,47 @@
     }
     return b;
   }
-  // the rows a caption covers (worked out once per caption, from its final look)
+  // the rows a caption covers, worked out from its layout (no drawing, no reading back): its box with room for the animations
+  const natMeasure = (() => { let c = null; return () => c || (c = document.createElement('canvas').getContext('2d')); })();
   function natBand(M, L) {
     const key = L.key || '';
     if (M.bands.has(key)) return M.bands.get(key);
-    const W = engine.W, H = engine.H, c = natCanvas(W, H);
-    c.ctx.setTransform(1, 0, 0, 1, 0, 0); c.ctx.clearRect(0, 0, W, H);
-    window.LiveEngine.drawLabel(c.ctx, W, H, L.data, 1, false);
-    const a = c.ctx.getImageData(0, 0, W, H).data;
-    let y0 = -1, y1 = -1;
-    for (let y = 0; y < H; y++) { const row = y * W * 4; for (let x = 3; x < W * 4; x += 8) if (a[row + x]) { if (y0 < 0) y0 = y; y1 = y; break; } }
+    const H = engine.H, lay = L.data ? window.LiveEngine.labelLayout(natMeasure(), engine.W, H, L.data) : null;
     let band = null;
-    if (y0 >= 0) { const m = Math.round(H * 0.03) + 16, t = Math.max(0, y0 - m) & ~1, b = Math.min(H, y1 + 1 + m); band = { y: t, h: Math.min(H - t, b - t + 1) & ~1 }; }
+    if (lay && lay.block) {
+      // (the layout's block already has 40 px of room around the caption's box)
+      // (centred captions that slide in come up from below: room for that too)
+      const a = (lay.D && lay.D.anim) || 'fade', up = lay.align === 'c' ? Math.ceil((a === 'stagger' ? 0.07 : a === 'slide' ? 0.042 : 0) * H) : 0;
+      const m = Math.round(H * 0.015), t = Math.max(0, Math.floor(lay.block.y) - m) & ~1, e = Math.min(H, Math.ceil(lay.block.y + lay.block.h) + m + up);
+      if (e - t >= 2) band = { y: t, h: Math.min(H - t, e - t + 1) & ~1 };
+    }
     M.bands.set(key, band);
     return band;
   }
+  // captions for the engine are drawn again on a canvas of just that band, kept in memory (reading the window's own caption canvas
+  // back from the graphics card made the window wait at every step, and made Chrome move that canvas off the graphics card)
+  const natLabelCanvas = (() => { let c = null; return (w, h) => { if (!c) { const cv = document.createElement('canvas'); c = { cv, ctx: cv.getContext('2d', { willReadFrequently: true }) }; } if (c.cv.width !== w || c.cv.height !== h) { c.cv.width = w; c.cv.height = h; } return c; }; })();
   // every frame of this window: tell the engine what changed
   function natFrame(now) {
     const M = NAT.M;
     if (!NAT.ready || !M) return;
     const W = natW(), H = natH();
     // program
+    // (a picture that is still being made for the engine holds the take back a moment: natBase gives false)
     const tr = engine.trans;
     if (tr && tr !== M.trans) {
-      M.trans = tr;
       const b = natBase(M, tr.to);
-      S.nativeSend({ cmd: 'program', base: b, ms: Math.max(1, tr.dur - (now - tr.start)) });
-      M.pid = tr.to; M.sig = JSON.stringify(b);
+      if (b !== false) {
+        M.trans = tr;
+        S.nativeSend({ cmd: 'program', base: b, ms: Math.max(1, tr.dur - (now - tr.start)) });
+        M.pid = tr.to; M.sig = JSON.stringify(b);
+      }
     } else if (!tr) {
       M.trans = null;
       const b = natBase(M, engine.programId), sig = JSON.stringify(b);
-      if (engine.programId !== M.pid || sig !== M.sig) { S.nativeSend({ cmd: 'program', base: b, ms: 0 }); M.pid = engine.programId; M.sig = sig; }
+      if (b !== false && (engine.programId !== M.pid || sig !== M.sig)) { S.nativeSend({ cmd: 'program', base: b, ms: 0 }); M.pid = engine.programId; M.sig = sig; }
     }
+    if (!(M.tick = ((M.tick || 0) + 1) % 20)) natPrepare(M); // a few times a second
     if (engine.black !== M.black) { M.black = engine.black; S.nativeSend({ cmd: 'black', on: engine.black.to === 1, ms: engine.black.dur }); }
     // graphics: web pages (pictures come from the page itself) and pictures (sent once)
     let k = 0; const seen = new Set();
@@ -729,14 +840,24 @@
       const sig = JSON.stringify(cfg), prev = M.webs.get(id) || {};
       const so = engine.sources.get(d.src || id);
       if (so && so.kind === 'raw') { if (prev.sig !== sig) { S.nativeWeb(id, cfg); M.webs.set(id, { sig, raw: true }); } continue; }
-      if (!so || !so.el || !so.ready) continue; // not loaded yet
-      const pver = (d.src || id) + ':' + (so.ver || 0);
-      if (prev.pver !== pver) {
-        const p = natPixels(so.el);
-        if (!p) continue;
-        S.nativeSend(Object.assign({ cmd: 'overlay', id: 'pic:' + id, sw: p.w, sh: p.h, premult: false }, cfg), p.px);
-        M.webs.set(id, { sig, pver });
-      } else if (prev.sig !== sig) { S.nativeSend(Object.assign({ cmd: 'overlay-set', id: 'pic:' + id }, cfg)); M.webs.set(id, { sig, pver }); }
+      if (!so || !so.el || !natLoaded(so.el)) continue; // not loaded yet
+      // a picture: made in the background as soon as it is loaded (not when it is first switched on), sent once
+      const pver = (d.src || id) + ':' + natVer(so), cur = prev.raw ? {} : prev;
+      cur.cfg = cfg; M.webs.set(id, cur);
+      if (cur.pver !== pver && cur.busy !== pver) {
+        cur.busy = pver;
+        const t0 = performance.now();
+        natPix(so.el, W, H).then(p => {
+          if (NAT.M !== M || M.webs.get(id) !== cur || cur.busy !== pver) return;
+          cur.busy = null; cur.pver = pver;
+          if (!p) return;
+          S.nativeSend(Object.assign({ cmd: 'overlay', id: 'pic:' + id, sw: p.w, sh: p.h, premult: false }, cur.cfg), p.px);
+          cur.sig = JSON.stringify(cur.cfg); cur.sent = true;
+          const x = show.pics.find(q => q.id === id);
+          natNote(M, 'pic' + id, `graphic “${(x && x.name) || natName(d.src || id)}” is in the native engine: ${p.w}×${p.h}, made ${natHow(p)} (${Math.round(performance.now() - t0)} ms)`);
+        });
+      }
+      if (cur.sent && cur.sig !== sig) { S.nativeSend(Object.assign({ cmd: 'overlay-set', id: 'pic:' + id }, cfg)); cur.sig = sig; }
     }
     for (const [id, v] of M.webs) if (!seen.has(id)) { M.webs.delete(id); if (v.raw) S.nativeWeb(id, null); else S.nativeSend({ cmd: 'overlay-remove', id: 'pic:' + id }); }
     // captions: every step of their animation (about 30 a second), then nothing while they stay up
@@ -749,7 +870,9 @@
       if (!L.shown.startsWith('full') && prev && now - prev.at < 30) continue;
       const band = natBand(M, L);
       if (!band || band.h < 2) continue;
-      const px = L.ctx.getImageData(0, band.y, engine.W, band.h).data, k = H / engine.H; // (drawn at ≤1080p; 4K / 1440p: scaled up by the engine)
+      const c = natLabelCanvas(engine.W, band.h), full = L.shown.startsWith('full');
+      window.LiveEngine.drawLabel(c.ctx, engine.W, engine.H, L.data, full ? 1 : +L.shown.slice(1), !full && L.shown[0] === 'o', band.y);
+      const px = c.ctx.getImageData(0, 0, engine.W, band.h).data, k = H / engine.H; // (drawn at ≤1080p; 4K / 1440p: scaled up by the engine)
       S.nativeSend({ cmd: 'overlay', id: 'lbl:' + id, z: 1000 + li, sw: engine.W, sh: band.h, x: 0, y: Math.round(band.y * k) & ~1, w: W, h: Math.round(band.h * k) & ~1, premult: false, alpha: 1, fadeMs: 0 }, new Uint8Array(px.buffer));
       M.labels.set(id, { state, at: now });
     }
@@ -757,18 +880,24 @@
   }
 
   /* ================= files (intro / ending / clips / images) ================= */
+  // the bytes behind a picture, so the native engine's pictures can be decoded off this window's thread (natPix)
+  const mediaBlobs = new Map(), pictureBlob = new WeakMap();
+  const keepBlob = (img, url) => { const bl = mediaBlobs.get(url); if (bl) pictureBlob.set(img, bl); return img; };
+  const freeURL = url => { mediaBlobs.delete(url); URL.revokeObjectURL(url); };
   async function urlForFile(f) {
     if (S.readMedia) {
       const bytes = await S.readMedia(f.path);
       const ext = (f.path.split('.').pop() || '').toLowerCase();
       const types = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', bmp: 'image/bmp', avif: 'image/avif', webp: 'image/webp', gif: 'image/gif' };
-      return URL.createObjectURL(new Blob([bytes], { type: types[ext] || '' }));
+      const bl = new Blob([bytes], { type: types[ext] || '' }), u = URL.createObjectURL(bl);
+      mediaBlobs.set(u, bl);
+      return u;
     }
     return S.mediaURL(f.path);
   }
   function unloadFile(id) {
     const m = rt.files.get(id);
-    if (m && m.el) { try { m.el.pause(); } catch (e) { /* */ } m.el.remove(); if (m.url && m.url.startsWith('blob:') && S.isApp) URL.revokeObjectURL(m.url); }
+    if (m && m.el) { try { m.el.pause(); } catch (e) { /* */ } m.el.remove(); if (m.url && m.url.startsWith('blob:') && S.isApp) freeURL(m.url); }
     mixer.detachMedia(id);
     engine.removeSource(id);
     rt.files.delete(id);
@@ -789,7 +918,7 @@
         rt.files.set(f.id, { ok: true, el: img, url: null, text: deckText(f) });
         deckPreload(f);
       } else if (f.kind === 'image') {
-        const img = new Image(); img.src = url; await img.decode();
+        const img = new Image(); img.src = url; await img.decode(); keepBlob(img, url);
         engine.setSource(f.id, img, 'image');
         rt.files.set(f.id, { ok: true, el: img, url, text: `${img.naturalWidth}×${img.naturalHeight}` });
       } else if (f.kind === 'audio') {
@@ -861,7 +990,7 @@
     if (f.textPages) src = textSlide(f.textPages[i]);
     else {
       const url = await urlForFile({ path: f.pages[i] });
-      const img = new Image(); img.src = url; await img.decode();
+      const img = new Image(); img.src = url; await img.decode(); keepBlob(img, url);
       if (Math.abs(img.naturalWidth / img.naturalHeight - 16 / 9) < 0.02) src = img;
       else {
         const c = document.createElement('canvas'); c.width = 1920; c.height = 1080;
@@ -869,7 +998,7 @@
         g.fillStyle = '#000'; g.fillRect(0, 0, 1920, 1080); g.drawImage(img, (1920 - w) / 2, (1080 - h) / 2, w, h);
         src = c;
       }
-      if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+      if (url && url.startsWith('blob:')) freeURL(url);
     }
     D.cache.set(i, src);
     // keep a few slides around the current one, no more

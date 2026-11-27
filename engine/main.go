@@ -148,10 +148,15 @@ func main() {
 	}
 	in := bufio.NewReaderSize(os.Stdin, 4<<20)
 	var eng *Engine
+	// Sound is taken straight off the line; every other command is carried out in order on its own thread.
+	// (A big picture — a slide, a graphic — takes 50–200 ms to prepare; done on this thread, the sound queued up
+	// behind it waited that long and the stream got a gap.)
+	work := newWorkQueue()
 	for {
 		m, payload, err := readMsg(in)
 		if err != nil {
 			// Live Studio closed: stop everything cleanly (encoders finish their files)
+			work.wait()
 			if eng != nil {
 				eng.shutdown()
 			}
@@ -159,6 +164,7 @@ func main() {
 		}
 		cmd := m.str("cmd")
 		if cmd == "hello" {
+			work.wait()
 			if eng != nil {
 				eng.shutdown()
 			}
@@ -171,12 +177,49 @@ func main() {
 			continue
 		}
 		if cmd == "quit" {
+			work.wait()
 			eng.shutdown()
 			return
 		}
-		eng.command(cmd, m, payload)
+		if cmd == "audio" {
+			eng.command(cmd, m, payload)
+			continue
+		}
+		work.add(eng, cmd, m, payload)
 	}
 }
+
+// commands in the order they came, one at a time, off the thread that reads the line
+type workItem struct {
+	e       *Engine
+	cmd     string
+	m       Msg
+	payload []byte
+}
+
+type workQueue struct {
+	ch chan workItem
+	wg sync.WaitGroup
+}
+
+func newWorkQueue() *workQueue {
+	q := &workQueue{ch: make(chan workItem, 512)}
+	go func() {
+		for it := range q.ch {
+			it.e.command(it.cmd, it.m, it.payload)
+			q.wg.Done()
+		}
+	}()
+	return q
+}
+
+func (q *workQueue) add(e *Engine, cmd string, m Msg, payload []byte) {
+	q.wg.Add(1)
+	q.ch <- workItem{e, cmd, m, payload}
+}
+
+// until everything handed over so far is done
+func (q *workQueue) wait() { q.wg.Wait() }
 
 // for messages that should not flood the log
 type rateLog struct {

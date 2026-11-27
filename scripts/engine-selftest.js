@@ -45,6 +45,11 @@ let vidPos = 0;
 let vidRep = 0, vidPid = 0, camPid = 0;
 e.on('msg', h => { if (h.ev === 'stats' && h.videos && h.videos.v1) { vidPos = Math.max(vidPos, h.videos.v1.pos || 0); if (h.videos.v1.playing && vidPos > 0.5 && vidPos < 3.5) vidRep += h.videos.v1.repeats || 0; vidPid = vidPid || h.videos.v1.pid; } if (h.ev === 'stats' && h.cams && h.cams.A) camPid = camPid || h.cams.A.pid; });
 at(6.5, () => { e.send({ cmd: 'video', id: 'v1', path: vid, name: 'Test clip', loop: false }); e.send({ cmd: 'video-state', id: 'v1', playing: true, t: 0 }); e.send({ cmd: 'program', base: { src: 'v1' }, ms: 0 }); });
+// big graphics while the sound runs (three 4K pictures at once, as when a slide and two graphics are prepared): the sound must not gap.
+// The engine prepares pictures on its own thread and takes sound straight off the line (engine/main.go), with 0.4 s of sound in reserve.
+let gaps = 0, gapsBig = 0, bigOn = false, bigGot = 0;
+e.on('msg', h => { if (h.ev === 'stats') { gaps += h.audioUnder || 0; if (bigOn) gapsBig += h.audioUnder || 0; } });
+at(8.5, () => { bigOn = true; const big = new Uint8Array(3840 * 2160 * 4); for (let i = 0; i < big.length; i += 4) { big[i] = i & 255; big[i + 3] = 255; } for (const id of ['b1', 'b2', 'b3']) e.send({ cmd: 'overlay', id, sw: 3840, sh: 2160, x: 0, y: 0, w: W, h: H, premult: false, visible: false, fadeMs: 200, z: 5 }, big); e.send({ cmd: 'still', id: 'last', w: 64, h: 36 }, new Uint8Array(64 * 36 * 4)); bigGot = Date.now(); });
 at(12, async () => {
   clearInterval(aud);
   await e.stop();
@@ -61,6 +66,8 @@ at(12, async () => {
   if (!/each picture shown twice/.test(vidLine)) fail('a 30 fps video in a 59.94 program should come at half the rate');
   if (!vidPid || !camPid) fail('the engine did not report its processes');
   if (pv < 100 || pvBad || pvFlat > pv / 10) fail(`camera pictures for the window: ${pv} good, ${pvBad} wrong, ${pvFlat} flat`);
+  console.log(`sound: ${gaps} gaps in all, ${gapsBig} while three 4K graphics were prepared`);
+  if (gapsBig) fail(`the sound had ${gapsBig} gap(s) while big graphics were prepared`);
   if (!exited || exited.code !== 0) fail('recording did not finish cleanly');
   if (size < 20000) fail(`recording too small (${size} bytes)`);
   console.log(`OK   native engine (recording ${size} bytes)`);

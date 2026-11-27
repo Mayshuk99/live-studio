@@ -11,7 +11,12 @@ Program sound from Live Studio's window (the mixer + limiter), at the sound card
 
 	exactly the samples that belong to each output frame (48 kHz), so sound and picture can never drift apart.
 	The small difference between the sound card's clock and the cameras' is absorbed by a gentle resampler that
-	keeps the waiting sound near 60 ms.
+	keeps the waiting sound near 400 ms.
+
+	Why so much: the sound comes from the window, and the window can stall (a title appearing, a slide being drawn:
+	60–400 ms in the 26 Nov logs). With 60 ms waiting every such stall was a gap in the stream's sound. Nobody hears
+	this delay — it only goes to the encoders — and Live Studio delays the picture by the same amount (the encoders'
+	-itsoffset, native-engine.js SOUND_RESERVE_EXTRA_MS), so lips and words stay together.
 */
 type Audio struct {
 	mu      sync.Mutex
@@ -28,8 +33,8 @@ type Audio struct {
 }
 
 const outRate = 48000.0
-const targetSec = 0.06
-const maxSec = 0.16
+const targetSec = 0.40 // keep in step with SOUND_RESERVE_EXTRA_MS in native-engine.js (= 400 − 60)
+const maxSec = 1.20
 
 func newAudio() *Audio { return &Audio{inRate: 48000} }
 

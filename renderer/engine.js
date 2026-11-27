@@ -1133,9 +1133,11 @@
     ctx.fill();
   }
   /* draw a label; prog 0..1 is how far its entrance has got (or, with out = true, how much of it is left while leaving) */
-  function drawLabel(ctx, W, H, d, prog = 1, out = false) {
+  // oy: the canvas holds only the rows from oy down (the native engine gets just the band a caption covers)
+  function drawLabel(ctx, W, H, d, prog = 1, out = false, oy = 0) {
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.filter = 'none'; ctx.letterSpacing = '0px';
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0, 0, Math.max(W, ctx.canvas.width), Math.max(H, ctx.canvas.height));
+    if (oy) ctx.setTransform(1, 0, 0, 1, 0, -oy);
     if (!d) return;
     const p = clamp01(prog);
     if (p <= 0) return;
@@ -1145,7 +1147,7 @@
     if (out && (L.D.animOut === 'fade' || style === 'type')) style = 'fade';
     if (p >= 1) style = 'none';
     ctx.save();
-    if (L.D.skew) { const t = Math.tan(L.D.skew * Math.PI / 180); ctx.setTransform(1, 0, -t, 1, t * L.base, 0); }
+    if (L.D.skew) { const t = Math.tan(L.D.skew * Math.PI / 180); ctx.setTransform(1, 0, -t, 1, t * L.base, -oy); }
     let gA = 1;
     if (style === 'pop') { const s = 0.72 + 0.28 * back(p); ctx.translate(L.cx, L.cy); ctx.scale(s, s); ctx.translate(-L.cx, -L.cy); gA = seg(p, 0, 0.3); }
     else if (style === 'blur') { const e = out3(p), s = 1.05 - 0.05 * e; ctx.translate(L.cx, L.cy); ctx.scale(s, s); ctx.translate(-L.cx, -L.cy); ctx.filter = `blur(${((1 - e) * 14 * L.k).toFixed(2)}px)`; gA = e; }
@@ -1194,5 +1196,5 @@
     return c;
   }
 
-  window.LiveEngine = { Engine, makeBars, keyCbCr, greenOf, GREEN_DEF, pipRect, NEUTRAL, LABEL_PRESETS, LABEL_STYLES, LABEL_ANIMS, labelDesign, labelAnimMs, drawLabel };
+  window.LiveEngine = { Engine, makeBars, keyCbCr, greenOf, GREEN_DEF, pipRect, NEUTRAL, LABEL_PRESETS, LABEL_STYLES, LABEL_ANIMS, labelDesign, labelAnimMs, drawLabel, labelLayout };
 })();

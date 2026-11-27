@@ -107,7 +107,7 @@
         L.cbs.forEach(cb => cb({ ev: 'stats', ticks: 60, late: 0, repeat: 0, skip: 0, clock: '', phaseMs: 0, renderMs: 0.4, renderMaxMs: 1, cams: {}, videos: {}, outputs: {}, audioMs: 60, audioUnder: 0, audioOver: 0, audioPpm: 12 })); }, 1000);
       return { ok: true }; },
     nativeStop: async () => { const L = window.__nat; if (L) clearInterval(L.timer); return true; },
-    nativeSend: (h, payload) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push(Object.assign({}, h, payload ? { bytes: payload.byteLength } : {})); if (h.cmd === 'camera-close') L.sent.filter(m => m.cmd === 'camera' && m.id === h.id).forEach(m => { m.closed = true; }); },
+    nativeSend: (h, payload) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push(Object.assign({}, h, payload ? { bytes: payload.byteLength } : {}, payload && window.__natKeep && window.__natKeep(h) ? { px: payload } : {})); /* (a test can keep the pixels: window.__natKeep = h => …) */ if (h.cmd === 'camera-close') L.sent.filter(m => m.cmd === 'camera' && m.id === h.id).forEach(m => { m.closed = true; }); },
     ndiList: async () => { await new Promise(r => setTimeout(r, 300)); return { sources: [{ name: 'CHURCH-PC (ProPresenter)', url: '192.168.1.20:5961' }, { name: 'IPHONE (NDI HX Camera)', url: '192.168.1.31:5962' }], version: 'NDI SDK (browser stand-in)' }; },
     nativeCamera: (id, dev) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push({ cmd: 'camera', id, dev }); setTimeout(() => L.cbs.forEach(cb => cb({ ev: 'cam-status', id, ok: true, text: 'Running' })), 100); },
     nativeAudio: (rate, pcm) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.audio = (L.audio || 0) + pcm.length; },
