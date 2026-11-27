@@ -5663,6 +5663,8 @@
         E.used = true;
         const drops = Object.values(E.outputs || {}).reduce((a, o2) => a + (o2.dropped || 0), 0), dropNew = drops - (prev.natDrops || 0); prev.natDrops = drops;
         line += ` | native ${E.ticks}f rep ${E.repeat} skip ${E.skip}${E.late ? ` late ${E.late} (${E.maxLateMs}ms)` : ''}${E.resync ? ' STALL' : ''} mix ${E.renderMs}/${E.renderMaxMs}ms sound ${E.audioMs}ms ${E.audioPpm}ppm${E.audioUnder ? ` GAP ${E.audioUnder}` : ''}${dropNew > 0 ? ` enc-drop ${dropNew}` : ''}`;
+        // (encoded inside the engine: how long the card takes per picture, slowest output)
+        const encMs = Math.max(0, ...Object.values(E.outputs || {}).filter(o2 => o2.enc).map(o2 => o2.encMs || 0)); if (encMs > 0) line += ` nvenc ${encMs}ms`;
         for (const [id, c] of Object.entries(E.cams || {})) line += ` ${camName(id)} ${c.ok ? `${c.fps} (uneven ${c.jitMs ?? '?'}ms${c.late ? `, ${c.late} too late` : ''})` : 'NO SIGNAL'}`;
         for (const [id, v] of Object.entries(E.videos || {})) if (v.playing && v.repeats) line += ` video-rep ${v.repeats}`;
         if (E.repeat || E.skip) flags.push('native'); if (E.late || E.resync) flags.push('late'); if (E.audioUnder) flags.push('sound'); if (dropNew > 0) flags.push('enc');
