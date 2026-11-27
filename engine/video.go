@@ -132,7 +132,7 @@ func (v *Video) decode(gen int, t float64) {
 	ch := v.next
 	v.mu.Unlock()
 	var infoMu sync.Mutex
-	var codec, hw string
+	var codec, hw, hwFail string
 	var errs []string
 	errDone := make(chan struct{})
 	go func() {
@@ -151,6 +151,15 @@ func (v *Video) decode(gen int, t float64) {
 				}
 			} else if m := reVidHW.FindStringSubmatch(l); m != nil {
 				hw = m[1]
+			} else if strings.Contains(l, "Failed setup for format") || strings.Contains(l, "hwaccel initialisation returned error") ||
+				(strings.Contains(l, "AVHWFramesContext") && strings.Contains(l, "rror")) {
+				// the graphics card took it on but could not: FFmpeg goes on with the processor
+				if hwFail == "" {
+					hwFail = l
+					if i := strings.Index(l, "] "); i >= 0 {
+						hwFail = l[i+2:]
+					}
+				}
 			} else if strings.Contains(l, "Device creation") || strings.Contains(l, "AVHWDeviceContext") || strings.Contains(l, "hwaccel") ||
 				strings.Contains(l, "packets read") || strings.Contains(l, "frames decoded") || strings.Contains(l, "packets muxed") || strings.Contains(l, "frames encoded") {
 				// trying the graphics card's decoders one by one: not worth a line in the log
@@ -181,10 +190,12 @@ func (v *Video) decode(gen int, t float64) {
 		if frames++; frames == 1 {
 			time.AfterFunc(700*time.Millisecond, func() { // (FFmpeg's own lines may still be on their way)
 				infoMu.Lock()
-				c, h := codec, hw
+				c, h, hf := codec, hw, hwFail
 				infoMu.Unlock()
 				how := "decoded by the processor"
-				if h != "" {
+				if h != "" && hf != "" {
+					how = "decoded by the processor (the graphics card, " + h + ", could not: " + hf + ")"
+				} else if h != "" {
 					how = "decoded on the graphics card (" + h + ")"
 				} else if !soft {
 					how = "decoded by the processor (the graphics card can't decode this one)"
