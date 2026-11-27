@@ -3,6 +3,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -37,4 +38,15 @@ func procAttr(cmd *exec.Cmd, level int) {
 		flags |= belowNormalPriorityClass
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: flags}
+}
+
+// a pipe with a big buffer (Go's own has the system's small default): whole pictures go through without the two
+// processes waiting on each other every few kilobytes — five 1080p60 streams of raw pictures run between the
+// engine, the cameras, the video files and the encoders
+func bigPipe() (r, w *os.File, err error) {
+	var rh, wh syscall.Handle
+	if err := syscall.CreatePipe(&rh, &wh, nil, 8<<20); err != nil {
+		return os.Pipe()
+	}
+	return os.NewFile(uintptr(rh), "|0"), os.NewFile(uintptr(wh), "|1"), nil
 }

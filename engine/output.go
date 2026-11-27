@@ -64,14 +64,24 @@ func (e *Engine) startOutput(id string, args []string, src, group string, gsize,
 	}
 	cmd := exec.Command(e.ffmpeg, a...)
 	procAttr(cmd, prio)
-	stdin, err1 := cmd.StdinPipe()
+	pr, stdin, err1 := bigPipe()
+	if err1 == nil {
+		cmd.Stdin = pr
+	}
 	errp, err2 := cmd.StderrPipe()
 	if err1 != nil || err2 != nil {
+		if err1 == nil {
+			pr.Close()
+			stdin.Close()
+		}
 		ln.Close()
 		send(Msg{"ev": "out-exit", "id": id, "code": -1, "error": "pipe error"}, nil)
 		return
 	}
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	pr.Close() // (the encoder has its own copy)
+	if err != nil {
+		stdin.Close()
 		ln.Close()
 		send(Msg{"ev": "out-exit", "id": id, "code": -1, "error": "Encoder could not start: " + err.Error()}, nil)
 		return

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"math"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -911,12 +912,12 @@ func (e *Engine) sendStats() {
 	for id, c := range e.cams {
 		c.secondTick()
 		c.mu.Lock()
-		cams[id] = Msg{"fps": c.fps, "ok": c.ok, "jitMs": float64(c.jit.Microseconds()) / 1000, "late": c.tooLate, "comb": math.Round(c.comb*10) / 10, "dark": c.dark}
+		cams[id] = Msg{"fps": c.fps, "ok": c.ok, "jitMs": float64(c.jit.Microseconds()) / 1000, "late": c.tooLate, "comb": math.Round(c.comb*10) / 10, "dark": c.dark, "pid": pidOf(c.cmd)}
 		c.mu.Unlock()
 	}
 	for id, v := range e.videos {
 		v.mu.Lock()
-		vids[id] = Msg{"playing": v.playing, "pos": math.Round(v.pos*100) / 100, "repeats": v.repeats, "ended": v.ended}
+		vids[id] = Msg{"playing": v.playing, "pos": math.Round(v.pos*100) / 100, "repeats": v.repeats, "ended": v.ended, "pid": pidOf(v.cmd)}
 		v.repeats = 0
 		v.mu.Unlock()
 	}
@@ -969,4 +970,12 @@ func (e *Engine) shutdown() {
 	}
 	e.mu.Unlock()
 	time.Sleep(200 * time.Millisecond)
+}
+
+// a child process's id (for the log's processor shares), 0 if it isn't running
+func pidOf(cmd *exec.Cmd) int {
+	if cmd == nil || cmd.Process == nil {
+		return 0
+	}
+	return cmd.Process.Pid
 }

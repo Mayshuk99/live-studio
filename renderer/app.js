@@ -1923,8 +1923,8 @@
      Chrome engine. If this streams perfectly smooth, an OBS-style engine fixes the hitches. */
   /* processor share of each part (from the main process, % of the whole PC) — short names for the log, plain ones for the window */
   const CPU_PARTS = [['page', 'page', 'Picture engine (the program window)'], ['gpu', 'gpu', 'Graphics process'], ['capture', 'cam', 'Camera capture'], ['audio', 'aud', 'Sound'],
-    ['overlays', 'web', 'Web graphics'], ['yt', 'yt-enc', 'YouTube encoder (FFmpeg)'], ['rec', 'rec-enc', 'Recording encoder (FFmpeg)'], ['native', 'native', 'Native test (FFmpeg)'],
-    ['ffmpeg', 'ff', 'Cameras + other FFmpeg'], ['engine', 'engine', 'Native engine'], ['vst', 'vst', 'Audio plug-ins (VST3)'], ['main', 'main', 'Live Studio main process'], ['helpers', 'help', 'Other Live Studio helpers'], ['monitor', 'mon', 'PC monitor'], ['otherPrograms', 'other', 'Other programs and Windows']];
+    ['overlays', 'web', 'Web graphics'], ['yt', 'yt-enc', 'YouTube encoder (FFmpeg)'], ['rec', 'rec-enc', 'Recording encoder (FFmpeg)'], ['iso', 'iso-enc', 'ISO recordings (FFmpeg)'], ['native', 'native', 'Native test (FFmpeg)'],
+    ['cams', 'cams', 'Cameras (FFmpeg, native engine)'], ['video', 'video', 'Video files (FFmpeg, native engine)'], ['ffmpeg', 'ff', 'Other FFmpeg'], ['engine', 'engine', 'Native engine'], ['vst', 'vst', 'Audio plug-ins (VST3)'], ['main', 'main', 'Live Studio main process'], ['helpers', 'help', 'Other Live Studio helpers'], ['monitor', 'mon', 'PC monitor'], ['otherPrograms', 'other', 'Other programs and Windows']];
   const cpuPartsShort = P => CPU_PARTS.filter(([k]) => (P[k] || 0) >= 0.5).map(([k, n]) => `${n} ${Math.round(P[k])}`).join(' ');
   const DECODE_WORDS = { 'cuda-zc': 'graphics card — the picture stays on the card (lowest processor load)', cuda: 'graphics card (NVIDIA), copied back', d3d11va: 'graphics card (Windows D3D11)', dxva2: 'graphics card (Windows DXVA2)', none: 'processor — graphics-card decoding does not work on this PC', auto: 'automatic' };
 
@@ -5500,7 +5500,8 @@
       } else if (rt.eng) line += ' | native (no news)';
       const pc = rt.pc;
       if (pc) {
-        line += ` | cpu ${pc.cpu}%${pc.parts ? ` (${cpuPartsShort(pc.parts)})` : ''}${pc.cpuTemp !== null ? ` ${pc.cpuTemp}°` : ''} gpu ${pc.gpu !== null ? pc.gpu + '%' : '?'}${pc.gpuTemp !== null ? ` ${pc.gpuTemp}°` : ''} mem ${pc.mem}%`;
+        const top = pc.parts && (pc.parts.otherPrograms || 0) >= 1 && pc.topOther && pc.topOther.length ? ` = ${pc.topOther.map(([n, v]) => `${n} ${Math.round(v)}`).join(' ')}` : '';
+        line += ` | cpu ${pc.cpu}%${pc.parts ? ` (${cpuPartsShort(pc.parts)}${top})` : ''}${pc.cpuTemp !== null ? ` ${pc.cpuTemp}°` : ''} gpu ${pc.gpu !== null ? pc.gpu + '%' : '?'}${pc.gpuTemp !== null ? ` ${pc.gpuTemp}°` : ''} mem ${pc.mem}%`;
         sum.cpu = Math.max(sum.cpu, pc.cpu || 0); sum.cpuT = Math.max(sum.cpuT, pc.cpuTemp || 0); sum.gpuT = Math.max(sum.gpuT, pc.gpuTemp || 0);
         if (pc.cpu !== null) { sum.cpuSum += pc.cpu; sum.cpuN++; if (pc.parts) for (const [k, v] of Object.entries(pc.parts)) sum.parts[k] = (sum.parts[k] || 0) + v; }
       }

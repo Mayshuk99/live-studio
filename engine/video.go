@@ -24,7 +24,11 @@ type Video struct {
 	id, path string
 	name     string
 	loop     bool
-	soft     bool // the graphics card could not decode it: the processor does
+	soft     bool    // the graphics card could not decode it: the processor does
+	step     int     // output frames per decoded frame: 2 for a 29.97 video in a 59.94 program (half the data)
+	phase    int     // output frames the current picture has been shown
+	srcFps   float64 // the file's own frame rate (0: not known)
+	probed   bool
 	e        *Engine
 	mu       sync.Mutex
 	cur      *Frame
@@ -42,7 +46,7 @@ func newVideo(e *Engine, id, path, name string, loop bool) *Video {
 	if name == "" {
 		name = id
 	}
-	v := &Video{id: id, path: path, name: name, loop: loop, e: e, free: make(chan *Frame, 6)}
+	v := &Video{id: id, path: path, name: name, loop: loop, e: e, free: make(chan *Frame, 6), step: 1}
 	v.restart(0)
 	return v
 }
@@ -58,6 +62,7 @@ func (v *Video) restart(t float64) {
 	v.next = make(chan *Frame, 3)
 	v.pos = t
 	v.ended = false
+	v.phase = 99 // the new position's first picture as soon as it comes
 	v.mu.Unlock()
 	if old != nil {
 		go func() { // recycle what the old decoder left
@@ -92,10 +97,46 @@ var (
 	reVidHW     = regexp.MustCompile(`Using auto hwaccel type (\w+)`)
 )
 
+// the file's own frame rate, from FFmpeg's description of it (0 if it can't tell)
+func probeFps(ffmpeg, path string) float64 {
+	cmd := exec.Command(ffmpeg, "-hide_banner", "-nostdin", "-i", path)
+	procAttr(cmd, 0)
+	out, _ := cmd.CombinedOutput() // (FFmpeg says it needs an output file: fine, the description came first)
+	for _, l := range strings.Split(string(out), "\n") {
+		if reVidStream.MatchString(l) {
+			if f := reVidFps.FindStringSubmatch(l); f != nil {
+				var x float64
+				fmt.Sscanf(f[1], "%g", &x)
+				return x
+			}
+			return 0
+		}
+	}
+	return 0
+}
+
 func (v *Video) decode(gen int, t float64) {
 	e := v.e
 	v.mu.Lock()
-	soft := v.soft
+	soft, probed := v.soft, v.probed
+	v.mu.Unlock()
+	if !probed {
+		fps := probeFps(e.ffmpeg, v.path)
+		v.mu.Lock()
+		v.srcFps, v.probed = fps, true
+		v.mu.Unlock()
+	}
+	// a video at half the program's rate or less (29.97 in 59.94) comes at half the rate and each picture shows
+	// twice, instead of FFmpeg sending every picture twice through the pipe
+	out := float64(e.fpsNum) / float64(e.fpsDen)
+	step := 1
+	v.mu.Lock()
+	if v.srcFps > 0 && v.srcFps <= out/2+0.6 {
+		step = 2
+	}
+	if v.gen == gen {
+		v.step = step
+	}
 	v.mu.Unlock()
 	args := []string{"-hide_banner", "-loglevel", "verbose", "-nostats", "-nostdin"}
 	if !soft {
@@ -109,18 +150,23 @@ func (v *Video) decode(gen int, t float64) {
 	}
 	args = append(args, "-i", v.path, "-an", "-sn",
 		"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1", e.W, e.H, e.W, e.H),
-		"-r", fmt.Sprintf("%d/%d", e.fpsNum, e.fpsDen), "-f", "rawvideo", "-pix_fmt", "yuv420p", "-")
+		"-r", fmt.Sprintf("%d/%d", e.fpsNum, e.fpsDen*step), "-f", "rawvideo", "-pix_fmt", "yuv420p", "-")
 	cmd := exec.Command(e.ffmpeg, args...)
 	procAttr(cmd, 0) // normal: it is on air like the cameras, but must not crowd out the engine and the encoders
-	out, err := cmd.StdoutPipe()
+	pr, pw, err := bigPipe()
 	if err != nil {
 		return
 	}
+	cmd.Stdout = pw
 	errp, _ := cmd.StderrPipe()
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	pw.Close() // (FFmpeg has its own copy)
+	if err != nil {
+		pr.Close()
 		logf("video %s: could not start FFmpeg: %v", v.id, err)
 		return
 	}
+	defer pr.Close()
 	v.mu.Lock()
 	if v.gen != gen {
 		v.mu.Unlock()
@@ -175,7 +221,7 @@ func (v *Video) decode(gen int, t float64) {
 		}
 	}()
 	frames := 0
-	r := bufio.NewReaderSize(out, 4<<20)
+	r := bufio.NewReaderSize(pr, 4<<20)
 	for {
 		var f *Frame
 		select {
@@ -193,6 +239,9 @@ func (v *Video) decode(gen int, t float64) {
 				c, h, hf := codec, hw, hwFail
 				infoMu.Unlock()
 				how := "decoded by the processor"
+				if step == 2 {
+					c += fmt.Sprintf(" · sent at %.4g fps, each picture shown twice", out/2)
+				}
 				if h != "" && hf != "" {
 					how = "decoded by the processor (the graphics card, " + h + ", could not: " + hf + ")"
 				} else if h != "" {
@@ -237,16 +286,22 @@ func (v *Video) decode(gen int, t float64) {
 // called once per output frame: the frame to show
 func (v *Video) frame() *Frame {
 	v.mu.Lock()
-	ch, playing, cur := v.next, v.playing, v.cur
+	ch, playing, cur, step := v.next, v.playing, v.cur, v.step
+	// phase: how many frames the picture on screen has been shown; step 2 = a new picture every other frame
+	due := cur == nil || (playing && v.phase >= step)
+	if playing && !due {
+		v.phase++
+	}
 	v.mu.Unlock()
-	if cur == nil || playing {
+	if due {
 		select {
 		case f := <-ch:
 			v.mu.Lock()
 			old := v.cur
 			v.cur = f
+			v.phase = 1
 			if playing && old != nil {
-				v.pos += float64(v.e.fpsDen) / float64(v.e.fpsNum)
+				v.pos += float64(step) * float64(v.e.fpsDen) / float64(v.e.fpsNum)
 			}
 			v.mu.Unlock()
 			v.recycle(old)

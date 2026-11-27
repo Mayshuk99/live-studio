@@ -42,7 +42,8 @@ at(6, () => e.send({ cmd: 'output-stop', id: 'r1' }));
 const vid = path.join(dir, 'clip.mp4');
 require('child_process').execFileSync(ff, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', vid]);
 let vidPos = 0;
-e.on('msg', h => { if (h.ev === 'stats' && h.videos && h.videos.v1) vidPos = Math.max(vidPos, h.videos.v1.pos || 0); });
+let vidRep = 0, vidPid = 0, camPid = 0;
+e.on('msg', h => { if (h.ev === 'stats' && h.videos && h.videos.v1) { vidPos = Math.max(vidPos, h.videos.v1.pos || 0); if (h.videos.v1.playing && vidPos > 0.5 && vidPos < 3.5) vidRep += h.videos.v1.repeats || 0; vidPid = vidPid || h.videos.v1.pid; } if (h.ev === 'stats' && h.cams && h.cams.A) camPid = camPid || h.cams.A.pid; });
 at(6.5, () => { e.send({ cmd: 'video', id: 'v1', path: vid, name: 'Test clip', loop: false }); e.send({ cmd: 'video-state', id: 'v1', playing: true, t: 0 }); e.send({ cmd: 'program', base: { src: 'v1' }, ms: 0 }); });
 at(12, async () => {
   clearInterval(aud);
@@ -54,9 +55,11 @@ at(12, async () => {
   if (!ready) fail('engine never became ready');
   if (!camOk) fail('fake camera never delivered');
   if (ticks < 400) fail(`too few frames (${ticks})`);
-  const vidLine = videoLog.find(l => /Test clip: h264 1280×720 30 fps · decoded/.test(l));
-  console.log(`video file: played to ${vidPos.toFixed(2)} s · ${vidLine || 'no info line'}`);
+  const vidLine = videoLog.find(l => /Test clip: h264 1280×720 30 fps · .*decoded/.test(l));
+  console.log(`video file: played to ${vidPos.toFixed(2)} s · ${vidRep} pictures late · process ${vidPid} · camera process ${camPid} · ${vidLine || 'no info line'}`);
   if (!vidLine || vidPos < 2) fail('the video file did not play through the engine');
+  if (!/each picture shown twice/.test(vidLine)) fail('a 30 fps video in a 59.94 program should come at half the rate');
+  if (!vidPid || !camPid) fail('the engine did not report its processes');
   if (pv < 100 || pvBad || pvFlat > pv / 10) fail(`camera pictures for the window: ${pv} good, ${pvBad} wrong, ${pvFlat} flat`);
   if (!exited || exited.code !== 0) fail('recording did not finish cleanly');
   if (size < 20000) fail(`recording too small (${size} bytes)`);

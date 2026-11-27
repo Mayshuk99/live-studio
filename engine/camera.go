@@ -161,16 +161,20 @@ func (c *Camera) loop() {
 			cmd = exec.Command(c.e.ffmpeg, args...)
 		}
 		procAttr(cmd, 1)
-		out, err := cmd.StdoutPipe()
+		out, pw, err := bigPipe()
 		if err != nil {
 			c.setStatus(false, err.Error())
 			time.Sleep(2 * time.Second)
 			continue
 		}
+		cmd.Stdout = pw
 		errp, _ := cmd.StderrPipe()
 		var lastErr string
 		var errMu sync.Mutex
-		if err := cmd.Start(); err != nil {
+		err = cmd.Start()
+		pw.Close() // (the camera's FFmpeg has its own copy)
+		if err != nil {
+			out.Close()
 			what := "FFmpeg"
 			if c.exe != "" {
 				what = "the NDI helper"
@@ -219,6 +223,7 @@ func (c *Camera) loop() {
 				c.setStatus(true, "Running")
 			}
 		}
+		out.Close()
 		cmd.Wait()
 		c.mu.Lock()
 		stopped := c.stopped

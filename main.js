@@ -59,7 +59,14 @@ outputs.engine = nat;
 let natWanted = null; // the settings it was started with (restarted with them if it stops by itself)
 const natWebs = new Map(); // web-page graphic id -> { cfg, sent, w, h }
 function natSendEv(h, payload) { if (win && !win.isDestroyed()) win.webContents.send('native:ev', h, payload ? new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength) : null); }
+// which FFmpeg is which (from the engine's stats): its camera readers and video files, for the processor shares
+const natKids = new Map();
 nat.on('msg', (h, payload) => {
+  if (h.ev === 'stats') {
+    natKids.clear();
+    for (const c of Object.values(h.cams || {})) if (c && c.pid) natKids.set(c.pid, 'cam');
+    for (const v of Object.values(h.videos || {})) if (v && v.pid) natKids.set(v.pid, 'video');
+  }
   if (h.ev === 'out-log' || h.ev === 'out-exit' || h.ev === 'out-started') { outputs.engineEvent(h); return; }
   if (h.ev === 'ready') { for (const st of natWebs.values()) st.sent = false; for (const [id] of natWebs) webRepaint(id); }
   if (h.ev === 'exit') {
@@ -540,20 +547,33 @@ function pcStart() {
   if (process.platform === 'win32') {
     // (the GPU counters are only read when there is no NVIDIA tool — reading them costs processor time itself)
     // FF| lists each FFmpeg's processor time in ms, and PS| this loop's own, so the log can show what each one costs
-    const script = "$ErrorActionPreference='SilentlyContinue'; $nv=[bool](Get-Command nvidia-smi); while($true){ $g=''; $t=''; $s=$null; if(-not $nv){ $s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples }; if($s){ $m=0; $s | Group-Object { if($_.InstanceName -match 'engtype_(\\w+)'){$matches[1]} } | ForEach-Object { $v=($_.Group | Measure-Object CookedValue -Sum).Sum; if($v -gt $m){$m=$v} }; $g=[math]::Min(100,[math]::Round($m)) }; $z=Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature; if($z){ $t=[math]::Round((($z | Measure-Object CurrentTemperature -Maximum).Maximum/10)-273.15) }; Write-Output ('PC|{0}|{1}' -f $g,$t); $f=(Get-Process -Name ffmpeg,ls-engine,ls-vst | ForEach-Object { '{0}:{1}' -f $_.Id,[long]$_.TotalProcessorTime.TotalMilliseconds }) -join ','; Write-Output ('FF|' + $f); Write-Output ('PS|' + [long](Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds); Start-Sleep -Seconds 3 }";
+    const script = "$ErrorActionPreference='SilentlyContinue'; $nv=[bool](Get-Command nvidia-smi); while($true){ $g=''; $t=''; $s=$null; if(-not $nv){ $s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples }; if($s){ $m=0; $s | Group-Object { if($_.InstanceName -match 'engtype_(\\w+)'){$matches[1]} } | ForEach-Object { $v=($_.Group | Measure-Object CookedValue -Sum).Sum; if($v -gt $m){$m=$v} }; $g=[math]::Min(100,[math]::Round($m)) }; $z=Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature; if($z){ $t=[math]::Round((($z | Measure-Object CurrentTemperature -Maximum).Maximum/10)-273.15) }; Write-Output ('PC|{0}|{1}' -f $g,$t); $f=(Get-Process -Name ffmpeg,ls-engine,ls-vst | ForEach-Object { '{0}:{1}' -f $_.Id,[long]$_.TotalProcessorTime.TotalMilliseconds }) -join ','; Write-Output ('FF|' + $f); Write-Output ('PS|' + [long](Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds); $o=(Get-Process | ForEach-Object { if($_.CPU){ '{0}:{1}:{2}' -f $_.Id,$_.ProcessName,[long]($_.CPU*1000) } }) -join ','; Write-Output ('OT|' + $o); Start-Sleep -Seconds 3 }";
     try {
       const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-      const ffPrev = new Map(); let psPrev = null;
+      const ffPrev = new Map(), otPrev = new Map(); let psPrev = null;
       ps.stdout.on('data', d => { for (const line of String(d).split(/\r?\n/)) {
         const now = Date.now(), cores = os.cpus().length || 1;
         if (line.startsWith('FF|')) { // processor share of each FFmpeg, named by what it does
           const by = {}, kindOf = new Map([...outputs.outs.values()].map(o => [o.proc.pid, o.kind]));
+          for (const [pid, k] of natKids) kindOf.set(pid, k); // the engine's camera readers and video files
           if (nat.proc && nat.proc.pid) kindOf.set(nat.proc.pid, 'engine');
           if (vh.proc && vh.proc.pid) kindOf.set(vh.proc.pid, 'vst');
           for (const it of line.slice(3).split(',')) { const [pid, ms] = it.split(':').map(Number); if (!pid) continue;
             const p = ffPrev.get(pid); ffPrev.set(pid, { t: now, ms });
-            if (p && now > p.t) { const k = { stream: 'yt', record: 'rec', native: 'native', engine: 'engine', vst: 'vst' }[kindOf.get(pid)] || 'ffmpeg'; by[k] = (by[k] || 0) + Math.max(0, 100 * (ms - p.ms) / (now - p.t) / cores); } }
+            if (p && now > p.t) { const k = { stream: 'yt', record: 'rec', iso: 'iso', native: 'native', engine: 'engine', vst: 'vst', cam: 'cams', video: 'video' }[kindOf.get(pid)] || 'ffmpeg'; by[k] = (by[k] || 0) + Math.max(0, 100 * (ms - p.ms) / (now - p.t) / cores); } }
           pc.ff = by; continue;
+        }
+        if (line.startsWith('OT|')) { // the other programs that use the processor most, by name (Live Studio's own left out)
+          const own = new Set([ps.pid]); try { for (const m of app.getAppMetrics()) own.add(m.pid); } catch (e) { /* */ }
+          const byName = {}, seen = new Set();
+          for (const it of line.slice(3).split(',')) { const a = it.split(':'); if (a.length < 3) continue; const pid = +a[0], name = a.slice(1, -1).join(':'), ms = +a[a.length - 1];
+            if (!pid || !isFinite(ms)) continue; seen.add(pid);
+            const p = otPrev.get(pid); otPrev.set(pid, { t: now, ms });
+            if (!p || now <= p.t || own.has(pid) || /^(ffmpeg|ls-engine|ls-vst|ls-ndi|Idle|Live Studio)$/i.test(name)) continue;
+            const pct = 100 * (ms - p.ms) / (now - p.t) / cores; if (pct > 0) byName[name] = (byName[name] || 0) + pct; }
+          for (const pid of otPrev.keys()) if (!seen.has(pid)) otPrev.delete(pid);
+          pc.top = Object.entries(byName).filter(([, v]) => v >= 1).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([n, v]) => [n, Math.round(v * 10) / 10]);
+          continue;
         }
         if (line.startsWith('PS|')) { const ms = +line.slice(3); if (psPrev && now > psPrev.t) pc.ps = Math.max(0, 100 * (ms - psPrev.ms) / (now - psPrev.t) / cores); psPrev = { t: now, ms }; continue; }
         const m = line.match(/^PC\|(\d*)\|(-?\d*)/); if (!m) continue; if (!pc.nv && m[1] !== '') pc.gpu = +m[1]; if (m[2] !== '' && +m[2] > 0 && +m[2] < 120) pc.cpuTemp = +m[2];
@@ -575,7 +595,7 @@ ipcMain.handle('pc:stats', () => {
     if (pc.ps !== undefined) parts.monitor = r1(pc.ps);
     if (pc.cpu !== null) parts.otherPrograms = r1(Math.max(0, pc.cpu - Object.values(parts).reduce((a, b) => a + b, 0)));
   }
-  return { cpu: pc.cpu, cpuTemp: pc.cpuTemp, gpu: pc.gpu, gpuTemp: pc.gpuTemp, gpuName: pc.gpuName, mem: pc.mem, cores: os.cpus().length, cpuName: (os.cpus()[0] || {}).model, parts, decode: decodeInfo };
+  return { cpu: pc.cpu, cpuTemp: pc.cpuTemp, gpu: pc.gpu, gpuTemp: pc.gpuTemp, gpuName: pc.gpuName, mem: pc.mem, cores: os.cpus().length, cpuName: (os.cpus()[0] || {}).model, parts, topOther: pc.top || [], decode: decodeInfo };
 });
 
 /* ---------- web page overlays: pages rendered off-screen (like a browser source) ---------- */

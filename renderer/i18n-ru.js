@@ -1282,7 +1282,11 @@ window.I18N_RU = {
     "Sharp — 960×540, 30 fps": "Чётко — 960×540, 30 к/с",
     "Highest — 1280×720, 30 fps": "Максимум — 1280×720, 30 к/с",
     "Cameras on the screen (native)": "Камеры на экране (встроенный)",
-    "Only how the monitors in this window look — YouTube and the recording always get the full picture. Higher uses a little more of the processor.": "Только то, как выглядят мониторы в этом окне — в YouTube и в запись всегда идёт полная картинка. Чем выше, тем чуть больше нагрузка на процессор."
+    "Only how the monitors in this window look — YouTube and the recording always get the full picture. Higher uses a little more of the processor.": "Только то, как выглядят мониторы в этом окне — в YouTube и в запись всегда идёт полная картинка. Чем выше, тем чуть больше нагрузка на процессор.",
+    "ISO recordings (FFmpeg)": "ISO-записи (FFmpeg)",
+    "Cameras (FFmpeg, native engine)": "Камеры (FFmpeg, встроенный движок)",
+    "Video files (FFmpeg, native engine)": "Видеофайлы (FFmpeg, встроенный движок)",
+    "Other FFmpeg": "Другие FFmpeg"
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
