@@ -161,8 +161,12 @@ function nativeArgs(o, partFile) {
    1080i: the card gives whole frames at capFps (1080i59.94 → 29.97); bwdif makes one picture per field
    (deint 'field' → 59.94p) or per frame ('frame'). HD interlaced is top field first. */
 function captureArgs(d) {
-  const deint = d.deint === 'field' ? ['-vf', 'bwdif=mode=send_field:parity=tff:deint=all'] : d.deint === 'frame' ? ['-vf', 'bwdif=mode=send_frame:parity=tff:deint=all'] : [];
-  return ['-f', 'dshow', '-rtbufsize', '1500M',
+  const deint = d.deint === 'field' ? ['-vf', 'bwdif=mode=send_field:parity=tff:deint=all'] : d.deint === 'frame' ? ['-vf', 'bwdif=mode=send_frame:parity=tff:deint=all']
+    : d.decimate === 2 ? ['-vf', 'framestep=2'] : []; // (a 59.94 card in a 29.97 program: every other picture)
+  // the card's own buffer: about 48 pictures. When the PC can't keep up for a moment the card drops pictures instead of
+  // piling up seconds of them (1500M let one camera run 4 s behind and then flood the engine with the backlog)
+  const rtb = Math.max(100, Math.ceil((d.w || 1920) * (d.h || 1080) * 2 * 48 / 1e6));
+  return ['-f', 'dshow', '-rtbufsize', `${rtb}M`,
     ...(d.n ? ['-video_device_number', String(d.n)] : []),
     '-video_size', `${d.w || 1920}x${d.h || 1080}`, '-framerate', rate(capRate(d.capFps || d.fps || 59.94)),
     ...(d.vcodec ? ['-vcodec', d.vcodec] : d.pixFmt ? ['-pixel_format', d.pixFmt] : []),

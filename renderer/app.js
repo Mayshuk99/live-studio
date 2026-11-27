@@ -422,6 +422,16 @@
   }
   // 60 output with 59.94 cards (or 30 / 29.97): still usable, one repeated frame about every 17 s — and said so
   const natFits = (v, cam) => natExact(v, false, cam).length ? natExact(v, false, cam) : natExact(v, true, cam);
+  /* the card's format for a camera, and whether every other picture is taken: a 29.97 / 30 / 25 program with a card
+     that only gives twice that (59.94 → 29.97) captures it at the card's rate and sends the engine every other picture —
+     half the data through the engine, the encoders and the window */
+  function natPick(v, cam) {
+    const f = natFits(v, cam);
+    if (f.length) return { m: f[0], decimate: 1 };
+    const out = settings.output.fps || 59.94;
+    if (out <= 30) { const d = natExact(v, true, cam, +(out * 2).toFixed(3)); if (d.length) return { m: d[0], decimate: 2 }; }
+    return { m: null, decimate: 1 };
+  }
   /* the card a camera uses: the one chosen in Inputs, or the same card the classic engine used (same name and place
      in the list — e.g. “Blackmagic WDM Capture” 2 and 3), or the next free card that has the right format */
   function natCard(cam) {
@@ -429,7 +439,7 @@
     let v = null;
     if (cam.native && cam.native.name) v = list.find(x => x.name === cam.native.name && x.n === (cam.native.n || 0)) || null;
     if (!v) {
-      const taken = new Set([...NAT.cams].filter(([id]) => id !== cam.id).map(([, c]) => c.key)), free = x => natFits(x, cam).length && !taken.has(x.name + '#' + x.n);
+      const taken = new Set([...NAT.cams].filter(([id]) => id !== cam.id).map(([, c]) => c.key)), free = x => natPick(x, cam).m && !taken.has(x.name + '#' + x.n);
       const same = list.filter(x => x.name === cam.deviceLabel);
       v = (cam.deviceIdx !== undefined && same.find(x => x.n === cam.deviceIdx && free(x))) || same.find(free) || list.find(free) || null;
     }
@@ -439,9 +449,11 @@
       const m = plan.mode, cap = natCap(cam), out = settings.output.fps || 59.94;
       return { name: v.name, n: v.n, w: cap[0], h: cap[1], fps: plan.deint === 'field' ? out : +m.maxFps.toFixed(2), capFps: +m.maxFps.toFixed(2), deint: plan.deint, pixFmt: m.kind === 'pixel_format' ? m.fmt : null, vcodec: m.kind === 'vcodec' ? m.fmt : null, exact: true, key: v.name + '#' + v.n, label: plan.label };
     }
-    const m = natFits(v, cam)[0], cap = natCap(cam);
-    if (m && !natExact(v, false, cam).length) logEvent('NATIVE', `warning: ${v.name} ${v.n + 1} has no ${settings.output.fps} fps — capturing its ${(+m.maxFps.toFixed(2))} fps; set Settings → Video output → Frame rate to ${(+m.maxFps.toFixed(2))} for a perfectly smooth picture`);
-    return { name: v.name, n: v.n, w: cap[0], h: cap[1], fps: m ? +m.maxFps.toFixed(2) : (settings.output.fps || 59.94), pixFmt: m && m.kind === 'pixel_format' ? m.fmt : null, vcodec: m && m.kind === 'vcodec' ? m.fmt : null, exact: !!m, key: v.name + '#' + v.n };
+    const { m, decimate } = natPick(v, cam), cap = natCap(cam), out = settings.output.fps || 59.94;
+    if (m && decimate === 2) logEvent('NATIVE', `${v.name} ${v.n + 1} sends ${(+m.maxFps.toFixed(2))} fps: every other picture is taken for the ${out} fps program`);
+    else if (m && !natExact(v, false, cam).length) logEvent('NATIVE', `warning: ${v.name} ${v.n + 1} has no ${out} fps — capturing its ${(+m.maxFps.toFixed(2))} fps; set Settings → Video output → Frame rate to ${(+m.maxFps.toFixed(2))} for a perfectly smooth picture`);
+    return { name: v.name, n: v.n, w: cap[0], h: cap[1], fps: m ? (decimate === 2 ? out : +m.maxFps.toFixed(2)) : out, capFps: m && decimate === 2 ? +m.maxFps.toFixed(2) : undefined, decimate: decimate === 2 ? 2 : undefined,
+      pixFmt: m && m.kind === 'pixel_format' ? m.fmt : null, vcodec: m && m.kind === 'vcodec' ? m.fmt : null, exact: !!m, key: v.name + '#' + v.n };
   }
   /* 1080i: an interlaced camera shows up on the card as whole frames at half its field rate (1080i59.94 = 29.97
      frames). Those are captured and deinterlaced (bwdif) back to full motion: 1080i59.94 → 59.94p (one picture per
