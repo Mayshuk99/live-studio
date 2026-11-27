@@ -19,13 +19,19 @@ public:
 class SpectrumView : public juce::Component
 {
 public:
-    explicit SpectrumView (DefeedbackAudioProcessor& p) : proc (p) {}
+    explicit SpectrumView (DefeedbackAudioProcessor& p);
     void paint (juce::Graphics&) override;
+    void resized() override;
+    void tick (float dtSeconds);   // called from the editor timer: applies the graph smoothing
 
 private:
     float xForFreq (juce::Rectangle<float> r, float f) const;
     float yForDb (juce::Rectangle<float> r, float db) const;
     DefeedbackAudioProcessor& proc;
+    std::array<float, dfb::FeedbackSuppressor::kDisplayPoints> inS {}, outS {};
+    bool primed = false;
+    juce::Slider smoothSlider;
+    juce::Label smoothLabel;
 };
 
 //==============================================================================
@@ -103,14 +109,14 @@ private:
     LevelMeter inMeter, outMeter;
     FeedbackSettings fbSettings;
 
-    juce::Slider feedbackKnob, denoiseKnob, deroomKnob, dereverbKnob;
-    juce::Label feedbackLabel, denoiseLabel, deroomLabel, dereverbLabel;
+    juce::Slider feedbackKnob, denoiseKnob, deroomKnob, dereverbKnob, restoreKnob;
+    juce::Label feedbackLabel, denoiseLabel, deroomLabel, dereverbLabel, restoreLabel;
     juce::ToggleButton muteButton { "MUTE" };
     juce::TextButton clearButton { "Clear notches" };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    std::unique_ptr<SliderAttachment> feedbackAtt, denoiseAtt, deroomAtt, dereverbAtt;
+    std::unique_ptr<SliderAttachment> feedbackAtt, denoiseAtt, deroomAtt, dereverbAtt, restoreAtt;
     std::unique_ptr<ButtonAttachment> muteAtt;
 
     float shownReduction = 0.0f;

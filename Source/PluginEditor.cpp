@@ -16,6 +16,7 @@ namespace Colours
     const juce::Colour knobNoise    { 0xff5aa9e6 };
     const juce::Colour knobReverb   { 0xff9b7bea };
     const juce::Colour knobRoom     { 0xff3cc8b4 };
+    const juce::Colour knobRestore  { 0xffe8c547 };
 }
 
 static juce::String freqText (float f)
@@ -96,6 +97,53 @@ float SpectrumView::yForDb (juce::Rectangle<float> r, float db) const
     return juce::jmap (juce::jlimit (-100.0f, 0.0f, db), -100.0f, 0.0f, r.getBottom(), r.getY());
 }
 
+SpectrumView::SpectrumView (DefeedbackAudioProcessor& p) : proc (p)
+{
+    inS.fill (-120.0f);
+    outS.fill (-120.0f);
+    smoothSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    smoothSlider.setRange (0.0, 100.0, 1.0);
+    smoothSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 40, 16);
+    smoothSlider.setTextValueSuffix (" %");
+    smoothSlider.setColour (juce::Slider::trackColourId, Colours::spectrum);
+    smoothSlider.setColour (juce::Slider::thumbColourId, Colours::text);
+    smoothSlider.setColour (juce::Slider::backgroundColourId, Colours::grid);
+    smoothSlider.setTooltip ("Graph smoothing: 0 % = instant, 100 % = very smooth (about 2 s)");
+    smoothSlider.setValue ((double) proc.apvts.state.getProperty ("graphSmoothing", 30.0), juce::dontSendNotification);
+    smoothSlider.onValueChange = [this] { proc.apvts.state.setProperty ("graphSmoothing", smoothSlider.getValue(), nullptr); };
+    smoothSlider.setDoubleClickReturnValue (true, 30.0);
+    addAndMakeVisible (smoothSlider);
+    smoothLabel.setText ("SMOOTHING", juce::dontSendNotification);
+    smoothLabel.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+    smoothLabel.setColour (juce::Label::textColourId, Colours::textDim);
+    smoothLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (smoothLabel);
+}
+
+void SpectrumView::resized()
+{
+    auto top = getLocalBounds().reduced (10, 2).removeFromTop (18);
+    smoothSlider.setBounds (top.removeFromRight (170));
+    smoothLabel.setBounds (top.removeFromRight (70));
+}
+
+void SpectrumView::tick (float dt)
+{
+    // 0 % -> no extra smoothing, 100 % -> ~2 s time constant (logarithmic in between)
+    const float v = (float) smoothSlider.getValue() / 100.0f;
+    const float tau = v <= 0.001f ? 0.0f : 0.02f * std::pow (100.0f, v);
+    const float a = tau <= 0.0f ? 1.0f : 1.0f - std::exp (-dt / tau);
+    auto& fb = proc.engine.feedback;
+    for (int i = 0; i < dfb::FeedbackSuppressor::kDisplayPoints; ++i)
+    {
+        const float ti = fb.getDisplayDb (i), to = proc.engine.outputSpectrum.getDisplayDb (i);
+        inS[(size_t) i] = primed ? inS[(size_t) i] + a * (ti - inS[(size_t) i]) : ti;
+        outS[(size_t) i] = primed ? outS[(size_t) i] + a * (to - outS[(size_t) i]) : to;
+    }
+    primed = true;
+    repaint();
+}
+
 void SpectrumView::paint (juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat();
@@ -133,7 +181,7 @@ void SpectrumView::paint (juce::Graphics& g)
     for (int i = 0; i < dfb::FeedbackSuppressor::kDisplayPoints; ++i)
     {
         const float x = xForFreq (plot, dfb::FeedbackSuppressor::displayFreq (i));
-        const float y = yForDb (plot, fb.getDisplayDb (i));
+        const float y = yForDb (plot, inS[(size_t) i]);
         if (i == 0) { line.startNewSubPath (x, y); fill.startNewSubPath (x, plot.getBottom()); }
         else line.lineTo (x, y);
         fill.lineTo (x, y);
@@ -152,7 +200,7 @@ void SpectrumView::paint (juce::Graphics& g)
         for (int i = 0; i < dfb::SpectrumAnalyzer::kDisplayPoints; ++i)
         {
             const float x = xForFreq (plot, dfb::FeedbackSuppressor::displayFreq (i));
-            const float y = yForDb (plot, proc.engine.outputSpectrum.getDisplayDb (i));
+            const float y = yForDb (plot, outS[(size_t) i]);
             if (i == 0) outLine.startNewSubPath (x, y); else outLine.lineTo (x, y);
         }
         g.setColour (juce::Colours::black.withAlpha (0.35f));
@@ -219,10 +267,10 @@ void SpectrumView::paint (juce::Graphics& g)
         r.removeFromLeft (4.0f);
         g.drawText (text, r, juce::Justification::centredLeft);
     };
-    item (Colours::spectrum, "INPUT (unprocessed)", 150.0f);
-    item (Colours::output, "OUTPUT (processed)", 150.0f);
-    item (Colours::filterCurve, "notch filters", 110.0f);
-    item (Colours::feedback, "feedback frequencies", 160.0f);
+    item (Colours::spectrum, "INPUT", 66.0f);
+    item (Colours::output, "OUTPUT", 76.0f);
+    item (Colours::filterCurve, "NOTCHES", 82.0f);
+    item (Colours::feedback, "FEEDBACK", 86.0f);
 }
 
 //==============================================================================
@@ -486,6 +534,9 @@ DefeedbackAudioProcessorEditor::DefeedbackAudioProcessorEditor (DefeedbackAudioP
     setupKnob (denoiseKnob, denoiseLabel, "DE-NOISE");
     setupKnob (deroomKnob, deroomLabel, "DE-ROOM");
     setupKnob (dereverbKnob, dereverbLabel, "DE-REVERB");
+    setupKnob (restoreKnob, restoreLabel, "VOICE RESTORE");
+    restoreKnob.setColour (juce::Slider::rotarySliderFillColourId, Colours::knobRestore);
+    restoreAtt = std::make_unique<SliderAttachment> (proc.apvts, "restore", restoreKnob);
     feedbackKnob.setColour (juce::Slider::rotarySliderFillColourId, Colours::knobFeedback);
     denoiseKnob.setColour (juce::Slider::rotarySliderFillColourId, Colours::knobNoise);
     dereverbKnob.setColour (juce::Slider::rotarySliderFillColourId, Colours::knobReverb);
@@ -503,8 +554,8 @@ DefeedbackAudioProcessorEditor::DefeedbackAudioProcessorEditor (DefeedbackAudioP
     clearButton.onClick = [this] { proc.engine.feedback.requestClear(); };
 
     setResizable (true, true);
-    setResizeLimits (1000, 600, 1900, 1250);
-    setSize (1120, 680);
+    setResizeLimits (1080, 620, 1900, 1250);
+    setSize (1200, 700);
     startTimerHz (30);
 }
 
@@ -541,7 +592,7 @@ void DefeedbackAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText ("DE-FEEDBACK", title.removeFromLeft (240), juce::Justification::centredLeft);
     g.setColour (Colours::textDim);
     g.setFont (juce::FontOptions (14.0f));
-    g.drawText ("Zero-Latency De-Feedback  +  De-Noise  +  De-Room  +  De-Reverb", title, juce::Justification::centredLeft);
+    g.drawText ("Zero-Latency De-Feedback  +  De-Noise  +  De-Room  +  De-Reverb  +  Voice Restore", title, juce::Justification::centredLeft);
 
     // status line under the knobs
     auto status = getLocalBounds().reduced (16, 8).removeFromBottom (20);
@@ -578,10 +629,10 @@ void DefeedbackAudioProcessorEditor::resized()
     bottom.removeFromRight (6);
     inMeter.setBounds (bottom.removeFromLeft (76).reduced (2, 0));
     bottom.removeFromLeft (6);
-    const int knobW = bottom.getWidth() / 4;
-    juce::Slider* knobs[] = { &feedbackKnob, &denoiseKnob, &deroomKnob, &dereverbKnob };
-    juce::Label* labels[] = { &feedbackLabel, &denoiseLabel, &deroomLabel, &dereverbLabel };
-    for (int i = 0; i < 4; ++i)
+    const int knobW = bottom.getWidth() / 5;
+    juce::Slider* knobs[] = { &feedbackKnob, &denoiseKnob, &deroomKnob, &dereverbKnob, &restoreKnob };
+    juce::Label* labels[] = { &feedbackLabel, &denoiseLabel, &deroomLabel, &dereverbLabel, &restoreLabel };
+    for (int i = 0; i < 5; ++i)
     {
         auto col = bottom.removeFromLeft (knobW).reduced (8, 4);
         labels[i]->setBounds (col.removeFromTop (24));
@@ -601,7 +652,7 @@ void DefeedbackAudioProcessorEditor::timerCallback()
     inMeter.update();
     outMeter.update();
     fbSettings.syncRatio();
-    spectrum.repaint();
+    spectrum.tick (1.0f / 30.0f);
     notchList.repaint();
     repaint (getLocalBounds().removeFromBottom (32));
 }

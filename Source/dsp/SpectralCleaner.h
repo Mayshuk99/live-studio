@@ -17,6 +17,7 @@
 
 #include "FFT.h"
 #include "ReverbSuppressor.h"
+#include "VoiceRestorer.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -59,7 +60,7 @@ public:
         auto z = [this] (std::vector<float>& v, float val = 0.0f) { v.assign ((size_t) bins, val); };
         z (P); z (Psm); z (Pns); z (noise);
         z (gainN, 1.0f); z (gammaN, 1.0f); z (Gr, 1.0f); z (Groom, 1.0f);
-        z (G, 1.0f); z (Gs, 1.0f); z (tmp, 1.0f);
+        z (G, 1.0f); z (Gs, 1.0f); z (tmp, 1.0f); z (Gd, 1.0f); z (lossG, 1.0f);
 
         // minimum statistics: U sub-windows of V frames (~1.5 s total)
         const double hopSec = (double) hop / sr;
@@ -68,6 +69,7 @@ public:
         curMin.assign ((size_t) bins, std::numeric_limits<float>::max());
 
         reverb.prepare (bins, N, hop, sr);
+        restorer.prepare (bins, N, sr);
 
         hOld.assign ((size_t) L, 0.0f);
         hNew.assign ((size_t) L, 0.0f);
@@ -118,6 +120,7 @@ public:
     }
 
     ReverbSuppressor& getReverbSuppressor() noexcept { return reverb; }
+    VoiceRestorer& getRestorer() noexcept { return restorer; }
 
     float getGainReductionDb() const noexcept { return gainReductionDb.load (std::memory_order_relaxed); }
     float getRoomT60() const noexcept { return reverb.getT60Mid(); }   // seconds, 0 = not measured yet
@@ -272,6 +275,7 @@ private:
 
             if (useR) g *= Gr[(size_t) k];
             if (useRoom) g *= Groom[(size_t) k];
+            lossG[(size_t) k] = (useR ? Gr[(size_t) k] : 1.0f) * (useRoom ? Groom[(size_t) k] : 1.0f);
 
             G[(size_t) k] = std::max (g, 0.003f);   // never below -50 dB
         }
@@ -284,6 +288,9 @@ private:
             const float c = G[(size_t) std::min (bins - 1, k + 1)];
             tmp[(size_t) k] = 0.25f * a + 0.5f * b + 0.25f * c;
         }
+        // VOICE RESTORE: give back part of what De-Room / De-Reverb took from the voice
+        const float* boost = restorer.updateMakeup (P.data(), lossG.data(), noise.data(), (float) hop / (float) sr);
+
         double num = 0.0, den = 0.0;
         bool identity = true;
         for (int k = 0; k < bins; ++k)
@@ -292,8 +299,10 @@ private:
             float& s = Gs[(size_t) k];
             s = g > s ? (0.1f * s + 0.9f * g) : (0.6f * s + 0.4f * g);   // (almost) instant open, slower close
             if (! useN && ! useR && ! useRoom) s = 1.0f;
-            if (s < 0.999f) identity = false;
-            num += (double) s * s * P[(size_t) k];
+            const float d = boost != nullptr ? s * boost[k] : s;
+            Gd[(size_t) k] = d;
+            if (std::abs (d - 1.0f) > 0.001f) identity = false;
+            num += (double) d * d * P[(size_t) k];
             den += P[(size_t) k];
         }
         gainReductionDb.store (den > 0.0 ? (float) (10.0 * std::log10 (num / den + 1e-12)) : 0.0f,
@@ -307,7 +316,7 @@ private:
         fadePos = (oldIsIdentity && newIsIdentity) ? hop : 0;
     }
 
-    // gain curve Gs (bins points) -> minimum phase FIR of length L (stored time-reversed in hNew)
+    // gain curve Gd (bins points) -> minimum phase FIR of length L (stored time-reversed in hNew)
     void designMinimumPhase() noexcept
     {
         const int half = M / 2;
@@ -316,8 +325,8 @@ private:
             const float pos = (float) j * (float) (bins - 1) / (float) half;
             const int k = std::min ((int) pos, bins - 2);
             const float fr = pos - (float) k;
-            const float g = Gs[(size_t) k] * (1.0f - fr) + Gs[(size_t) k + 1] * fr;
-            const float lg = std::log (std::max (g, 1e-4f));
+            const float g = Gd[(size_t) k] * (1.0f - fr) + Gd[(size_t) k + 1] * fr;
+            const float lg = std::log (std::clamp (g, 1e-4f, 8.0f));
             cep[(size_t) j] = cfloat (lg, 0.0f);
             if (j > 0 && j < half) cep[(size_t) (M - j)] = cfloat (lg, 0.0f);
         }
@@ -362,6 +371,8 @@ private:
     std::vector<float> P, Psm, Pns, noise, gainN, gammaN, Gr, Groom, G, Gs, tmp;
     std::vector<std::vector<float>> subMin;
     ReverbSuppressor reverb;
+    VoiceRestorer restorer;
+    std::vector<float> Gd, lossG;
     std::vector<float> curMin;
     std::vector<float> hOld, hNew, hDesign;
 

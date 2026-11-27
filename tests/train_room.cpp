@@ -95,6 +95,9 @@ static float lsd (const std::vector<float>& x, const std::vector<float>& ref)
 using RParams = dfb::ReverbSuppressor::ReverbParams;
 static RParams gRev;   // reverb parameters used by every run
 
+static dfb::VoiceRestorer::Params gRestore;
+static float gRestoreAmt = 0.0f;
+
 static float runRoom (const Room& r, const Params& p, float roomAmt, float reverbAmt)
 {
     auto eng = std::make_unique<dfb::DefeedbackEngine>();
@@ -102,6 +105,8 @@ static float runRoom (const Room& r, const Params& p, float roomAmt, float rever
     eng->cleaner.getReverbSuppressor().setRoomParams (p);
     eng->cleaner.getReverbSuppressor().setReverbParams (gRev);
     eng->setParameters (0.0f, 0.0f, reverbAmt, false, roomAmt);
+    eng->cleaner.getRestorer().setParams (gRestore);
+    eng->setRestore (gRestoreAmt);
     std::vector<float> y = r.mix;
     for (size_t pos = 0; pos < y.size(); pos += 256)
     {
@@ -259,6 +264,43 @@ int main (int argc, char** argv)
             if (! test[i].isDry) { b += test[i].baseLsd; a5 += r.at50[i]; a1 += r.at100[i]; ++n; }
         }
         printf ("  MEAN (rooms) %6.2f -> %6.2f -> %6.2f dB\n", b / n, a5 / n, a1 / n);
+        return 0;
+    }
+    if (mode == "restore")   // tune Voice Restore with De-Room 50 % + De-Reverb 50 %
+    {
+        auto run = [&] (const std::vector<Room>& rooms, float amt) {
+            gRestoreAmt = amt;
+            std::vector<float> res (rooms.size());
+            std::vector<std::thread> pool; std::mutex m; size_t next = 0;
+            for (unsigned t = 0; t < std::max (1u, std::thread::hardware_concurrency()); ++t)
+                pool.emplace_back ([&] { for (;;) { size_t i; { std::lock_guard<std::mutex> lk (m); if (next >= rooms.size()) return; i = next++; }
+                                                    res[i] = runRoom (rooms[i], p, 0.5f, 0.5f); } });
+            for (auto& th : pool) th.join();
+            double o = 0, w = 0;
+            for (size_t i = 0; i < rooms.size(); ++i) { const double wi = rooms[i].isDry ? 3.0 : 1.0; o += wi * res[i]; w += wi; }
+            return (float) (o / w);
+        };
+        printf ("De-Room 50 %% + De-Reverb 50 %%, objective = weighted LSD to dry\n");
+        printf ("restore 0 %%: train %.3f  test %.3f\n", run (train, 0.0f), run (test, 0.0f));
+        if (const char* e = getenv ("DFB_AIRTEST"))
+        {
+            gRestore.restoreMax = 0.7f; gRestore.maxBoostDb = 9.0f;
+            for (float air : { 0.0f, 0.3f, 0.6f })
+            {
+                gRestore.airMaxMix = air;
+                printf ("airMaxMix=%.1f: train 100%% %.3f | test 100%% %.3f\n", air, run (train, 1.0f), run (test, 1.0f)); fflush (stdout);
+            }
+            (void) e;
+            return 0;
+        }
+        for (float rm : { 0.3f, 0.5f, 0.7f, 1.0f })
+            for (float mb : { 6.0f, 9.0f, 12.0f })
+            {
+                gRestore.restoreMax = rm; gRestore.maxBoostDb = mb;
+                printf ("restoreMax=%.1f maxBoost=%2.0f dB: train 50%% %.3f 100%% %.3f | test 50%% %.3f 100%% %.3f\n",
+                        rm, mb, run (train, 0.5f), run (train, 1.0f), run (test, 0.5f), run (test, 1.0f));
+                fflush (stdout);
+            }
         return 0;
     }
     if (mode == "gate")

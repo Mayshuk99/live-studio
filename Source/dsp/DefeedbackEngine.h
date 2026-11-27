@@ -1,5 +1,6 @@
 #pragma once
-// Full processing chain:  input -> De-Feedback (notches) -> De-Noise + De-Room + De-Reverb -> Mute -> output
+// Full processing chain:
+//   input -> De-Feedback (notches) -> De-Noise + De-Room + De-Reverb (+ Voice Restore EQ) -> Air -> Mute -> output
 // Total latency: 0 samples.
 
 #include "FeedbackSuppressor.h"
@@ -35,6 +36,8 @@ public:
         muteTarget = mute ? 0.0f : 1.0f;
     }
 
+    void setRestore (float amount01) noexcept { cleaner.getRestorer().setAmount (amount01); }
+
     void setFeedbackTiming (float attackMs, float releaseSec, int ratio) noexcept
     {
         feedback.setTiming (attackMs, releaseSec, ratio);
@@ -44,6 +47,7 @@ public:
     {
         feedback.process (ch, numCh, numSamples);
         cleaner.process (ch, numCh, numSamples);
+        cleaner.getRestorer().processAir (ch, numCh, numSamples);
 
         if (! (muteGain == muteTarget && muteGain == 1.0f))
         {

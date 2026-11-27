@@ -11,6 +11,7 @@ namespace ParamIDs
     static const juce::ParameterID fbAttack { "fbAttack", 1 };
     static const juce::ParameterID fbRelease{ "fbRelease", 1 };
     static const juce::ParameterID fbRatio  { "fbRatio",  1 };
+    static const juce::ParameterID restore  { "restore",  1 };
 }
 
 DefeedbackAudioProcessor::DefeedbackAudioProcessor()
@@ -27,6 +28,8 @@ DefeedbackAudioProcessor::DefeedbackAudioProcessor()
     pAttack   = apvts.getRawParameterValue ("fbAttack");
     pRelease  = apvts.getRawParameterValue ("fbRelease");
     pRatio    = apvts.getRawParameterValue ("fbRatio");
+    pRestore  = apvts.getRawParameterValue ("restore");
+    if (! apvts.state.hasProperty ("graphSmoothing")) apvts.state.setProperty ("graphSmoothing", 30.0, nullptr);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout DefeedbackAudioProcessor::createParameterLayout()
@@ -60,6 +63,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout DefeedbackAudioProcessor::cr
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (ParamIDs::fbRatio, "Feedback Ratio",
                                                                     juce::StringArray { "1:1", "1:2", "1:3", "1:4" }, 3));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (ParamIDs::restore, "Voice Restore",
+                                                                   juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f, percent));
     return { params.begin(), params.end() };
 }
 
@@ -93,6 +98,7 @@ void DefeedbackAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                           pMute->load() > 0.5f,
                           pDeroom->load() * 0.01f);
     engine.setFeedbackTiming (pAttack->load(), pRelease->load(), juce::roundToInt (pRatio->load()) + 1);
+    engine.setRestore (pRestore->load() * 0.01f);
 
     const int numCh = juce::jmin (numIn, 2, buffer.getNumChannels());
     meterChannels.store (juce::jmax (1, numCh), std::memory_order_relaxed);

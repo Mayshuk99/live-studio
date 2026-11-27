@@ -48,6 +48,7 @@ int main (int argc, char** argv)
         const int block = argc > 7 ? atoi (argv[7]) : 256;
         eng->prepare (SR, 1);
         eng->setParameters (fb, nr, rv, false, getenv ("DFB_ROOM_AMT") ? (float) atof (getenv ("DFB_ROOM_AMT")) : 0.0f);
+        if (getenv ("DFB_RESTORE")) eng->setRestore ((float) atof (getenv ("DFB_RESTORE")));
         int maxNotches = 0;
         for (size_t p = 0; p < x.size(); p += (size_t) block)
         {
@@ -176,7 +177,8 @@ int main (int argc, char** argv)
             r[i] = nd (rng) + tone;
         }
         eng->prepare (SR, 2);
-        eng->setParameters (1, 1, 1, false);
+        eng->setParameters (1, 1, 1, false, 1);
+        eng->setRestore (1.0f);
         const auto t0 = std::chrono::high_resolution_clock::now();
         for (size_t p = 0; p < l.size(); p += 256)
         {
