@@ -21,18 +21,19 @@ var (
 	procTimeBeginPeriod  = winmm.NewProc("timeBeginPeriod")
 )
 
-// the engine and the camera readers run above normal (like OBS), the encoders below normal: the picture goes first
+// the engine and the camera readers run above normal (like OBS); each encoder as Live Studio asks (prio)
 func setOwnPriority() {
 	h, _, _ := procGetCurrentProc.Call()
 	procSetPriorityClass.Call(h, aboveNormalPriorityClass)
 	procTimeBeginPeriod.Call(1) // 1 ms timer resolution for the frame clock
 }
 
-func procAttr(cmd *exec.Cmd, high bool) {
+// level: 1 above normal, 0 normal, -1 below normal
+func procAttr(cmd *exec.Cmd, level int) {
 	flags := uint32(createNoWindow)
-	if high {
+	if level > 0 {
 		flags |= aboveNormalPriorityClass
-	} else {
+	} else if level < 0 {
 		flags |= belowNormalPriorityClass
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: flags}

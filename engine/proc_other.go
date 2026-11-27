@@ -5,4 +5,4 @@ package main
 import "os/exec"
 
 func setOwnPriority()                   {}
-func procAttr(cmd *exec.Cmd, high bool) {}
+func procAttr(cmd *exec.Cmd, level int) {}

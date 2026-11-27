@@ -11,6 +11,7 @@ if (process.argv[4] === '--iso-net') { require('./engine-selftest-isonet')(exe, 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ls-engine-test-'));
 const e = new NativeEngine();
 const stats = []; let exited = null, ready = false, camOk = false, outLines = [], pv = 0, pvBad = 0, pvFlat = 0;
+const videoLog = [];
 const PW = 640, PH = 360; // the window's camera pictures (YUV 4:2:0, see engine/preview.go)
 e.on('msg', (h, payload) => {
   if (h.ev === 'cam-frame') {
@@ -21,7 +22,7 @@ e.on('msg', (h, payload) => {
   else if (h.ev === 'cam-status' && h.ok) camOk = true;
   else if (h.ev === 'out-exit') exited = h;
   else if (h.ev === 'out-log' && !/^frame=/.test(h.line)) outLines.push(h.line);
-  else if (h.ev === 'log') console.log('engine:', h.line);
+  else if (h.ev === 'log') { console.log('engine:', h.line); if (/^video /.test(h.line)) videoLog.push(h.line); }
 });
 const fail = msg => { console.error('FAIL', msg); process.exit(1); };
 if (!e.start(exe, { w: W, h: H, fpsNum: 60000, fpsDen: 1001, ffmpeg: ff })) fail('engine did not start');
@@ -37,6 +38,12 @@ at(1.5, () => e.send({ cmd: 'output-start', id: 'r1', args: recordArgs({ engine:
 at(2.5, () => e.send({ cmd: 'overlay', id: 'g', sw: ow, sh: oh, x: 40, y: H - 120, w: ow, h: oh, premult: false, visible: true, fadeMs: 200, z: 10 }, px));
 at(3.5, () => e.send({ cmd: 'black', on: true, ms: 300 }));
 at(6, () => e.send({ cmd: 'output-stop', id: 'r1' }));
+// a video file on air (decoded on the graphics card when there is one — this build machine has none, so the processor)
+const vid = path.join(dir, 'clip.mp4');
+require('child_process').execFileSync(ff, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', vid]);
+let vidPos = 0;
+e.on('msg', h => { if (h.ev === 'stats' && h.videos && h.videos.v1) vidPos = Math.max(vidPos, h.videos.v1.pos || 0); });
+at(6.5, () => { e.send({ cmd: 'video', id: 'v1', path: vid, name: 'Test clip', loop: false }); e.send({ cmd: 'video-state', id: 'v1', playing: true, t: 0 }); e.send({ cmd: 'program', base: { src: 'v1' }, ms: 0 }); });
 at(12, async () => {
   clearInterval(aud);
   await e.stop();
@@ -47,6 +54,9 @@ at(12, async () => {
   if (!ready) fail('engine never became ready');
   if (!camOk) fail('fake camera never delivered');
   if (ticks < 400) fail(`too few frames (${ticks})`);
+  const vidLine = videoLog.find(l => /Test clip: h264 1280×720 30 fps · decoded/.test(l));
+  console.log(`video file: played to ${vidPos.toFixed(2)} s · ${vidLine || 'no info line'}`);
+  if (!vidLine || vidPos < 2) fail('the video file did not play through the engine');
   if (pv < 100 || pvBad || pvFlat > pv / 10) fail(`camera pictures for the window: ${pv} good, ${pvBad} wrong, ${pvFlat} flat`);
   if (!exited || exited.code !== 0) fail('recording did not finish cleanly');
   if (size < 20000) fail(`recording too small (${size} bytes)`);

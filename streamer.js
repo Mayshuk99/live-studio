@@ -285,6 +285,16 @@ function stamp() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
 }
 
+/* how much of the processor an encoder may claim when the PC is fully busy (1 above normal, 0 normal, -1 below).
+   A graphics-card encoder (NVENC / Quick Sync / AMF) or a copy needs very little, so the stream and the recording run
+   above normal: other programs can never starve them (they did: at 100% the stream fell to 0.7× and lost frames).
+   A software encoder (x264) runs at normal, so it cannot starve the picture; ISO files below normal. */
+function encPriority(o, args) {
+  if (o.kind === 'iso') return -1;
+  const i = (args || []).indexOf('-c:v'), c = i >= 0 ? String(args[i + 1] || '') : '';
+  return /_(nvenc|qsv|amf|mf|vaapi|videotoolbox)$/.test(c) || c === 'copy' ? 1 : 0;
+}
+
 class OutputManager extends EventEmitter {
   constructor(ffmpegPath) {
     super();
@@ -326,8 +336,7 @@ class OutputManager extends EventEmitter {
     const viaEngine = !!o.engine && o.kind !== 'native';
     if (viaEngine && !(this.engine && this.engine.ready)) throw new Error('The native engine is not running.');
     const proc = viaEngine ? this._engineProc(id, args, o) : spawn(this.ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
-    // the encoder has time to spare (speed stays above 1×); the program's picture does not — it goes first
-    try { if (proc.pid) require('os').setPriority(proc.pid, require('os').constants.priority.PRIORITY_BELOW_NORMAL); } catch (e) { /* not allowed */ }
+    if (!viaEngine) { const P = require('os').constants.priority, lv = encPriority(o, args); try { if (proc.pid) require('os').setPriority(proc.pid, lv > 0 ? P.PRIORITY_ABOVE_NORMAL : lv < 0 ? P.PRIORITY_BELOW_NORMAL : P.PRIORITY_NORMAL); } catch (e) { /* not allowed */ } }
     const out = { id, kind: o.kind, proc, finalFile, partFile, stopping: false, err: [], first: [], frames: 0, bytes: 0, viaEngine };
     this.outs.set(id, out);
     proc.stdin.on('error', () => { /* handled by exit */ });
@@ -414,7 +423,7 @@ class OutputManager extends EventEmitter {
     p.stdin = { writable: false, writableLength: 0, on() {}, write() {}, end() {} };
     p.kill = () => { if (this.engine) this.engine.send({ cmd: 'output-kill', id }); setTimeout(() => this._engineExit(id, -9), 3000); };
     // src: an ISO recording of that camera; group: started together (the recording and its ISO files)
-    this.engine.send({ cmd: 'output-start', id, args, src: (o && o.kind === 'iso' && o.src) || '', group: (o && o.group) || '', groupSize: (o && o.groupSize) || 0 });
+    this.engine.send({ cmd: 'output-start', id, args, src: (o && o.kind === 'iso' && o.src) || '', group: (o && o.group) || '', groupSize: (o && o.groupSize) || 0, prio: encPriority(o || {}, args) });
     return p;
   }
   engineEvent(h) {
@@ -511,4 +520,4 @@ async function probeDecode(ffmpegPath) {
   } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* */ } }
 }
 
-module.exports = { OutputManager, streamArgs, recordArgs, x264Opts, netArgs, isoArgs, ISO_CODECS, nativeArgs, captureArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode };
+module.exports = { OutputManager, streamArgs, recordArgs, x264Opts, netArgs, isoArgs, ISO_CODECS, nativeArgs, captureArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode, encPriority };

@@ -639,7 +639,7 @@
       if (!m || !m.el) return null;
       if (M.videos.get(src) !== m.el) {
         M.videos.set(src, m.el);
-        S.nativeSend({ cmd: 'video', id: src, path: f.path, loop: !!f.loop });
+        S.nativeSend({ cmd: 'video', id: src, path: f.path, name: f.name || '', loop: !!f.loop });
         if (f.color) S.nativeSend(Object.assign({ cmd: 'color', id: src }, f.color));
         const v = m.el, st = () => { if (NAT.M === M && M.videos.get(src) === v) S.nativeSend({ cmd: 'video-state', id: src, playing: !v.paused && !v.ended, t: v.currentTime }); };
         for (const ev of ['play', 'playing', 'pause', 'seeked', 'ended']) v.addEventListener(ev, st);

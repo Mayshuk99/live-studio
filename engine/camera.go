@@ -160,7 +160,7 @@ func (c *Camera) loop() {
 			args = append(args, "-an", "-sn", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", fmt.Sprintf("%dx%d", c.W, c.H), "-")
 			cmd = exec.Command(c.e.ffmpeg, args...)
 		}
-		procAttr(cmd, true)
+		procAttr(cmd, 1)
 		out, err := cmd.StdoutPipe()
 		if err != nil {
 			c.setStatus(false, err.Error())

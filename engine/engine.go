@@ -268,7 +268,7 @@ func (e *Engine) command(cmd string, m Msg, payload []byte) {
 		e.mu.Unlock()
 	case "video":
 		id := m.str("id")
-		v := newVideo(e, id, m.str("path"), m.boolean("loop"))
+		v := newVideo(e, id, m.str("path"), m.str("name"), m.boolean("loop"))
 		e.mu.Lock()
 		old := e.videos[id]
 		e.videos[id] = v
@@ -339,7 +339,11 @@ func (e *Engine) command(cmd string, m Msg, payload []byte) {
 			e.audio.push(s, ch, m.num("rate"))
 		}
 	case "output-start":
-		e.startOutput(m.str("id"), m.strs("args"), m.str("src"), m.str("group"), int(m.num("groupSize")))
+		prio := -1 // (older Live Studio: below normal)
+		if m.has("prio") {
+			prio = int(m.num("prio"))
+		}
+		e.startOutput(m.str("id"), m.strs("args"), m.str("src"), m.str("group"), int(m.num("groupSize")), prio)
 	case "output-stop":
 		e.stopOutput(m.str("id"), false)
 	case "output-kill":

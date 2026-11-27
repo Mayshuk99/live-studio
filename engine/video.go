@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +16,15 @@ import (
 A video file: FFmpeg decodes it at the output frame rate; the mixer takes exactly one frame per output frame
 
 	while it plays (the pipe makes FFmpeg wait while paused). The sound still plays in Live Studio's window.
+	FFmpeg decodes on the graphics card when it can (-hwaccel auto: a 4K HEVC phone video took two processor cores
+	in software, and at a full processor the video stuttered on air); if that fails before the first picture it
+	tries once more on the processor.
 */
 type Video struct {
 	id, path string
+	name     string
 	loop     bool
+	soft     bool // the graphics card could not decode it: the processor does
 	e        *Engine
 	mu       sync.Mutex
 	cur      *Frame
@@ -32,8 +38,11 @@ type Video struct {
 	repeats  int
 }
 
-func newVideo(e *Engine, id, path string, loop bool) *Video {
-	v := &Video{id: id, path: path, loop: loop, e: e, free: make(chan *Frame, 6)}
+func newVideo(e *Engine, id, path, name string, loop bool) *Video {
+	if name == "" {
+		name = id
+	}
+	v := &Video{id: id, path: path, name: name, loop: loop, e: e, free: make(chan *Frame, 6)}
 	v.restart(0)
 	return v
 }
@@ -75,9 +84,23 @@ func (v *Video) recycle(f *Frame) {
 	}
 }
 
+// what FFmpeg says about the file and the decoding (it prints this before the first picture)
+var (
+	reVidStream = regexp.MustCompile(`Stream #0:\d+.*?: Video: (\w+)`)
+	reVidSize   = regexp.MustCompile(`, (\d{2,5})x(\d{2,5})`)
+	reVidFps    = regexp.MustCompile(`, ([\d.]+) fps`)
+	reVidHW     = regexp.MustCompile(`Using auto hwaccel type (\w+)`)
+)
+
 func (v *Video) decode(gen int, t float64) {
 	e := v.e
-	args := []string{"-hide_banner", "-loglevel", "error", "-nostats", "-nostdin"}
+	v.mu.Lock()
+	soft := v.soft
+	v.mu.Unlock()
+	args := []string{"-hide_banner", "-loglevel", "verbose", "-nostats", "-nostdin"}
+	if !soft {
+		args = append(args, "-hwaccel", "auto")
+	}
 	if v.loop {
 		args = append(args, "-stream_loop", "-1")
 	}
@@ -88,7 +111,7 @@ func (v *Video) decode(gen int, t float64) {
 		"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1", e.W, e.H, e.W, e.H),
 		"-r", fmt.Sprintf("%d/%d", e.fpsNum, e.fpsDen), "-f", "rawvideo", "-pix_fmt", "yuv420p", "-")
 	cmd := exec.Command(e.ffmpeg, args...)
-	procAttr(cmd, false)
+	procAttr(cmd, 0) // normal: it is on air like the cameras, but must not crowd out the engine and the encoders
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return
@@ -108,14 +131,41 @@ func (v *Video) decode(gen int, t float64) {
 	v.cmd = cmd
 	ch := v.next
 	v.mu.Unlock()
+	var infoMu sync.Mutex
+	var codec, hw string
+	var errs []string
+	errDone := make(chan struct{})
 	go func() {
+		defer close(errDone)
 		sc := bufio.NewScanner(errp)
 		for sc.Scan() {
-			if l := strings.TrimSpace(sc.Text()); l != "" {
-				logOnce("vid-"+v.id+l, 30*time.Second, "video %s: %s", v.id, l)
+			l := strings.TrimSpace(sc.Text())
+			infoMu.Lock()
+			if m := reVidStream.FindStringSubmatch(l); m != nil && codec == "" { // the file's (the first one)
+				codec = m[1]
+				if z := reVidSize.FindStringSubmatch(l); z != nil {
+					codec += " " + z[1] + "×" + z[2]
+				}
+				if f := reVidFps.FindStringSubmatch(l); f != nil {
+					codec += " " + f[1] + " fps"
+				}
+			} else if m := reVidHW.FindStringSubmatch(l); m != nil {
+				hw = m[1]
+			} else if strings.Contains(l, "Device creation") || strings.Contains(l, "AVHWDeviceContext") || strings.Contains(l, "hwaccel") ||
+				strings.Contains(l, "packets read") || strings.Contains(l, "frames decoded") || strings.Contains(l, "packets muxed") || strings.Contains(l, "frames encoded") {
+				// trying the graphics card's decoders one by one: not worth a line in the log
+			} else if strings.Contains(l, "rror") || strings.Contains(l, "ailed") || strings.Contains(l, "nvalid") {
+				if len(errs) < 6 {
+					errs = append(errs, l)
+				}
+				infoMu.Unlock()
+				logOnce("vid-"+v.id+l, 30*time.Second, "video %s: %s", v.name, l)
+				continue
 			}
+			infoMu.Unlock()
 		}
 	}()
+	frames := 0
 	r := bufio.NewReaderSize(out, 4<<20)
 	for {
 		var f *Frame
@@ -128,6 +178,23 @@ func (v *Video) decode(gen int, t float64) {
 			v.recycle(f)
 			break
 		}
+		if frames++; frames == 1 {
+			time.AfterFunc(700*time.Millisecond, func() { // (FFmpeg's own lines may still be on their way)
+				infoMu.Lock()
+				c, h := codec, hw
+				infoMu.Unlock()
+				how := "decoded by the processor"
+				if h != "" {
+					how = "decoded on the graphics card (" + h + ")"
+				} else if !soft {
+					how = "decoded by the processor (the graphics card can't decode this one)"
+				}
+				if c == "" {
+					c = "?"
+				}
+				logOnce("vid-info-"+v.id, 20*time.Second, "video %s: %s · %s", v.name, c, how)
+			})
+		}
 		v.mu.Lock()
 		cur := v.gen == gen
 		v.mu.Unlock()
@@ -138,11 +205,22 @@ func (v *Video) decode(gen int, t float64) {
 		ch <- f // waits while paused / ahead
 	}
 	cmd.Wait()
+	<-errDone
 	v.mu.Lock()
-	if v.gen == gen {
+	retry := v.gen == gen && frames == 0 && !v.soft
+	if retry {
+		v.soft = true
+	} else if v.gen == gen {
 		v.ended = true
 	}
 	v.mu.Unlock()
+	if retry { // nothing came with the graphics card: once more on the processor
+		infoMu.Lock()
+		why := strings.Join(errs, " / ")
+		infoMu.Unlock()
+		logf("video %s: no picture with graphics-card decoding — decoding on the processor instead (%s)", v.name, why)
+		go v.decode(gen, t)
+	}
 }
 
 // called once per output frame: the frame to show

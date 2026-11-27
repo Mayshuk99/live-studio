@@ -51,7 +51,7 @@ type Output struct {
 	gsize   int
 }
 
-func (e *Engine) startOutput(id string, args []string, src, group string, gsize int) {
+func (e *Engine) startOutput(id string, args []string, src, group string, gsize, prio int) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		send(Msg{"ev": "out-exit", "id": id, "code": -1, "error": "no local port for the sound: " + err.Error()}, nil)
@@ -63,7 +63,7 @@ func (e *Engine) startOutput(id string, args []string, src, group string, gsize 
 		a[i] = strings.ReplaceAll(s, "{AUDIOPORT}", port)
 	}
 	cmd := exec.Command(e.ffmpeg, a...)
-	procAttr(cmd, false)
+	procAttr(cmd, prio)
 	stdin, err1 := cmd.StdinPipe()
 	errp, err2 := cmd.StderrPipe()
 	if err1 != nil || err2 != nil {
