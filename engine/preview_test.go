@@ -121,3 +121,35 @@ func TestYUVSmallSpeed(t *testing.T) {
 		t.Logf("%dx%d: %.2f ms a picture (%d threads)", pw, ph, float64(time.Since(t0).Microseconds())/1000/n, workers)
 	}
 }
+
+// the fast ways give the same picture as the general one (within one level)
+func TestFastPathsMatch(t *testing.T) {
+	sw, sh := 1920, 1080
+	src := make([]byte, sw*sh)
+	for i := range src {
+		src[i] = uint8((i*7919 + i/sw*31) % 251)
+	}
+	for _, d := range [][2]int{{960, 540}, {640, 360}, {384, 216}, {1280, 720}, {1000, 560}, {2400, 1350}} {
+		dw, dh := d[0], d[1]
+		fast := make([]byte, dw*dh)
+		resizePlane(src, sw, sh, sw, fast, 0, dw, dh, dw)
+		slow := make([]byte, dw*dh)
+		tx, ty := makeTaps(sw, dw), makeTaps(sh, dh)
+		for y := 0; y < dh; y++ {
+			for x := 0; x < dw; x++ {
+				var acc int64
+				for j := 0; j < int(ty.cnt[y]); j++ {
+					for i := 0; i < int(tx.cnt[x]); i++ {
+						acc += int64(ty.w[int(ty.off[y])+j]) * int64(tx.w[int(tx.off[x])+i]) * int64(src[(int(ty.start[y])+j)*sw+int(tx.start[x])+i])
+					}
+				}
+				slow[y*dw+x] = uint8((acc + 1<<23) >> 24)
+			}
+		}
+		for i := range fast {
+			if d := int(fast[i]) - int(slow[i]); d < -1 || d > 1 {
+				t.Fatalf("%dx%d: pixel %d fast %d, exact %d", dw, dh, i, fast[i], slow[i])
+			}
+		}
+	}
+}

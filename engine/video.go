@@ -221,7 +221,7 @@ func (v *Video) decode(gen int, t float64) {
 		}
 	}()
 	frames := 0
-	r := bufio.NewReaderSize(pr, 4<<20)
+	r := pr // (straight into the frame: no second copy through a read buffer)
 	for {
 		var f *Frame
 		select {

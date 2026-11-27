@@ -16,6 +16,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"runtime/pprof"
 	"sync"
 	"time"
 )
@@ -139,6 +140,12 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	debug.SetGCPercent(300)
 	setOwnPriority()
+	if f := os.Getenv("LS_ENGINE_PROFILE"); f != "" { // for development: where the engine spends its processor time
+		if pf, err := os.Create(f); err == nil {
+			pprof.StartCPUProfile(pf)
+			defer pprof.StopCPUProfile()
+		}
+	}
 	in := bufio.NewReaderSize(os.Stdin, 4<<20)
 	var eng *Engine
 	for {

@@ -201,7 +201,7 @@ func (c *Camera) loop() {
 			}
 		}()
 		c.setStatus(false, "Connecting…")
-		r := bufio.NewReaderSize(out, 4<<20)
+		r := out // (straight into the frame: no second copy through a read buffer)
 		got := 0
 		for {
 			c.mu.Lock()

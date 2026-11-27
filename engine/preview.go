@@ -121,29 +121,83 @@ func resizePlane(src []byte, sw, sh, sstride int, dst []byte, doff, dw, dh, dstr
 		})
 		return
 	}
+	if n := sw / dw; n >= 2 && n*dw == sw && n*dh == sh {
+		boxDown(src, sstride, dst, doff, dw, dh, dstride, n)
+		return
+	}
+	if sw*2 == dw*3 && sh*2 == dh*3 && dw%2 == 0 && dh%2 == 0 {
+		twoThirds(src, sstride, dst, doff, dw, dh, dstride)
+		return
+	}
+	// any other size: each output pixel from its taps across, then its taps down (whole numbers, 12-bit weights)
 	tx, ty := tapsFor(sw, dw), tapsFor(sh, dh)
-	const round = int64(1) << (2*tapBits - 1)
 	parallel(dh, func(y0, y1 int) {
+		acc := make([]int32, dw)
 		for y := y0; y < y1; y++ {
 			ys, yo, yn := int(ty.start[y]), int(ty.off[y]), int(ty.cnt[y])
-			row := dst[doff+y*dstride : doff+y*dstride+dw]
-			for x := 0; x < dw; x++ {
-				xs, xo, xn := int(tx.start[x]), int(tx.off[x]), int(tx.cnt[x])
-				wx := tx.w[xo : xo+xn]
-				var acc int64
-				for j := 0; j < yn; j++ {
-					line := src[(ys+j)*sstride+xs : (ys+j)*sstride+xs+xn]
+			for i := range acc {
+				acc[i] = 0
+			}
+			for j := 0; j < yn; j++ {
+				line := src[(ys+j)*sstride : (ys+j)*sstride+sw]
+				wy := ty.w[yo+j]
+				for x := range acc {
+					xs, xo, xn := int(tx.start[x]), int(tx.off[x]), int(tx.cnt[x])
+					w, l := tx.w[xo:xo+xn], line[xs:xs+xn]
 					var s int32
-					for i, w := range wx {
-						s += w * int32(line[i])
+					for i, wi := range w {
+						s += wi * int32(l[i])
 					}
-					acc += int64(s) * int64(ty.w[yo+j])
+					acc[x] += (s >> 4) * wy // 8 + 12 fraction bits: stays well inside 31 bits
 				}
-				v := (acc + round) >> (2 * tapBits)
+			}
+			out := dst[doff+y*dstride : doff+y*dstride+dw]
+			for x, a := range acc {
+				v := (a + 1<<19) >> 20
 				if v > 255 {
 					v = 255
+				} else if v < 0 {
+					v = 0
 				}
-				row[x] = uint8(v)
+				out[x] = uint8(v)
+			}
+		}
+	})
+}
+
+// exactly n times smaller both ways (1080p → 960×540 is 2, → 640×360 is 3, → 384×216 is 5): the plain average
+// of each n × n square
+func boxDown(src []byte, sstride int, dst []byte, doff, dw, dh, dstride, n int) {
+	recip := uint32((65536 + n*n/2) / (n * n))
+	parallel(dh, func(y0, y1 int) {
+		acc := make([]uint32, dw)
+		for y := y0; y < y1; y++ {
+			for i := range acc {
+				acc[i] = 0
+			}
+			for j := 0; j < n; j++ {
+				o := (y*n + j) * sstride
+				row := src[o : o+dw*n]
+				if n == 2 {
+					_ = row[2*dw-1]
+					for x := range acc {
+						acc[x] += uint32(row[2*x]) + uint32(row[2*x+1])
+					}
+					continue
+				}
+				for x := range acc {
+					r := row[x*n : x*n+n]
+					var s uint32
+					for _, b := range r {
+						s += uint32(b)
+					}
+					acc[x] += s
+				}
+			}
+			out := dst[doff+y*dstride : doff+y*dstride+dw]
+			_ = out[len(acc)-1]
+			for x, a := range acc {
+				out[x] = uint8((a*recip + 1<<15) >> 16)
 			}
 		}
 	})
@@ -156,4 +210,32 @@ func toYUVSmall(f *Frame, pw, ph int, out []byte) {
 	n := pw * ph
 	resizePlane(f.U(), W/2, H/2, W/2, out, n, pw/2, ph/2, pw)
 	resizePlane(f.V(), W/2, H/2, W/2, out, n+pw/2, pw/2, ph/2, pw)
+}
+
+// exactly 2/3 the size (1080p → 1280×720): every 3 × 3 square of pixels becomes 2 × 2, each the average of the area
+// it covers — (2a + b)/3 and (b + 2c)/3 across, the same down
+func twoThirds(src []byte, sstride int, dst []byte, doff, dw, dh, dstride int) {
+	const recip = (65536 + 4) / 9
+	sw := dw * 3 / 2
+	parallel(dh/2, func(p0, p1 int) {
+		v0, v1 := make([]uint32, sw), make([]uint32, sw)
+		for p := p0; p < p1; p++ {
+			r0 := src[(p*3)*sstride : (p*3)*sstride+sw]
+			r1 := src[(p*3+1)*sstride : (p*3+1)*sstride+sw]
+			r2 := src[(p*3+2)*sstride : (p*3+2)*sstride+sw]
+			for x := range v0 {
+				a, b, c := uint32(r0[x]), uint32(r1[x]), uint32(r2[x])
+				v0[x], v1[x] = 2*a+b, b+2*c
+			}
+			o0 := dst[doff+(p*2)*dstride : doff+(p*2)*dstride+dw]
+			o1 := dst[doff+(p*2+1)*dstride : doff+(p*2+1)*dstride+dw]
+			for k := 0; k < dw/2; k++ {
+				i := 3 * k
+				o0[2*k] = uint8(((2*v0[i]+v0[i+1])*recip + 1<<15) >> 16)
+				o0[2*k+1] = uint8(((v0[i+1]+2*v0[i+2])*recip + 1<<15) >> 16)
+				o1[2*k] = uint8(((2*v1[i]+v1[i+1])*recip + 1<<15) >> 16)
+				o1[2*k+1] = uint8(((v1[i+1]+2*v1[i+2])*recip + 1<<15) >> 16)
+			}
+		}
+	})
 }
