@@ -344,7 +344,20 @@ func (e *Engine) command(cmd string, m Msg, payload []byte) {
 		if m.has("prio") {
 			prio = int(m.num("prio"))
 		}
-		e.startOutput(m.str("id"), m.strs("args"), m.str("src"), m.str("group"), int(m.num("groupSize")), prio)
+		// enc + encArgs: encode inside the engine when that works here (FFmpeg then only adds the sound and sends / saves)
+		var enc *encCfg
+		if m.has("enc") && len(m.strs("encArgs")) > 0 && m.str("src") == "" {
+			enc = encCfgOf(m.obj("enc"), e)
+		}
+		e.startOutput(m.str("id"), m.strs("args"), m.str("src"), m.str("group"), int(m.num("groupSize")), prio, enc, m.strs("encArgs"), int(m.num("soundSkipMs")))
+	case "enc-probe":
+		// would the encoder inside the engine work here? (asked when it is switched on in Settings; the answer goes to the log
+		// and the window — the same test runs by itself before an output uses it)
+		c := encCfg{Kind: "nvenc", W: e.W, H: e.H, FpsNum: e.fpsNum, FpsDen: e.fpsDen}
+		go func() {
+			p := probeEncoder(c, e.ffmpeg)
+			send(Msg{"ev": "enc-probe", "ok": p.OK, "card": p.Card, "error": p.Error, "stage": p.Stage, "noCard": p.NoCard, "api": p.API, "match": p.Match}, nil)
+		}()
 	case "output-stop":
 		e.stopOutput(m.str("id"), false)
 	case "output-kill":
@@ -922,7 +935,7 @@ func (e *Engine) sendStats() {
 		v.mu.Unlock()
 	}
 	for id, o := range e.outputs {
-		outs[id] = Msg{"dropped": o.dropped}
+		outs[id] = Msg{"dropped": o.dropped, "enc": o.encName, "encMs": math.Round(float64(o.encNs.Swap(0))/float64(max64(1, o.encN.Swap(0)))/1e4) / 100}
 	}
 	st := e.st
 	e.st.ticks, e.st.late, e.st.resync, e.st.pgmRepeat, e.st.pgmSkip = 0, 0, 0, 0, 0

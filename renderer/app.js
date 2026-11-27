@@ -523,7 +523,7 @@
   function natCloseCamera(id) { if (NAT.cams.delete(id) && NAT.ready) { S.nativeSend({ cmd: 'camera-close', id }); natPreviewCams(); } }
   if (S.onNative) S.onNative((h, payload) => {
     switch (h.ev) {
-      case 'ready': NAT.ready = true; NAT.monSaid = null; logEvent('ENGINE', `ready · ${h.w}×${h.h} · ${h.threads} threads`); natResync(); break;
+      case 'ready': NAT.ready = true; NAT.monSaid = null; logEvent('ENGINE', `ready · ${h.w}×${h.h} · ${h.threads} threads`); natResync(); natEncProbe(false); break;
       case 'cam-status': {
         const cam = camById(h.id), d = NAT.cams.get(h.id);
         rt.camStatus.set(h.id, { ok: h.ok, text: h.ok ? (d && d.dev.net ? `${d.dev.name} · ${d.dev.w}×${d.dev.h} · native` : d && d.dev.deint ? `${d.dev.label} · deinterlaced · native (${d.dev.name} ${d.dev.n + 1})` : `${d ? d.dev.w : natW()}×${d ? d.dev.h : natH()} · ${settings.output.fps} fps · native${d ? ` (${d.dev.name} ${d.dev.n + 1})` : ''}`) : h.text });
@@ -535,11 +535,18 @@
       case 'stats': rt.engStats = h; natAuto(h); isoCheck(h); break;
       case 'audio-port-ok': NAT.portOK = true; logEvent('ENGINE', 'sound goes straight from the sound thread to the engine'); break;
       case 'log': logEvent('ENGINE', h.line); break;
+      case 'enc-probe': // the answer to natEncProbe() below (the engine also wrote it to the log)
+        rt.encProbe = h;
+        if (NAT.encAsked) { NAT.encAsked = false; toast(h.ok ? `The NVIDIA encoder inside the engine passed its test (${h.card}). It is used from the next time the stream or recording starts.` : h.noCard ? `No NVIDIA encoder was found here (${h.error}) — FFmpeg keeps encoding.` : `The NVIDIA encoder inside the engine did not pass its test: ${h.error} — FFmpeg keeps encoding.`, h.ok ? 'ok' : 'error'); }
+        if (rt.encProbeDraw) rt.encProbeDraw();
+        break;
       case 'exit':
         if (NAT.on) { NAT.ready = false; NAT.cams.clear(); logEvent('ENGINE', `stopped (${h.error || 'code ' + h.code}) — restarting`); toast('The native engine stopped — restarting it…', 'error'); }
         break;
     }
   });
+  // ask the engine to test its own NVIDIA encoder now (when it is switched on, and each time the engine starts with it on)
+  function natEncProbe(say) { if (!NAT.ready || settings.output.encoder !== 'nvenc' || settings.output.engineEncoder !== 'on') return; NAT.encAsked = !!say; S.nativeSend({ cmd: 'enc-probe' }); }
   async function natStart() {
     if (!S.nativeStart) return false;
     const [num, den] = fpsND(settings.output.fps || 59.94);
@@ -1759,7 +1766,7 @@
         const encoder = fb >= 2 ? 'x264' : enc0, safe = fb === 1;
         this.enc0 = enc0; this.conv = !!(rec && rec.fps > 0 && Math.abs(rec.fps - o.fps) > 0.1);
         const fx = vstMs(); // the master plug-ins put the sound this much behind: the picture waits for it
-        const base = { engine: true, width: o.width, height: o.height, videoDelayMs: (o.videoDelayMs ?? 20) + fx, fps: o.fps, encoder, safe };
+        const base = { engine: true, width: o.width, height: o.height, videoDelayMs: (o.videoDelayMs ?? 20) + fx, fps: o.fps, encoder, safe, engineEncoder: o.engineEncoder === 'on' };
         if (fx) logEvent('ENCODER', `${this.kind}: picture delayed ${(o.videoDelayMs ?? 20) + fx} ms (sync ${o.videoDelayMs ?? 20} + plug-ins ${fx})`);
         const opts = this.kind === 'stream'
           ? Object.assign({ kind: 'stream', url, bitrate: kbps, audioBitrate: akbps, adv: rec }, base)
@@ -1971,6 +1978,8 @@
     if (ev.type !== 'log' && extraEvent(ev)) return;
     // FFmpeg's own messages go to the log (the first 25 of each output — enough to see what went wrong)
     if (ev.type === 'log') { rt.ffLines = rt.ffLines || {}; const n = rt.ffLines[ev.id] = (rt.ffLines[ev.id] || 0) + 1; if (n <= 25) logEvent('ENCODER', `${ev.kind}: ${String(ev.line).slice(0, 300)}`); }
+    // (which outputs the engine encodes itself: engine/encoder.go)
+    if (ev.type === 'engine-encoder') { logEvent('ENCODER', `${ev.kind}: encoded inside the native engine by ${ev.card} — FFmpeg only adds the sound and ${ev.kind === 'stream' ? 'sends' : 'saves'}`); rt.engEnc = rt.engEnc || {}; rt.engEnc[ev.kind] = ev.card; return; }
     if (ev.type === 'stats') {
       if (ev.kind === 'stream') { rt.liveStats = ev; if (rt.reconnPending && ev.frame > 30) { rt.reconnPending = false; rt.reconnects = 0; toast('Stream is running again.', 'ok'); } }
       else rt.recStats = ev;
@@ -1995,6 +2004,14 @@
           renderHeader();
           return;
         }
+      }
+      // the encoder inside the engine went wrong: straight back on, encoded by FFmpeg as before
+      if (ev.engineEncoderFailed && mineOut) {
+        toast('The encoder inside the engine stopped — FFmpeg encodes from now on (see the log).', 'error');
+        if (ev.kind === 'stream') { rt.reconnects = 0; reconnect(300); }
+        else { const o2 = rt.rec; rt.rec = null; o2.active = false; o2.stopRecorder().then(startRec); }
+        renderHeader();
+        return;
       }
       if (ev.kind === 'stream' && rt.live && rt.live.id === ev.id) {
         toast(`Stream connection problem: ${ev.error || 'disconnected'}. Reconnecting…`, 'error');
@@ -5025,6 +5042,14 @@
     const s = settings, o = s.output, y = s.youtube;
     const live = !!(rt.live || rt.rec);
     let outWarnDraw = () => {};
+    // what the engine's own test of its NVIDIA encoder said (filled in when the answer comes)
+    const encProbeEl = el('div', { style: 'font-size:.9em;margin-top:4px' });
+    const encProbeDraw = rt.encProbeDraw = () => {
+      const p = o.engineEncoder === 'on' ? rt.encProbe : null;
+      encProbeEl.className = p ? (p.ok ? 'status-ok' : 'status-bad') : 'muted';
+      encProbeEl.textContent = T(!p ? (o.engineEncoder === 'on' && NAT.ready ? 'Testing the encoder…' : '') : p.ok ? `Test passed: ${p.card}` : p.noCard ? `Not available here: ${p.error}` : `Test failed (${p.stage}): ${p.error}`);
+    };
+    encProbeDraw();
     const keyInput = el('input', { type: 'password', value: y.key, placeholder: 'Paste your stream key', class: 'grow', autocomplete: 'off', oninput: e => { y.key = e.target.value.trim(); saveSettings(); } });
     const customRow = el('div', { class: 'field' + (y.server === 'custom' ? '' : ' hidden') }, el('span', null, 'Server address (RTMP/RTMPS)'), el('input', { type: 'text', value: y.custom, placeholder: 'rtmps://…', oninput: e => { y.custom = e.target.value; saveSettings(); } }));
     const version = await S.version();
@@ -5224,7 +5249,11 @@
           el('span', { class: 'muted' }, 'ms the picture waits for the sound (if lips move before you hear the words, raise it; starts with the next stream/recording)'))) : null,
         (o.engine || 'classic') === 'native' ? el('div', { class: 'field' }, el('span', null, 'Cameras on the screen (native)'),
           select(Object.entries(NAT_MON).map(([k, m]) => [k, m.label]), NAT_MON[o.natMon] ? o.natMon : 'sharp', v => { o.natMon = v; saveSettings(); if (NAT.ready) natPreviewCams(); }),
-          el('span', { class: 'muted', style: 'font-size:.85em' }, 'Only how the monitors in this window look — YouTube and the recording always get the full picture. Higher uses a little more of the processor.')) : null),
+          el('div', { class: 'muted', style: 'font-size:.85em' }, 'Only how the monitors in this window look — YouTube and the recording always get the full picture. Higher uses a little more of the processor.')) : null,
+        (o.engine || 'classic') === 'native' && o.encoder === 'nvenc' ? el('div', { class: 'field' }, el('span', null, 'NVIDIA encoder inside the engine (new)'),
+          select([['off', 'Off — FFmpeg encodes, as before'], ['on', 'On — when it passes its test']], o.engineEncoder === 'on' ? 'on' : 'off', v => { o.engineEncoder = v; saveSettings(); logEvent('SETTINGS', `NVIDIA encoder inside the engine: ${v}`); rt.encProbe = null; encProbeDraw(); if (v === 'on') natEncProbe(true); }),
+          el('div', { class: 'muted', style: 'font-size:.85em' }, 'The way OBS does it: the pictures go from the engine straight to the graphics card’s encoder instead of through a pipe to FFmpeg first — less work for the processor. New: try it with a test recording before a service. It is used from the next time the stream or recording starts; if it fails its test or stops, FFmpeg encodes as before.'),
+          encProbeEl) : null),
       outWarn,
       el('div', { class: 'muted', style: 'font-size:.85em' }, 'Tip: use a hardware encoder if your PC has one — it leaves the processor free. Set the frame rate to exactly what the cameras send (Blackmagic at 59.94 → 59.94).'),
       rt.encFallback && rt.encFallback.for === o.encoder ? el('div', { class: 'status-bad', style: 'font-size:.9em;margin-top:6px' }, rt.encFallback.level >= 2 ? `This encoder would not start, so the software encoder is being used until the program is restarted. Updating the graphics card driver usually fixes it. Reported: ${rt.encFallback.detail || 'no details'}` : 'This encoder refused the tuned settings; plain settings are being used.') : null,

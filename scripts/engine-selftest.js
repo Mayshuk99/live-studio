@@ -3,9 +3,11 @@
 // anything does not work, instead of finding out at a service.
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path');
-const { NativeEngine } = require('../native-engine');
+const { NativeEngine, engineCoded } = require('../native-engine');
 const { recordArgs } = require('../streamer');
 const exe = process.argv[2], ff = process.argv[3] || 'ffmpeg';
+// (lets the engine use its stand-in encoder — x264 in a pipe — so "encoded inside the engine" is checked without an NVIDIA card)
+process.env.LS_ENGINE_TEST_ENC = '1'; process.env.LS_ENGINE_TEST_FFMPEG = ff;
 const W = 1280, H = 720;
 if (process.argv[4] === '--iso-net') { require('./engine-selftest-isonet')(exe, ff); return; }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ls-engine-test-'));
@@ -43,6 +45,13 @@ const at = (s, fn) => setTimeout(fn, s * 1000);
 const part = path.join(dir, 'rec.mp4');
 at(1, () => e.send({ cmd: 'program', base: { src: 'A' }, ms: 500 }));
 at(1.5, () => e.send({ cmd: 'output-start', id: 'r1', args: recordArgs({ engine: true, encoder: 'x264', fps: 59.94, width: W, height: H, bitrate: 3000 }, part).map(a => a === 'veryfast' ? 'ultrafast' : a) }));
+// a second recording, encoded inside the engine (the stand-in): FFmpeg gets ready-made H.264 and only copies it next to the sound
+const part2 = path.join(dir, 'rec2.mp4'), o2 = { kind: 'record', engine: true, encoder: 'nvenc', fps: 59.94, width: W, height: H, bitrate: 3000 };
+let started2 = null, exited2 = null;
+e.on('msg', h => { if (h.ev === 'out-started' && h.id === 'r2') started2 = h; else if (h.ev === 'out-exit' && h.id === 'r2') exited2 = h; });
+at(2, () => e.send({ cmd: 'output-start', id: 'r2', args: recordArgs(Object.assign({}, o2, { encoder: 'x264' }), part2).map(a => a === 'veryfast' ? 'ultrafast' : a),
+  enc: { kind: 'x264pipe', kbps: 3000, maxKbps: 3000, bufKbps: 6000, gop: 60, preset: 4, profile: 'high', cbr: true, tune: 'll' }, encArgs: recordArgs(Object.assign({}, o2, { coded: true }), part2), soundSkipMs: engineCoded.soundSkipMs(o2) }));
+at(6, () => e.send({ cmd: 'output-stop', id: 'r2' }));
 at(2.5, () => e.send({ cmd: 'overlay', id: 'g', sw: ow, sh: oh, x: 40, y: H - 120, w: ow, h: oh, premult: false, visible: true, fadeMs: 200, z: 10 }, px));
 at(3.5, () => e.send({ cmd: 'black', on: true, ms: 300 }));
 at(6, () => e.send({ cmd: 'output-stop', id: 'r1' }));
@@ -79,6 +88,26 @@ at(12, async () => {
   if (gapsBig) fail(`the sound had ${gapsBig} gap(s) while big graphics were prepared`);
   if (!exited || exited.code !== 0) fail('recording did not finish cleanly');
   if (size < 20000) fail(`recording too small (${size} bytes)`);
+  // the recording encoded inside the engine: every picture there, evenly spaced, with sound
+  const cp = require('child_process');
+  const crc = (file, map) => cp.spawnSync(ff, ['-hide_banner', '-loglevel', 'error', '-i', file, '-map', map, '-c', 'copy', '-f', 'framecrc', '-'], { encoding: 'utf8', maxBuffer: 64 << 20 }).stdout || '';
+  const vOut = crc(part2, '0:v:0'), tb = (/#tb 0: (\d+)\/(\d+)/.exec(vOut) || [0, 1, 1]).slice(1).map(Number);
+  const pts = vOut.split(/\r?\n/).filter(l => /^\s*0,/.test(l)).map(l => +l.split(',')[2] * tb[0] / tb[1]);
+  const aN = crc(part2, '0:a:0').split(/\r?\n/).filter(l => /^\s*0,/.test(l)).length;
+  let uneven = 0; for (let i = 2; i < pts.length; i++) if (Math.abs(pts[i] - pts[i - 1] - 1001 / 60000) > 0.0005) uneven++; // (the first picture may sit a sound frame early)
+  console.log(`encoded inside the engine: by ${started2 && started2.enc} · exit ${exited2 && exited2.code} · ${pts.length} pictures, ${uneven} unevenly spaced, ${(pts[pts.length - 1] || 0).toFixed(2)} s · ${aN} pieces of sound`);
+  if (!started2 || !/stand-in/.test(started2.enc || '')) fail('the second recording was not encoded inside the engine');
+  if (!exited2 || exited2.code !== 0) fail('the recording encoded inside the engine did not finish cleanly');
+  if (pts.length < 200 || uneven || aN < 100) fail(`the recording encoded inside the engine is not right (${pts.length} pictures, ${uneven} uneven, ${aN} pieces of sound)`);
+  // the encoder's own test (run by the engine before it uses the card's encoder): passes with a good encoder, catches swapped colours,
+  // and with the real NVIDIA encoder either passes or says there is none here — never a crash
+  const probe = (env, args) => { const r = cp.spawnSync(exe, ['--nvenc-test', ...args], { encoding: 'utf8', env: Object.assign({}, process.env, env), timeout: 30000 }); let j = null; try { j = JSON.parse((r.stdout || '').trim().split(/\r?\n/).pop()); } catch (x) { /* */ } return { code: r.status, j }; };
+  const good = probe({ LS_ENGINE_TEST_KIND: 'x264pipe' }, ['1280', '720', '60000', '1001', ff]), bad = probe({ LS_ENGINE_TEST_KIND: 'x264pipe', LS_ENGINE_TEST_MIXUP: '1' }, ['1280', '720', '60000', '1001', ff]);
+  const real = probe({ LS_ENGINE_TEST_ENC: '' }, ['1920', '1080', '60000', '1001', ff]);
+  console.log(`encoder test: good encoder → ${JSON.stringify(good.j)} · colours swapped → ${bad.j && bad.j.error} · NVIDIA here → ${JSON.stringify(real.j)} (code ${real.code})`);
+  if (good.code !== 0 || !good.j || !good.j.ok || good.j.frames !== 30) fail('the encoder test does not pass a good encoder');
+  if (bad.code !== 1 || !bad.j || bad.j.ok) fail('the encoder test does not catch swapped colours');
+  if (!real.j || ![0, 1, 2].includes(real.code) || (real.code === 0) !== !!real.j.ok) fail(`the NVIDIA encoder test ended badly (code ${real.code})`);
   console.log(`OK   native engine (recording ${size} bytes)`);
   process.exit(0);
 });

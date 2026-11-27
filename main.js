@@ -67,7 +67,7 @@ nat.on('msg', (h, payload) => {
     for (const c of Object.values(h.cams || {})) if (c && c.pid) natKids.set(c.pid, 'cam');
     for (const v of Object.values(h.videos || {})) if (v && v.pid) natKids.set(v.pid, 'video');
   }
-  if (h.ev === 'out-log' || h.ev === 'out-exit' || h.ev === 'out-started') { outputs.engineEvent(h); return; }
+  if (h.ev === 'out-log' || h.ev === 'out-exit' || h.ev === 'out-started' || h.ev === 'enc-failed') { outputs.engineEvent(h); return; }
   if (h.ev === 'ready') { for (const st of natWebs.values()) st.sent = false; for (const [id] of natWebs) webRepaint(id); }
   if (h.ev === 'exit') {
     outputs.engineGone();

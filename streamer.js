@@ -45,10 +45,10 @@ const hwDecode = o => {
 const pixFmt = o => zeroCopy(o) ? [] : ['-pix_fmt', 'yuv420p'];
 /* where the picture comes from: Live Studio's window (Matroska from the browser's encoder), or the native engine
    (raw frames on the pipe + sound from a local connection) */
-const { engineInput, engineTrim } = require('./native-engine');
+const { engineInput, engineTrim, engineCoded } = require('./native-engine');
 // the engine already delivers exactly one frame per frame time: nothing to repeat or drop
 const cfr = (o, fps) => o.engine ? [] : ['-r', rate(fps), '-fps_mode', 'cfr'];
-const inputOf = o => o.engine ? [...engineInput(o), '-map', '1:v:0', '-map', '0:a:0', ...engineTrim()] : [...hwDecode(o), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?'];
+const inputOf = o => o.engine ? [...engineInput(o), '-map', '1:v:0', '-map', '0:a:0', ...(o.coded ? [] : engineTrim())] : [...hwDecode(o), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?'];
 
 function streamArgs(o) {
   // own encoder settings (Settings → Live stream → Stream encoder settings, like Wirecast's encoder presets)
@@ -67,8 +67,7 @@ function streamArgs(o) {
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
     '-fflags', '+genpts',
     ...inputOf(o),
-    ...enc,
-    ...pixFmt(o), ...cfr(o, fps),
+    ...(o.coded ? engineCoded.video(o) : [...enc, ...pixFmt(o), ...cfr(o, fps)]),
     '-c:a', 'aac', '-b:a', `${o.audioBitrate || 160}k`, '-ar', '48000', '-ac', '2',
     ...sendTo(url)
   ];
@@ -222,13 +221,32 @@ function advOut(o, stream) {
   const A = o.adv, fps = o.fps || 30, conv = A.fps > 0 && Math.abs(A.fps - fps) > 0.1, outFps = conv ? A.fps : fps, enc = o.encoder || 'x264';
   const gop = A.gop > 0 ? Math.round(A.gop) : Math.round(outFps * (stream ? 2 : 1)), sc = recScale(o);
   return [
+    ...(o.coded ? engineCoded.video(o) : [
     ...(sc ? ['-vf', `scale=${sc[0]}:${sc[1]}:flags=bicubic`] : []),
     ...recAdvVideo(o, enc, o.bitrate || (stream ? 8000 : 20000), gop, outFps, stream),
     ...(zeroCopy(o) ? [] : ['-pix_fmt', 'yuv420p']),
-    ...(conv ? ['-r', rate(A.fps), '-fps_mode', 'cfr'] : cfr(o, fps)),
+    ...(conv ? ['-r', rate(A.fps), '-fps_mode', 'cfr'] : cfr(o, fps))]),
     ...(!stream && o.timecode ? ['-timecode', o.timecode] : []),
     '-c:a', 'aac', '-b:a', `${o.audioBitrate || (stream ? 160 : 192)}k`, '-ar', String(A.rate === 44100 ? 44100 : 48000), '-ac', String(A.channels === 1 ? 1 : 2)
   ];
+}
+/* Encoding inside the engine (OBS-style) instead of in FFmpeg: for the NVIDIA encoder, the stream and the recording, at the
+   program's own size and rate. Gives the settings for the engine's encoder — the same ones FFmpeg's h264_nvenc gets above
+   (B-pictures aside: the engine's encoder uses none) — or null when FFmpeg has to encode (another encoder, the plain
+   fallback settings, another size or frame rate, switched off in Settings). The engine still decides for itself: if its
+   encoder does not pass its test or will not open, it runs the usual FFmpeg options. */
+function engineEncoder(o) {
+  if (!o.engine || o.encoder !== 'nvenc' || o.safe || o.engineEncoder === false || (o.kind !== 'stream' && o.kind !== 'record')) return null;
+  const fps = o.fps || 30, stream = o.kind === 'stream';
+  if (o.adv && o.adv.on) {
+    const A = o.adv;
+    if ((A.fps > 0 && Math.abs(A.fps - fps) > 0.1) || recScale(o)) return null;
+    const kbps = o.bitrate || (stream ? 8000 : 20000);
+    return { kind: 'nvenc', kbps, maxKbps: A.cbr || stream ? kbps : Math.round(kbps * 1.5), bufKbps: kbps * 2, gop: A.gop > 0 ? Math.round(A.gop) : Math.round(fps * (stream ? 2 : 1)),
+      preset: /^p[1-7]$/.test(A.speed) ? +A.speed[1] : 4, profile: ['baseline', 'main', 'high'].includes(A.profile) ? A.profile : 'high', cbr: !!A.cbr, tune: 'hq' };
+  }
+  const kbps = o.bitrate || (stream ? 8000 : 20000);
+  return { kind: 'nvenc', kbps, maxKbps: kbps, bufKbps: kbps * 2, gop: Math.round(fps * (stream ? 2 : 1)), preset: (o.height || 1080) > 1080 ? 2 : 4, profile: 'high', cbr: true, tune: 'll' };
 }
 function recordArgs(o, partFile) {
   if (o.adv && o.adv.on) {
@@ -255,7 +273,7 @@ function recordArgs(o, partFile) {
     '-hide_banner', '-loglevel', 'error', '-stats', '-stats_period', '1',
     '-fflags', '+genpts',
     ...(o.engine ? inputOf(o) : [...(hw ? hwDecode(o) : []), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?']),
-    ...v,
+    ...(o.coded ? engineCoded.video(o) : v),
     '-c:a', 'aac', '-b:a', `${o.audioBitrate || 256}k`, '-ar', '48000',
     '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
     '-f', 'mp4', '-y', partFile
@@ -339,9 +357,12 @@ class OutputManager extends EventEmitter {
     // fed by the native engine: the engine runs this FFmpeg itself; here it looks like any other output
     const viaEngine = !!o.engine && o.kind !== 'native';
     if (viaEngine && !(this.engine && this.engine.ready)) throw new Error('The native engine is not running.');
-    const proc = viaEngine ? this._engineProc(id, args, o) : spawn(this.ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+    // encoded inside the engine when that works there: the engine gets both sets of options and reports which it used
+    const encIn = viaEngine && !this.noEngineEncoder ? (o.testEncoder || engineEncoder(o)) : null;
+    const encArgs = encIn ? (o.kind === 'stream' ? streamArgs(Object.assign({}, o, { coded: true })) : recordArgs(Object.assign({}, o, { coded: true }), partFile)) : null;
+    const proc = viaEngine ? this._engineProc(id, args, o, encIn, encArgs) : spawn(this.ffmpegPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
     if (!viaEngine) { const P = require('os').constants.priority, lv = encPriority(o, args); try { if (proc.pid) require('os').setPriority(proc.pid, lv > 0 ? P.PRIORITY_ABOVE_NORMAL : lv < 0 ? P.PRIORITY_BELOW_NORMAL : P.PRIORITY_NORMAL); } catch (e) { /* not allowed */ } }
-    const out = { id, kind: o.kind, proc, finalFile, partFile, stopping: false, err: [], first: [], frames: 0, bytes: 0, viaEngine };
+    const out = { id, kind: o.kind, proc, finalFile, partFile, stopping: false, err: [], first: [], frames: 0, bytes: 0, viaEngine, t0: Date.now(), fps: o.fps || 30 };
     this.outs.set(id, out);
     proc.stdin.on('error', () => { /* handled by exit */ });
     let buf = '';
@@ -352,6 +373,13 @@ class OutputManager extends EventEmitter {
       for (const line of parts) {
         if (!line.trim() || /ended prematurely/.test(line)) continue;
         const s = parseStats(line);
+        // encoded inside the engine: FFmpeg only copies the picture and may report no picture count — worked out from the time
+        if (s && out.inEngine && s.frame === null && s.time !== null) {
+          s.frame = Math.round(s.time * out.fps);
+          const now = Date.now();
+          if (out.lastStat && now > out.lastStat.at) s.fps = Math.round((s.frame - out.lastStat.frame) / Math.max(0.2, (now - out.lastStat.at) / 1000));
+          out.lastStat = { frame: s.frame, at: now };
+        }
         if (s) out.frames = Math.max(out.frames, s.frame || 0);
         if (s) this.emit('event', { id, kind: o.kind, type: 'stats', ...s, backlog: proc.stdin.writableLength });
         else {
@@ -369,6 +397,9 @@ class OutputManager extends EventEmitter {
       this.outs.delete(id);
       // graphics-card decoding failed on the real picture: the next start (reconnect / retry) uses a simpler way
       const errText = out.err.join(' ');
+      // encoded inside the engine and it went wrong (its encoder stopped, or FFmpeg gave up within the first 20 s): not again this session
+      const engFailed = !!out.inEngine && !out.stopping && (!!out.encFailed || (code !== 0 && Date.now() - out.t0 < 20000));
+      if (engFailed) { this.noEngineEncoder = true; this.emit('event', { id, kind: o.kind, type: 'log', line: `the encoder inside the engine is switched off until the program is restarted (${out.encFailed || 'FFmpeg did not accept its H.264: ' + (out.err.slice(-2).join(' | ') || 'code ' + code)}) — FFmpeg encodes` }); }
       if (code !== 0 && !out.stopping && o.kind !== 'native' && decodeMode !== 'none' && /hwaccel|cuda|surface|hw_frames|hwframe|Impossible to convert|d3d11|dxva/i.test(errText)) {
         const was = decodeMode; decodeMode = decodeMode === 'cuda-zc' ? 'cuda' : 'none';
         this.emit('event', { id, kind: o.kind, type: 'log', line: `graphics-card decoding (${was}) failed — now using ${decodeMode}` });
@@ -382,6 +413,8 @@ class OutputManager extends EventEmitter {
         error: (code !== 0 && !out.stopping) ? (out.err.slice(-3).join(' | ') || `Encoder stopped (code ${code})`) : null,
         // the picture encoder itself refused to start (graphics card / driver), as opposed to an internet problem
         encoderFailed: code !== 0 && !out.stopping && out.frames === 0 && /nvenc|qsv|amf|vost#|opening encoder|No capable devices|driver|hwaccel|cuda|d3d11|dxva/i.test(out.err.join(' ')),
+        // the encoder inside the engine gave up, or FFmpeg would not take its H.264: the next start is encoded by FFmpeg again
+        engineEncoderFailed: engFailed,
         detail: out.first.slice(0, 3).join(' | ').replace(/\[[^\]]*@ (0x)?[0-9a-f]+\]\s*/gi, '')
       });
     });
@@ -421,19 +454,21 @@ class OutputManager extends EventEmitter {
   }
 
   /* an encoder inside the engine, made to look like a child process (its messages arrive as engine events) */
-  _engineProc(id, args, o) {
+  _engineProc(id, args, o, enc, encArgs) {
     const p = new EventEmitter();
     p.pid = 0; p.stderr = new EventEmitter();
     p.stdin = { writable: false, writableLength: 0, on() {}, write() {}, end() {} };
     p.kill = () => { if (this.engine) this.engine.send({ cmd: 'output-kill', id }); setTimeout(() => this._engineExit(id, -9), 3000); };
     // src: an ISO recording of that camera; group: started together (the recording and its ISO files)
-    this.engine.send({ cmd: 'output-start', id, args, src: (o && o.kind === 'iso' && o.src) || '', group: (o && o.group) || '', groupSize: (o && o.groupSize) || 0, prio: encPriority(o || {}, args) });
+    this.engine.send({ cmd: 'output-start', id, args, src: (o && o.kind === 'iso' && o.src) || '', group: (o && o.group) || '', groupSize: (o && o.groupSize) || 0, prio: encPriority(o || {}, args),
+      ...(enc && encArgs ? { enc, encArgs, soundSkipMs: engineCoded.soundSkipMs(o) } : {}) });
     return p;
   }
   engineEvent(h) {
     const out = this.outs.get(h.id);
     if (!out || !out.viaEngine) return;
-    if (h.ev === 'out-started') out.proc.pid = h.pid;
+    if (h.ev === 'out-started') { out.proc.pid = h.pid; if (h.enc) { out.inEngine = h.enc; this.emit('event', { id: h.id, kind: out.kind, type: 'engine-encoder', card: h.enc }); } }
+    else if (h.ev === 'enc-failed') { out.encFailed = h.error || 'stopped'; this.noEngineEncoder = true; }
     else if (h.ev === 'out-log') out.proc.stderr.emit('data', Buffer.from(h.line + '\n'));
     else if (h.ev === 'out-exit') this._engineExit(h.id, h.code, h.error);
   }
@@ -524,4 +559,4 @@ async function probeDecode(ffmpegPath) {
   } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* */ } }
 }
 
-module.exports = { OutputManager, streamArgs, recordArgs, x264Opts, netArgs, isoArgs, ISO_CODECS, nativeArgs, captureArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode, encPriority };
+module.exports = { OutputManager, streamArgs, recordArgs, engineEncoder, x264Opts, netArgs, isoArgs, ISO_CODECS, nativeArgs, captureArgs, parseStats, ensureDir, listCaptureDevices, probeDecode, getDecodeMode, setDecodeMode, encPriority };

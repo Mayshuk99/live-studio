@@ -139,6 +139,9 @@ func readMsg(r io.Reader) (Msg, []byte, error) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--nvenc-test" { // the encoder's own test, in a process of its own (encoder.go)
+		os.Exit(encoderSelfTest(os.Args[2:]))
+	}
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	debug.SetGCPercent(300)
 	setOwnPriority()

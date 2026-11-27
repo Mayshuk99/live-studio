@@ -147,9 +147,21 @@ function engineInput(o) {
     // no probing: the formats are known, and probing would wait for sound before reading any picture
     '-thread_queue_size', '2048', '-probesize', '32', '-analyzeduration', '0', '-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'tcp://127.0.0.1:{AUDIOPORT}',
     // (about 200 MB of pictures at most waiting inside FFmpeg, whatever the size: 64 at 1080p, 16 at 4K)
+    // encoded inside the engine: ready-made H.264 on the pipe (see engineCoded below)
+    ...(o.coded ? ['-thread_queue_size', '1024', '-probesize', '2000000', '-analyzeduration', '1000000', '-f', 'h264', '-framerate', rate, '-i', 'pipe:0'] : [
     '-thread_queue_size', String(Math.max(8, Math.round(64 * 1920 * 1080 / ((o.width || 1920) * (o.height || 1080))))), '-probesize', '32', '-analyzeduration', '0', ...(d > 0 ? ['-itsoffset', d.toFixed(3)] : []),
-    '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-video_size', `${o.width || 1920}x${o.height || 1080}`, '-framerate', rate, '-i', 'pipe:0'
+    '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-video_size', `${o.width || 1920}x${o.height || 1080}`, '-framerate', rate, '-i', 'pipe:0'])
   ];
 }
+/* Encoded inside the engine (OBS-style): FFmpeg gets finished H.264 and only copies it next to the sound.
+   - the pictures carry no times of their own: each gets its number divided by the frame rate (the same clock the
+     raw pictures are given), set explicitly so no FFmpeg version has to guess;
+   - picture and sound are lined up by the engine instead of -itsoffset / -ss: it leaves out the first soundSkipMs of
+     sound for that output (the picture's delay + the sound reserve), so both start at zero. */
+const engineCoded = {
+  video: o => { const fps = o.fps || 59.94, [num, den] = fps === 59.94 ? [60000, 1001] : fps === 29.97 ? [30000, 1001] : [Math.round(fps * 1000), 1000]; return ['-c:v', 'copy', '-bsf:v', `setts=ts=N*${den}/${num}/TB`]; },
+  // (a whole number of pictures, as FFmpeg rounds -itsoffset for the raw pictures: both ways give the same sync)
+  soundSkipMs: o => { const d = Math.max(0, o.videoDelayMs === undefined ? 20 : o.videoDelayMs) + SOUND_RESERVE_EXTRA_MS, fps = o.fps || 59.94; return Math.round(Math.round(d / 1000 * fps) / fps * 1000); }
+};
 
-module.exports = { NativeEngine, enginePath, engineInput, engineTrim, SOUND_RESERVE_EXTRA_MS };
+module.exports = { NativeEngine, enginePath, engineInput, engineTrim, engineCoded, SOUND_RESERVE_EXTRA_MS };

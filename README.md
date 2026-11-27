@@ -152,7 +152,14 @@ engine/            native engine in Go (OBS-style): reads capture cards through 
                    sent or prepared never holds the sound up; audio.go keeps 0.4 s
                    of sound in reserve (the encoders delay the picture to match: SOUND_RESERVE_EXTRA_MS).
                    Pictures for it (slides, graphics) are made off the window's thread (natPix in renderer/app.js),
-                   ahead of time; captions are drawn as just the band they cover (natBand)
+                   ahead of time; captions are drawn as just the band they cover (natBand).
+                   encoder.go / nvenc_windows.go: the NVIDIA encoder called straight from the engine (OBS-style;
+                   Settings → Video output → NVIDIA encoder inside the engine, off by default). No cgo: the driver's
+                   structures are byte buffers laid out by nvenc_layout.go, generated from NVIDIA's header by
+                   tools/nvlayout. The engine tests the encoder in a process of its own first (ls-engine --nvenc-test:
+                   encodes, has FFmpeg decode it, compares the pictures) and falls back to FFmpeg's encoder whenever
+                   anything is not right; FFmpeg then only copies the finished H.264 next to the sound (engineCoded in
+                   native-engine.js, engineEncoder in streamer.js)
 vsthost/           VST3 host in C++ (CMake; the Steinberg VST3 SDK is downloaded by the build, not stored here)
 media-import.js    bringing files in: which formats play as they are, FFmpeg conversion of the rest, PDF / PowerPoint
                    pages (Poppler's pdftoppm, downloaded by the build into resources/poppler; PowerPoint / LibreOffice),

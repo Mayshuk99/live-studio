@@ -1286,7 +1286,13 @@ window.I18N_RU = {
     "ISO recordings (FFmpeg)": "ISO-записи (FFmpeg)",
     "Cameras (FFmpeg, native engine)": "Камеры (FFmpeg, встроенный движок)",
     "Video files (FFmpeg, native engine)": "Видеофайлы (FFmpeg, встроенный движок)",
-    "Other FFmpeg": "Другие FFmpeg"
+    "Other FFmpeg": "Другие FFmpeg",
+    "NVIDIA encoder inside the engine (new)": "Кодировщик NVIDIA внутри движка (новое)",
+    "Off — FFmpeg encodes, as before": "Выключен — кодирует FFmpeg, как раньше",
+    "On — when it passes its test": "Включён — если проходит проверку",
+    "The way OBS does it: the pictures go from the engine straight to the graphics card’s encoder instead of through a pipe to FFmpeg first — less work for the processor. New: try it with a test recording before a service. It is used from the next time the stream or recording starts; if it fails its test or stops, FFmpeg encodes as before.": "Как в OBS: кадры идут из движка прямо в кодировщик видеокарты, а не сначала по каналу в FFmpeg — меньше работы процессору. Новое: сначала попробуйте на пробной записи, до служения. Используется со следующего запуска трансляции или записи; если проверка не пройдена или кодировщик остановится, кодирует FFmpeg, как раньше.",
+    "Testing the encoder…": "Проверяю кодировщик…",
+    "The encoder inside the engine stopped — FFmpeg encodes from now on (see the log).": "Кодировщик внутри движка остановился — дальше кодирует FFmpeg (подробности в журнале)."
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
@@ -1476,6 +1482,12 @@ window.I18N_RU = {
     ["Converting the sound… {0}%", "Перевожу звук… {0}%"],
     ["Opening the picture… {0}%", "Открываю картинку… {0}%"],
     ["Slide {0}: {1}", "Слайд {0}: {1}"],
-    ["PowerPoint files are opened with PowerPoint or the free LibreOffice — install one of them, or save the presentation as PDF. ({0})", "Файлы PowerPoint открываются через PowerPoint или бесплатный LibreOffice — установите одну из программ или сохраните презентацию как PDF. ({0})"]
+    ["PowerPoint files are opened with PowerPoint or the free LibreOffice — install one of them, or save the presentation as PDF. ({0})", "Файлы PowerPoint открываются через PowerPoint или бесплатный LibreOffice — установите одну из программ или сохраните презентацию как PDF. ({0})"],
+    ["Test passed: {0}", "Проверка пройдена: {0}"],
+    ["Not available here: {0}", "Здесь недоступен: {0}"],
+    ["Test failed ({0}): {1}", "Проверка не пройдена ({0}): {1}"],
+    ["The NVIDIA encoder inside the engine passed its test ({0}). It is used from the next time the stream or recording starts.", "Кодировщик NVIDIA внутри движка прошёл проверку ({0}). Он будет использоваться со следующего запуска трансляции или записи."],
+    ["No NVIDIA encoder was found here ({0}) — FFmpeg keeps encoding.", "Кодировщик NVIDIA здесь не найден ({0}) — кодирует по-прежнему FFmpeg."],
+    ["The NVIDIA encoder inside the engine did not pass its test: {0} — FFmpeg keeps encoding.", "Кодировщик NVIDIA внутри движка не прошёл проверку: {0} — кодирует по-прежнему FFmpeg."]
   ]
 };
