@@ -919,16 +919,27 @@
     'elegant':     { layout: 'band', font: 'Georgia', bold: false, bgColor: '#000000', bgOpacity: 0.62, bar: 'under', barWidth: 4, shadow: true, subColor: '#e5e7eb', position: 'bc', margin: 0.05, anim: 'blur', fadeMs: 700 },
     'pill':        { layout: 'split', bgColor: '#ffffff', bgOpacity: 0.96, textColor: '#0b1220', subColor: '#475569', radius: 60, bar: 'left', size: 0.9, position: 'bl', margin: 0.09, anim: 'pop', fadeMs: 350 },
     'title':       { font: 'Segoe UI', size: 1.75, bold: true, upper: false, textColor: '#ffffff', subColor: '#e5e7eb', bgColor: '#000000', bgOpacity: 0, bar: 'under', radius: 0, position: 'mc', margin: 0.095, shadow: true, anim: 'fade', fadeMs: 600 },
-    'corner':      { font: 'Segoe UI', size: 0.65, bold: true, upper: false, textColor: '#ffffff', subColor: '#ffffff', bgColor: '#0a0c12', bgOpacity: 0.85, bar: 'none', radius: 8, position: 'tr', margin: 0.05, shadow: false, anim: 'fade', fadeMs: 300, accentTitle: true }
+    'corner':      { font: 'Segoe UI', size: 0.65, bold: true, upper: false, textColor: '#ffffff', subColor: '#ffffff', bgColor: '#0a0c12', bgOpacity: 0.85, bar: 'none', radius: 8, position: 'tr', margin: 0.05, shadow: false, anim: 'fade', fadeMs: 300, accentTitle: true },
+    // animated designs (1.52.3)
+    'shine':       { layout: 'panel', bgColor: '#0b1530', bgOpacity: 0.9, fadeEdge: true, bar: 'left', barWidth: 10, subUpper: true, subSpacing: 3, subSize: 0.8, subAccent: true, position: 'bl', margin: 0.085, anim: 'shine', fadeMs: 450 },
+    'letters':     { bgOpacity: 0, bar: 'under', barWidth: 6, shadow: true, size: 1.1, subColor: '#e5e7eb', subSpacing: 2, position: 'bl', margin: 0.09, anim: 'letters', fadeMs: 450 },
+    'drop':        { layout: 'tag', bgColor: '#0a0c12', bgOpacity: 0.9, radius: 4, bar: 'left', barWidth: 10, subUpper: true, subSpacing: 2, subSize: 0.8, position: 'bl', margin: 0.09, anim: 'drop', fadeMs: 400 },
+    'flip':        { layout: 'stack', accentTitle: true, subBox: 'box', bgColor: '#0a0c12', bgOpacity: 0.92, bar: 'none', upper: true, subSpacing: 1, subSize: 0.9, position: 'bl', margin: 0.09, anim: 'flip', fadeMs: 400 },
+    'open':        { layout: 'band', bgColor: '#0a0c12', bgOpacity: 0.78, bar: 'top', barWidth: 6, subUpper: true, subSpacing: 4, subSize: 0.78, subAccent: true, position: 'bc', margin: 0.06, anim: 'split', fadeMs: 500 },
+    'ribbon':      { layout: 'stack', bgColor: '#ffffff', bgOpacity: 0.97, textColor: '#0b1220', subColor: '#ffffff', subBox: 'accent', bar: 'left', barWidth: 14, position: 'bl', margin: 0.09, anim: 'ribbon', fadeMs: 400 }
   };
   const LABEL_STYLES = [['lower', 'Classic dark'], ['lower-light', 'Classic light'], ['modern', 'Modern glass'], ['news', 'News two-tier'], ['sport', 'Slanted'], ['minimal', 'Minimal line'],
-    ['tag', 'Tag on top'], ['elegant', 'Elegant band'], ['pill', 'Pill'], ['title', 'Big centre title'], ['corner', 'Corner tag']];
+    ['tag', 'Tag on top'], ['elegant', 'Elegant band'], ['pill', 'Pill'], ['title', 'Big centre title'], ['corner', 'Corner tag'],
+    ['shine', 'Light sweep'], ['letters', 'Letter by letter'], ['drop', 'Drop in'], ['flip', 'Flip up'], ['open', 'Open from centre'], ['ribbon', 'Ribbon']];
   const LABEL_ANIMS = [
     ['fade', 'Fade', 'Simply fades in'], ['slide', 'Slide + fade', 'Slides in a little from the side while fading'],
     ['wipe', 'Wipe', 'Revealed from the side like a curtain'], ['build', 'Build up', 'Accent bar first, then the name, then the second line'],
     ['rise', 'Rise from a line', 'Each line rises up out of an invisible line'], ['stagger', 'Line by line', 'The name slides in, then the second line follows'],
-    ['pop', 'Pop', 'Zooms in with a small bounce'], ['blur', 'Soft focus', 'Comes into focus from a blur'], ['type', 'Typewriter', 'Typed out letter by letter']];
-  const ANIM_SPEED = { fade: 1, slide: 1, wipe: 1.3, build: 2, rise: 1.6, stagger: 1.7, pop: 1.2, blur: 1.4, type: 1 };
+    ['pop', 'Pop', 'Zooms in with a small bounce'], ['blur', 'Soft focus', 'Comes into focus from a blur'], ['type', 'Typewriter', 'Typed out letter by letter'],
+    ['shine', 'Light sweep', 'Slides in, then a glint of light runs across it'], ['letters', 'Letters', 'Each letter rises and fades in, one after another'],
+    ['drop', 'Drop in', 'Each line drops in from above with a small bounce'], ['flip', 'Flip up', 'Each line flips open from its middle, one after another'],
+    ['split', 'Open from centre', 'Opens from the middle outwards, then the text fades in'], ['ribbon', 'Ribbon', 'A coloured stripe sweeps across and leaves the label behind it']];
+  const ANIM_SPEED = { fade: 1, slide: 1, wipe: 1.3, build: 2, rise: 1.6, stagger: 1.7, pop: 1.2, blur: 1.4, type: 1, shine: 2.6, letters: 1, drop: 1.8, flip: 1.7, split: 1.5, ribbon: 2 };
   function labelDesign(d) {
     return Object.assign({}, LBL_BASE, LABEL_PRESETS[d.style] || LABEL_PRESETS.lower, d.design || {});
   }
@@ -938,6 +949,7 @@
     if (!base) return 0;
     if (out) return D.animOut === 'fade' || a === 'type' ? base : Math.round(base * Math.min(1.4, ANIM_SPEED[a] || 1));
     if (a === 'type') return Math.round(Math.max(base * 2, Math.min(3500, 300 + 40 * (String(d.title || '').length + String(d.subtitle || '').length))));
+    if (a === 'letters') return Math.round(Math.max(base * 2, Math.min(3000, base + 28 * Math.max(String(d.title || '').length, String(d.subtitle || '').length))));
     return Math.round(base * (ANIM_SPEED[a] || 1));
   }
   function rgba(hex, a) {
@@ -1091,6 +1103,28 @@
         else if (P.t === 'bar') st.grow = out3(seg(p, 0, 0.15));
         else st.clip = wipeRect(R, inout(seg(p, 0, 0.15)), al);
         break;
+      case 'shine': { const e = out3(seg(p, 0, 0.42)); st.a = e; side((1 - e) * 0.03); break; } // (the glint: drawLabel)
+      case 'letters':
+        if (P.t === 'text') { const o = 0.08 + r * 0.22; st.lt = seg(p, o, Math.min(1, o + 0.78)); }
+        else if (P.t === 'bar') st.grow = out3(seg(p, 0, 0.3));
+        else st.a = inout(seg(p, 0, 0.3));
+        break;
+      case 'drop':
+        if (r < 0) { st.a = seg(p, 0, 0.25); if (P.t === 'bar') st.grow = out3(seg(p, 0, 0.4)); }
+        else { const o = r * 0.2, t = seg(p, o, o + 0.6), e = back(t); st.dy = -(1 - e) * Math.max(R.h, 40 * L.k) * 1.3; st.a = seg(p, o, o + 0.18); }
+        break;
+      case 'flip':
+        if (r < 0) { const e = out3(seg(p, 0, 0.4)); st.sy = e; st.cy = L.block.y + L.block.h / 2; st.a = Math.min(1, e * 3); }
+        else { const o = 0.12 + r * 0.22, e = out3(seg(p, o, o + 0.55)); st.sy = e; st.cy = R.y + R.h / 2; st.a = Math.min(1, e * 3); }
+        break;
+      case 'split':
+        if (P.t === 'text') { const e = out3(seg(p, 0.42 + r * 0.12, 0.9 + r * 0.1)); st.a = e; st.dy = (1 - e) * 10 * L.k; }
+        else { st.clip = wipeRect(L.block, inout(seg(p, 0, 0.55)), 'c'); st.a = Math.min(1, p * 8); }
+        break;
+      case 'ribbon': // (the stripe itself: drawLabel)
+        if (P.t === 'text') { const o = 0.38 + r * 0.14, e = out3(seg(p, o, o + 0.45)); st.a = e; side((1 - e) * 0.02); }
+        else { const o = r < 0 ? 0.05 : 0.08 + r * 0.12; st.clip = wipeRect(r < 0 ? L.block : R, inout(seg(p, o, o + 0.5)), L.align === 'r' ? 'r' : 'l'); }
+        break;
       default: break; // pop / blur act on the whole label
     }
     return st;
@@ -1113,7 +1147,17 @@
       const s = st.chars === undefined ? P.str : P.str.slice(0, st.chars);
       ctx.font = P.font; ctx.letterSpacing = `${P.sp}px`; ctx.fillStyle = P.color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       if (P.shadow) { ctx.shadowColor = 'rgba(0,0,0,0.75)'; ctx.shadowBlur = 18 * L.k * L.z; ctx.shadowOffsetY = 2 * L.k; }
-      if (s) ctx.fillText(s, P.left, P.y);
+      if (st.lt !== undefined && st.lt < 1) {
+        // letter by letter: each rises a little and fades in, a quarter of the way behind the one before it
+        const chars = [...s], N = chars.length, w = 0.25, a0 = ctx.globalAlpha;
+        let x = P.left, pre = '';
+        for (let i = 0; i < N; i++) {
+          const c = clamp01((st.lt * (1 + w) - i / N) / w);
+          if (c > 0.003) { ctx.globalAlpha = a0 * c; ctx.fillText(chars[i], x, P.y + (1 - out3(c)) * P.px * 0.45); }
+          pre += chars[i]; x = P.left + ctx.measureText(pre).width;
+        }
+        ctx.globalAlpha = a0;
+      } else if (s) ctx.fillText(s, P.left, P.y);
       ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
       if (st.caret) { const w = s ? ctx.measureText(s).width : 0; ctx.fillStyle = L.accent; ctx.fillRect(P.left + w + 3 * L.k, P.y - P.px * 0.42, Math.max(2, 4 * L.k * L.z), P.px * 0.84); }
       ctx.letterSpacing = '0px';
@@ -1159,9 +1203,28 @@
       ctx.save();
       if (st.clip) { ctx.beginPath(); ctx.rect(st.clip.x, st.clip.y, st.clip.w, st.clip.h); ctx.clip(); }
       if (st.dx || st.dy) ctx.translate(st.dx, st.dy);
+      if (st.sy !== undefined) { if (st.sy <= 0.01) { ctx.restore(); continue; } ctx.translate(0, st.cy); ctx.scale(1, st.sy); ctx.translate(0, -st.cy); }
       ctx.globalAlpha = a;
       paintPart(ctx, P, L, st);
       ctx.restore();
+    }
+    // light sweep: a soft glint runs across what is drawn (only over the label itself), after it has come in
+    if (style === 'shine' && !out) {
+      const t = seg(p, 0.5, 1);
+      if (t > 0 && t < 1) {
+        const B = L.block, bw = B.w * 0.28, x = B.x - bw + (B.w + bw * 2) * inout(t);
+        const g = ctx.createLinearGradient(x - bw, B.y, x + bw, B.y + B.h * 0.25);
+        g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.save(); ctx.globalCompositeOperation = 'source-atop'; ctx.globalAlpha = gA; ctx.fillStyle = g; ctx.fillRect(B.x, B.y, B.w, B.h); ctx.restore();
+      }
+    }
+    // ribbon: the accent stripe at the front of the wipe, gone once the label is in
+    if (style === 'ribbon') {
+      const t = inout(seg(p, 0.05, 0.55)), fade = 1 - seg(p, 0.5, 0.68);
+      if (fade > 0.003 && t > 0) {
+        const B = L.block, sw = Math.max(6 * L.k, 14 * L.k * L.z), x = L.align === 'r' ? B.x + B.w * (1 - t) - sw / 2 : B.x + B.w * t - sw / 2;
+        ctx.save(); ctx.globalAlpha = gA * fade; ctx.fillStyle = L.accent; ctx.fillRect(x, B.y + 30 * L.k, sw, B.h - 60 * L.k); ctx.restore();
+      }
     }
     ctx.restore();
     ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.letterSpacing = '0px';

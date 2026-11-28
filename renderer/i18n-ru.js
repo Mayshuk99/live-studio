@@ -1313,7 +1313,20 @@ window.I18N_RU = {
     "Size of the Preview and Live monitors — drag; the panels under them give way · double-click = 100 %": "Размер мониторов Превью и Эфир — потяните; панели под ними уступят место · двойной щелчок = 100 %",
     "Monitor size · double-click = 100 %": "Размер мониторов · двойной щелчок = 100 %",
     "Preview ↔ Live: drag right to make Live bigger and Preview smaller · double-click = equal": "Превью ↔ Эфир: потяните вправо — Эфир больше, Превью меньше · двойной щелчок = поровну",
-    "Share of the width for Live · double-click = equal": "Доля ширины для Эфира · двойной щелчок = поровну"
+    "Share of the width for Live · double-click = equal": "Доля ширины для Эфира · двойной щелчок = поровну",
+    "Light sweep": "Блик",
+    "Letter by letter": "По буквам",
+    "Drop in": "Падение",
+    "Flip up": "Переворот",
+    "Open from centre": "Из центра",
+    "Ribbon": "Лента",
+    "Letters": "Буквы",
+    "Slides in, then a glint of light runs across it": "Выезжает, потом по нему пробегает блик света",
+    "Each letter rises and fades in, one after another": "Буквы по одной поднимаются и проявляются",
+    "Each line drops in from above with a small bounce": "Каждая строка падает сверху с лёгким отскоком",
+    "Each line flips open from its middle, one after another": "Строки по очереди раскрываются от середины",
+    "Opens from the middle outwards, then the text fades in": "Раскрывается от середины в стороны, потом проявляется текст",
+    "A coloured stripe sweeps across and leaves the label behind it": "Цветная полоса проносится поперёк и оставляет за собой титр"
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
