@@ -1,4 +1,4 @@
-/* Live Studio — VST3 plug-ins on the Master channel (runs in the main process).
+/* Live Studio — VST3 plug-ins (inserts on the master, the inputs and the recording tracks; runs in the main process).
  * Starts ls-vst (the plug-in host), scans for plug-ins, and passes commands, events and sound.
  * Messages both ways: [u32 header length][u32 payload length][header: tab-separated fields][payload]
  */

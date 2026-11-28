@@ -3,7 +3,7 @@
 // anything does not work, instead of finding out at a service.
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path');
-const { NativeEngine, engineCoded } = require('../native-engine');
+const { NativeEngine, engineCoded, soundChannels } = require('../native-engine');
 const { recordArgs } = require('../streamer');
 const exe = process.argv[2], ff = process.argv[3] || 'ffmpeg';
 // (lets the engine use its stand-in encoder — x264 in a pipe — so "encoded inside the engine" is checked without an NVIDIA card)
@@ -38,8 +38,9 @@ let audT0 = 0, audSent = 0;
 const aud = setInterval(() => {
   const now = Date.now(); if (!audT0) audT0 = now - 10;
   const n = Math.min(48000, Math.round((now - audT0) * 48) - audSent); if (n <= 0) return;
-  const f = new Float32Array(n * 2); for (let i = 0; i < n; i++) { f[i * 2] = f[i * 2 + 1] = 0.2 * Math.sin(ph); ph += 2 * Math.PI * 440 / 48000; }
-  audSent += n; e.send({ cmd: 'audio', rate: 48000, ch: 2 }, f);
+  // the program and recording tracks 2 and 3 (six channels, as the window sends them when tracks are on): each its own level
+  const f = new Float32Array(n * 6); for (let i = 0; i < n; i++) { const v = Math.sin(ph); f[i * 6] = f[i * 6 + 1] = 0.2 * v; f[i * 6 + 2] = f[i * 6 + 3] = 0.1 * v; f[i * 6 + 4] = f[i * 6 + 5] = 0.05 * v; ph += 2 * Math.PI * 440 / 48000; }
+  audSent += n; e.send({ cmd: 'audio', rate: 48000, ch: 6 }, f);
 }, 10);
 const at = (s, fn) => setTimeout(fn, s * 1000);
 const part = path.join(dir, 'rec.mp4');
@@ -52,6 +53,12 @@ e.on('msg', h => { if (h.ev === 'out-started' && h.id === 'r2') started2 = h; el
 at(2, () => e.send({ cmd: 'output-start', id: 'r2', args: recordArgs(Object.assign({}, o2, { encoder: 'x264' }), part2).map(a => a === 'veryfast' ? 'ultrafast' : a),
   enc: { kind: 'x264pipe', kbps: 3000, maxKbps: 3000, bufKbps: 6000, gop: 60, preset: 4, profile: 'high', cbr: true, tune: 'll' }, encArgs: recordArgs(Object.assign({}, o2, { coded: true }), part2), soundSkipMs: engineCoded.soundSkipMs(o2) }));
 at(6, () => e.send({ cmd: 'output-stop', id: 'r2' }));
+// a recording with sound tracks: the program, track 2 "Pulpit" and track 3 "Room", each a stereo track of its own in the file
+const part3 = path.join(dir, 'rec3.mp4'), o3 = { kind: 'record', engine: true, encoder: 'x264', fps: 59.94, width: W, height: H, bitrate: 2000, tracks: [{ n: 3, name: 'Room' }, { n: 2, name: 'Pulpit' }] };
+let exited3 = null;
+e.on('msg', h => { if (h.ev === 'out-exit' && h.id === 'r3') exited3 = h; });
+at(2.2, () => e.send({ cmd: 'output-start', id: 'r3', args: recordArgs(o3, part3).map(a => a === 'veryfast' ? 'ultrafast' : a), ach: soundChannels(o3) }));
+at(6, () => e.send({ cmd: 'output-stop', id: 'r3' }));
 at(2.5, () => e.send({ cmd: 'overlay', id: 'g', sw: ow, sh: oh, x: 40, y: H - 120, w: ow, h: oh, premult: false, visible: true, fadeMs: 200, z: 10 }, px));
 at(3.5, () => e.send({ cmd: 'black', on: true, ms: 300 }));
 at(6, () => e.send({ cmd: 'output-stop', id: 'r1' }));
@@ -100,6 +107,18 @@ at(12, async () => {
   if (!exited2 || exited2.code !== 0) fail('the recording encoded inside the engine did not finish cleanly');
   // (it runs for 4 s; a slow build machine needs up to a second of that to start the two FFmpegs)
   if (pts.length < 120 || uneven || aN < 60) fail(`the recording encoded inside the engine is not right (${pts.length} pictures, ${uneven} uneven, ${aN} pieces of sound)`);
+  // the recording with sound tracks: three stereo tracks, named, each at its own level
+  // (FFmpeg's own description of the file: each "Stream #0:n: Audio: … stereo" line, then its handler_name)
+  const info = (cp.spawnSync(ff, ['-hide_banner', '-i', part3], { encoding: 'utf8' }).stderr || '').split(/\r?\n/);
+  const aud3 = [];
+  for (const l of info) { if (/Stream #0:\d+.*Audio:/.test(l)) aud3.push({ channels: /stereo/.test(l) ? 2 : 0, tags: {} }); else if (aud3.length && /^\s*handler_name\s*:/.test(l) && !aud3[aud3.length - 1].tags.handler_name) aud3[aud3.length - 1].tags.handler_name = l.split(':').slice(1).join(':').trim(); }
+  const lvl = i => { const r = cp.spawnSync(ff, ['-hide_banner', '-i', part3, '-map', `0:a:${i}`, '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' }); const m = /mean_volume: (-?[\d.]+) dB/.exec(r.stderr || ''); return m ? +m[1] : null; };
+  const lv3 = aud3.map((_, i) => lvl(i));
+  console.log(`recording with tracks: exit ${exited3 && exited3.code} · ${aud3.map((x, i) => `${(x.tags || {}).handler_name} ${x.channels}ch average ${lv3[i]} dB`).join(' · ')}`);
+  if (!exited3 || exited3.code !== 0) fail('the recording with sound tracks did not finish cleanly');
+  if (aud3.length !== 3 || aud3.some(x => x.channels !== 2) || aud3.map(x => (x.tags || {}).handler_name).join() !== 'Program,Pulpit,Room') fail('the recording does not have the program, Pulpit and Room as its sound tracks');
+  // (sine waves of 0.2, 0.1, 0.05: −14, −20, −26 dB at the peak, 3 dB less on average)
+  if (!(Math.abs(lv3[0] + 17) < 1 && Math.abs(lv3[1] + 23) < 1 && Math.abs(lv3[2] + 29) < 1)) fail(`the sound tracks do not have their own levels (average ${lv3.join(', ')} dB; want −17, −23, −29)`);
   // the encoder's own test (run by the engine before it uses the card's encoder): passes with a good encoder, catches swapped colours,
   // and with the real NVIDIA encoder either passes or says there is none here — never a crash
   const probe = (env, args) => { const r = cp.spawnSync(exe, ['--nvenc-test', ...args], { encoding: 'utf8', env: Object.assign({}, process.env, env), timeout: 30000 }); let j = null; try { j = JSON.parse((r.stdout || '').trim().split(/\r?\n/).pop()); } catch (x) { /* */ } return { code: r.status, j }; };

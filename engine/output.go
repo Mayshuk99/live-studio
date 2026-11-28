@@ -41,6 +41,7 @@ type Output struct {
 	stdin   io.WriteCloser
 	vch     chan *OutFrame
 	ach     chan []byte
+	chans   int // sound channels this output takes: 2 = the program; 2 × tracks for a recording with tracks
 	ln      net.Listener
 	closing bool
 	dropped int64
@@ -179,7 +180,7 @@ func (o *Output) encodeLoop(enc picEncoder) {
 
 // enc, encArgs, skipMs: encode inside the engine if that works here, with these FFmpeg options (ready-made H.264 in) and
 // this much of the sound left out at the start, so that picture and sound line up without -itsoffset
-func (e *Engine) startOutput(id string, args []string, src, group string, gsize, prio int, enc *encCfg, encArgs []string, skipMs int) {
+func (e *Engine) startOutput(id string, args []string, src, group string, gsize, prio int, enc *encCfg, encArgs []string, skipMs int, chans int) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		send(Msg{"ev": "out-exit", "id": id, "code": -1, "error": "no local port for the sound: " + err.Error()}, nil)
@@ -225,12 +226,16 @@ func (e *Engine) startOutput(id string, args []string, src, group string, gsize,
 		send(Msg{"ev": "out-exit", "id": id, "code": -1, "error": "Encoder could not start: " + err.Error()}, nil)
 		return
 	}
-	o := &Output{id: id, e: e, cmd: cmd, stdin: stdin, vch: make(chan *OutFrame, 20), ach: make(chan []byte, 600), ln: ln, started: time.Now(), src: src, group: group, gsize: gsize}
-	skip := 0 // bytes of sound (16-bit stereo, 48 kHz) left out at the start
+	o := &Output{id: id, e: e, cmd: cmd, stdin: stdin, vch: make(chan *OutFrame, 20), ach: make(chan []byte, 600), ln: ln, started: time.Now(), src: src, group: group, gsize: gsize, chans: chans}
+	skip := 0 // bytes of sound (16-bit, 48 kHz, chans channels) left out at the start
+	if chans < 1 {
+		chans = 2
+		o.chans = 2
+	}
 	if et != nil {
 		o.encName = et.enc.info()
 		if skipMs > 0 && skipMs < 5000 {
-			skip = skipMs * 48 * 4
+			skip = skipMs * 48 * 2 * chans
 		}
 	}
 	e.mu.Lock()
@@ -370,7 +375,25 @@ func (e *Engine) groupReady(g string, size int) bool {
 }
 
 // called by the clock with the engine lock held
-func (e *Engine) dispatch(of *OutFrame, pcm []byte) {
+// 16-bit PCM with `from` channels per frame, as `to` channels (extra ones silent, missing ones left out)
+func remixPCM(pcm []byte, from, to int) []byte {
+	if from == to || from < 1 || to < 1 {
+		return pcm
+	}
+	n := len(pcm) / (from * 2)
+	out := make([]byte, n*to*2)
+	k := from
+	if to < k {
+		k = to
+	}
+	for i := 0; i < n; i++ {
+		copy(out[i*to*2:i*to*2+k*2], pcm[i*from*2:i*from*2+k*2])
+	}
+	return out
+}
+
+func (e *Engine) dispatch(of *OutFrame, pcm []byte, ch int) {
+	var byCh map[int][]byte // each channel count wanted, laid out once
 	for _, o := range e.outputs {
 		f := of
 		if o.src != "" {
@@ -391,7 +414,21 @@ func (e *Engine) dispatch(of *OutFrame, pcm []byte) {
 				atomic.AddInt32(&f.refs, 1)
 			}
 			o.vch <- f
-			o.ach <- pcm
+			want := o.chans
+			if want < 1 {
+				want = 2
+			}
+			p := pcm
+			if want != ch {
+				if byCh == nil {
+					byCh = map[int][]byte{}
+				}
+				if p = byCh[want]; p == nil {
+					p = remixPCM(pcm, ch, want)
+					byCh[want] = p
+				}
+			}
+			o.ach <- p
 			o.stuck = 0
 		} else {
 			o.dropped++

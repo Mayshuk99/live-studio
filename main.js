@@ -112,7 +112,7 @@ ipcMain.handle('ndi:list', () => new Promise(resolve => {
     catch (x) { resolve({ error: err ? err.message : 'no answer from the NDI helper' }); }
   });
 }));
-ipcMain.on('native:audio', (e, rate, pcm) => { if (nat.soundRoom) nat.send({ cmd: 'audio', rate, ch: 2 }, pcm); });
+ipcMain.on('native:audio', (e, rate, pcm, ch) => { if (nat.soundRoom) nat.send({ cmd: 'audio', rate, ch: ch || 2 }, pcm); });
 // the direct line from the window's sound thread (does not wait for the window when it is busy)
 ipcMain.on('native:audio-port', e => {
   const port = e.ports && e.ports[0];
@@ -122,7 +122,7 @@ ipcMain.on('native:audio-port', e => {
     const d = ev.data;
     if (!d || !d.pcm) return;
     if (first) { first = false; natSendEv({ ev: 'audio-port-ok' }); }
-    if (nat.soundRoom) nat.send({ cmd: 'audio', rate: d.rate, ch: 2 }, d.pcm);
+    if (nat.soundRoom) nat.send({ cmd: 'audio', rate: d.rate, ch: d.ch || 2 }, d.pcm); // (ch: 2 × (1 + recording tracks))
   });
   port.start();
 });
@@ -175,7 +175,8 @@ ipcMain.on('app:lang', (e, l) => { uiLang = l === 'ru' ? 'ru' : 'en'; if (win &&
    never takes Live Studio or the stream with it — the sound just goes on without it ---------- */
 const VST = require('./vst-host');
 const vh = new VST.VstHost();
-const vstS = { want: null, route: 'port', port: null, sent: 0, lastSent: 0, lastReply: 0, restarts: [], scanning: null };
+// ports: a direct line from the window's sound thread for each chain ('' the master, 'ch:…' a channel, 'tr:…' a recording track)
+const vstS = { want: null, ports: new Map(), ipc: new Set(), sent: 0, lastSent: 0, lastReply: 0, restarts: [], scanning: null };
 function vstEv(f, payload) { if (win && !win.isDestroyed()) win.webContents.send('vst:ev', f, payload ? new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength) : null); }
 function vstStart() {
   const exe = VST.vstExe(app);
@@ -192,8 +193,8 @@ vh.on('msg', (f, payload) => {
     if (!payload) return;
     const pcm = new Float32Array(payload.length >> 2);
     Buffer.from(pcm.buffer).set(payload.subarray(0, pcm.length * 4)); // copied: a Buffer may not sit on a 4-byte boundary
-    const d = { seq: +f[1], lat: +f[3] || 0, pcm };
-    if (vstS.route === 'port' && vstS.port) { try { vstS.port.postMessage(d); } catch (e) { vstS.route = 'ipc'; } }
+    const chain = f[4] || '', d = { seq: +f[1], lat: +f[3] || 0, pcm, chain }, port = vstS.ports.get(chain);
+    if (port && !vstS.ipc.has(chain)) { try { port.postMessage(d); } catch (e) { vstS.ipc.add(chain); } }
     else if (win && !win.isDestroyed()) win.webContents.send('vst:audio', d);
     return;
   }
@@ -219,7 +220,7 @@ setInterval(() => {
     try { vh.proc.kill('SIGKILL'); } catch (e) { /* */ }
   }
 }, 1000);
-function vstAudio(seq, pcm) {
+function vstAudio(seq, pcm, chain) {
   if (!vh.ready) return;
   if (vh.backlog > (4 << 20)) return; // the host is far behind: drop (the sound thread plays the untouched sound)
   const frames = (pcm.byteLength >> 3);
@@ -227,20 +228,22 @@ function vstAudio(seq, pcm) {
   const now = Date.now();
   if (!vstS.sent || now - vstS.lastSent > 2000) vstS.lastReply = now; // (sound starting again after a pause)
   vstS.sent++; vstS.lastSent = now;
-  vh.send(['audio', seq, frames], pcm);
+  vh.send(chain ? ['audio', seq, frames, chain] : ['audio', seq, frames], pcm);
 }
 ipcMain.handle('vst:start', (e, opts) => { vstS.want = Object.assign({ rate: 48000 }, opts); vstS.restarts = []; return vstStart(); });
 ipcMain.handle('vst:stop', async () => { vstS.want = null; await vh.stop(); return true; });
 ipcMain.on('vst:cmd', (e, fields, payload) => { if (Array.isArray(fields) && fields.length) vh.send(fields, payload || undefined); });
-ipcMain.on('vst:audio', (e, seq, pcm) => { vstS.route = 'ipc'; vstAudio(seq, pcm); });
-// the direct line from the window's sound thread
-ipcMain.on('vst:port', e => {
+ipcMain.on('vst:audio', (e, seq, pcm, chain) => { vstS.ipc.add(chain || ''); vstAudio(seq, pcm, chain || ''); });
+// the direct line from the window's sound thread (one for each chain)
+ipcMain.on('vst:port', (e, chain) => {
   const port = e.ports && e.ports[0];
   if (!port) return;
-  if (vstS.port) try { vstS.port.close(); } catch (err) { /* */ }
-  vstS.port = port; vstS.route = 'port';
-  port.on('message', ev => { const d = ev.data; if (d && d.pcm !== undefined) { vstS.route = 'port'; vstAudio(d.seq, d.pcm); } });
-  port.on('close', () => { if (vstS.port === port) { vstS.port = null; vstS.route = 'ipc'; } });
+  chain = typeof chain === 'string' ? chain : '';
+  const old = vstS.ports.get(chain);
+  if (old) try { old.close(); } catch (err) { /* */ }
+  vstS.ports.set(chain, port); vstS.ipc.delete(chain);
+  port.on('message', ev => { const d = ev.data; if (d && d.pcm !== undefined) { vstS.ipc.delete(chain); vstAudio(d.seq, d.pcm, chain); } });
+  port.on('close', () => { if (vstS.ports.get(chain) === port) { vstS.ports.delete(chain); vstS.ipc.add(chain); } });
   port.start();
   port.postMessage({ hello: 1 });
 });

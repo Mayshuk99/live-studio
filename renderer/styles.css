@@ -411,7 +411,22 @@ textarea { width: 100%; box-sizing: border-box; }
 .mast-phase { font-size: .72em; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #2a2a2e; color: var(--muted); white-space: nowrap; }
 .mast-phase.ok { background: #14532d; color: #bbf7d0; } .mast-phase.warn { background: #713f12; color: #fde68a; } .mast-phase.bad { background: #7f1d1d; color: #fecaca; }
 .ch-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; min-height: 0; flex: 1; }
-.ch { display: grid; grid-template-columns: 28px minmax(60px, 0.9fr) minmax(80px, 1.6fr) 40px 26px; gap: 8px; align-items: center; padding: 5px 4px; border-radius: 7px; }
+.ch { display: grid; grid-template-columns: 28px minmax(60px, 0.9fr) minmax(80px, 1.6fr) 40px auto; gap: 8px; align-items: center; padding: 5px 4px; border-radius: 7px; }
+.ch-x { display: flex; align-items: center; gap: 4px; justify-content: flex-end; min-width: 26px; }
+.ch-sends { display: inline-flex; gap: 2px; margin-right: 4px; }
+.ch-send { width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--muted); font-size: .72em; font-weight: 700; cursor: pointer; padding: 0; }
+.ch-send:hover { color: var(--text); border-color: #52525b; }
+.ch-send.on { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
+.ch-fx { height: 22px; min-width: 34px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--muted); font-size: .7em; font-weight: 800; letter-spacing: .04em; cursor: pointer; }
+.ch-fx:hover { color: var(--text); border-color: #52525b; }
+.ch-fx.on { background: #4c1d95; border-color: #8b5cf6; color: #fff; }
+.ch-fx.bad { border-color: #ef4444; }
+.tr-head { display: flex; align-items: center; gap: 6px; min-width: 0; cursor: pointer; }
+.tr-head input[type=checkbox] { margin: 0; }
+.tr-head b { font-size: .8em; color: var(--muted); }
+.tr-name { min-width: 0; width: 100%; padding: 2px 6px; font-size: .9em; }
+.ch.tr-off { grid-template-columns: 28px 1fr; opacity: .75; }
+.tr-list .ch-name { overflow: visible; }
 .ch:hover { background: #1c1c20; }
 .master-ch { background: #1c1c20; border: 1px solid var(--line); }
 .master-ch .ch-name { font-weight: 800; letter-spacing: .06em; font-size: .78em; }

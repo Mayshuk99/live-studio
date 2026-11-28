@@ -58,7 +58,7 @@
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 
-static const char* kVersion = "1";
+static const char* kVersion = "2"; // 2: chains (inserts on the channels and recording tracks too)
 
 /* ---------------- messages ---------------- */
 
@@ -236,14 +236,41 @@ struct Slot
 	void* wnd = nullptr;
 	bool resizing = false;
 	std::atomic<int64_t> editedAt {0};
+	std::string chain; // which chain it is on ("" = the master)
 };
 
 static double sampleRate = 48000;
 static int32 maxBlock = 512;
 static std::map<std::string, VST3::Hosting::Module::Ptr> modules;  // window thread
 static std::map<std::string, std::shared_ptr<Slot>> slots;         // window thread
-static std::vector<std::shared_ptr<Slot>> chain;                    // the order the sound goes through
-static std::mutex chainMu;
+
+/* A chain: the inserts of one place in Live Studio's mixer — "" the master, "ch:…" an input channel, "tr:…" a recording
+   track. Each has its own thread, so a heavy plug-in on one channel never holds up the others. */
+struct Chain
+{
+	std::string name;
+	std::mutex mu;                             // held while this chain processes a block (and while it is changed)
+	std::vector<std::shared_ptr<Slot>> slots;  // the order the sound goes through
+	std::vector<std::string> order;            // ids in order, as Live Studio last said (window thread)
+	std::vector<float> wl, wr;                 // (its thread only)
+	std::mutex qmu;
+	std::condition_variable qcv;
+	std::deque<std::pair<std::vector<std::string>, std::vector<uint8_t>>> q; // blocks waiting
+	bool running = false;
+};
+static std::map<std::string, std::shared_ptr<Chain>> chains;
+static std::mutex chainsMu;
+static std::shared_ptr<Chain> chainOf (const std::string& name)
+{
+	std::lock_guard<std::mutex> g (chainsMu);
+	auto& c = chains[name];
+	if (!c)
+	{
+		c = std::make_shared<Chain> ();
+		c->name = name;
+	}
+	return c;
+}
 
 tresult PLUGIN_API Handler::performEdit (ParamID id, ParamValue v)
 {
@@ -267,7 +294,8 @@ tresult PLUGIN_API Handler::restartComponent (int32 flags)
 	if (flags & kLatencyChanged)
 	{
 		postUI ([sl] () {
-			std::lock_guard<std::mutex> g (chainMu);
+			auto c = chainOf (sl->chain);
+			std::lock_guard<std::mutex> g (c->mu);
 			if (sl->processing)
 				sl->proc->setProcessing (false);
 			sl->processing = false;
@@ -602,12 +630,12 @@ static void processSlot (const std::shared_ptr<Slot>& sp0, float* L, float* R, i
 	}
 }
 
-static std::vector<float> wl, wr;
-
 // returns the delay (in samples) of the plug-ins that processed this block
-static int processAudio (float* io, int frames)
+static int processAudio (Chain& c, float* io, int frames)
 {
 	int lat = 0;
+	auto& wl = c.wl;
+	auto& wr = c.wr;
 	if ((int)wl.size () < frames)
 	{
 		wl.resize (frames);
@@ -619,8 +647,8 @@ static int processAudio (float* io, int frames)
 		wr[i] = io[i * 2 + 1];
 	}
 	{
-		std::lock_guard<std::mutex> g (chainMu);
-		for (auto& s : chain)
+		std::lock_guard<std::mutex> g (c.mu);
+		for (auto& s : c.slots)
 		{
 			if (s->bypass || s->broken || !s->proc)
 				continue;
@@ -638,13 +666,56 @@ static int processAudio (float* io, int frames)
 	return lat;
 }
 
-static int chainLatency ()
+// (with the chain's lock held)
+static int chainLatency (Chain& c)
 {
 	int l = 0;
-	for (auto& s : chain)
+	for (auto& s : c.slots)
 		if (!s->bypass && !s->broken)
 			l += s->latency;
 	return l;
+}
+
+static void emitLatency (Chain& c)
+{
+	std::lock_guard<std::mutex> g (c.mu);
+	emit ({"latency", "*", std::to_string (chainLatency (c)), c.name});
+}
+
+// a chain's own thread: takes its blocks in order, processes them, sends them back
+static void chainWorker (std::shared_ptr<Chain> c)
+{
+	for (;;)
+	{
+		std::pair<std::vector<std::string>, std::vector<uint8_t>> job;
+		{
+			std::unique_lock<std::mutex> lk (c->qmu);
+			c->qcv.wait (lk, [&] { return !c->q.empty () || quitting; });
+			if (quitting)
+				return;
+			job = std::move (c->q.front ());
+			c->q.pop_front ();
+		}
+		auto& f = job.first;
+		int frames = std::atoi (f[2].c_str ());
+		int lat = processAudio (*c, reinterpret_cast<float*> (job.second.data ()), frames);
+		emit ({"audio", f[1], f[2], std::to_string (lat), c->name}, job.second.data (), (uint32_t)frames * 8);
+	}
+}
+
+static void queueAudio (std::vector<std::string> f, std::vector<uint8_t> pcm)
+{
+	auto c = chainOf (f.size () >= 4 ? f[3] : std::string ());
+	std::lock_guard<std::mutex> g (c->qmu);
+	if (c->q.size () > 200) // far behind (a plug-in this slow is hopeless): the oldest go — Live Studio plays them untouched
+		c->q.pop_front ();
+	c->q.emplace_back (std::move (f), std::move (pcm));
+	if (!c->running)
+	{
+		c->running = true;
+		std::thread (chainWorker, c).detach ();
+	}
+	c->qcv.notify_one ();
 }
 
 /* ---------------- editors (Windows) ---------------- */
@@ -781,20 +852,34 @@ static void closeEditor (Slot*) {}
 
 /* ---------------- commands ---------------- */
 
-static void setChain (const std::vector<std::string>& ids)
+// the chain's sound order from its list of ids (window thread)
+static void setChain (Chain& c)
 {
-	std::vector<std::shared_ptr<Slot>> c;
-	for (auto& id : ids)
+	std::vector<std::shared_ptr<Slot>> v;
+	for (auto& id : c.order)
 	{
 		auto it = slots.find (id);
-		if (it != slots.end ())
-			c.push_back (it->second);
+		if (it != slots.end () && it->second->chain == c.name)
+			v.push_back (it->second);
 	}
-	std::lock_guard<std::mutex> g (chainMu);
-	chain.swap (c);
+	std::lock_guard<std::mutex> g (c.mu);
+	c.slots.swap (v);
 }
 
-static std::vector<std::string> order; // ids in order, as Live Studio last said
+// take an insert out of its chain and close it
+static void removeSlot (const std::string& id)
+{
+	auto it = slots.find (id);
+	if (it == slots.end ())
+		return;
+	auto s = it->second;
+	slots.erase (it);
+	auto c = chainOf (s->chain);
+	c->order.erase (std::remove (c->order.begin (), c->order.end (), id), c->order.end ());
+	setChain (*c);
+	teardown (s);
+	emitLatency (*c);
+}
 
 static void command (const std::vector<std::string>& f, std::vector<uint8_t> payload)
 {
@@ -811,16 +896,24 @@ static void command (const std::vector<std::string>& f, std::vector<uint8_t> pay
 	else if (cmd == "load" && f.size () >= 4)
 	{
 		std::string id = f[1];
-		auto old = slots.find (id);
-		if (old != slots.end ())
+		std::string cn = f.size () >= 5 ? f[4] : std::string ();
+		auto c = chainOf (cn);
 		{
-			auto o = old->second;
-			slots.erase (old);
-			setChain (order);
-			teardown (o);
+			auto old = slots.find (id);
+			if (old != slots.end ())
+			{
+				auto o = old->second;
+				slots.erase (old);
+				auto oc = chainOf (o->chain);
+				if (oc != c)
+					oc->order.erase (std::remove (oc->order.begin (), oc->order.end (), id), oc->order.end ());
+				setChain (*oc);
+				teardown (o);
+			}
 		}
 		auto s = std::make_shared<Slot> ();
 		s->id = id;
+		s->chain = cn;
 		s->path = f[2];
 		s->cid = f[3];
 		std::string err;
@@ -831,42 +924,33 @@ static void command (const std::vector<std::string>& f, std::vector<uint8_t> pay
 			return;
 		}
 		slots[id] = s;
-		if (std::find (order.begin (), order.end (), id) == order.end ())
-			order.push_back (id);
-		setChain (order);
-		emit ({"loaded", id, "1", std::to_string (s->latency.load ()), s->name, std::to_string (s->nIn), std::to_string (s->nOut)});
-		{
-			std::lock_guard<std::mutex> g (chainMu);
-			emit ({"latency", "*", std::to_string (chainLatency ())});
-		}
+		if (std::find (c->order.begin (), c->order.end (), id) == c->order.end ())
+			c->order.push_back (id);
+		setChain (*c);
+		emit ({"loaded", id, "1", std::to_string (s->latency.load ()), s->name, std::to_string (s->nIn), std::to_string (s->nOut), cn});
+		emitLatency (*c);
 	}
 	else if (cmd == "unload" && f.size () >= 2)
 	{
-		auto it = slots.find (f[1]);
-		order.erase (std::remove (order.begin (), order.end (), f[1]), order.end ());
-		if (it != slots.end ())
-		{
-			auto s = it->second;
-			slots.erase (it);
-			setChain (order);
-			teardown (s);
-		}
+		removeSlot (f[1]);
 		emit ({"unloaded", f[1]});
-		std::lock_guard<std::mutex> g (chainMu);
-		emit ({"latency", "*", std::to_string (chainLatency ())});
 	}
-	else if (cmd == "order")
+	else if (cmd == "order" || (cmd == "order-chain" && f.size () >= 2))
 	{
-		order.assign (f.begin () + 1, f.end ());
-		setChain (order);
+		// order id… (the master) · order-chain chain id…
+		bool named = cmd == "order-chain";
+		auto c = chainOf (named ? f[1] : std::string ());
+		c->order.assign (f.begin () + (named ? 2 : 1), f.end ());
+		setChain (*c);
 	}
 	else if (cmd == "bypass" && f.size () >= 3)
 	{
 		auto it = slots.find (f[1]);
 		if (it != slots.end ())
+		{
 			it->second->bypass = f[2] == "1";
-		std::lock_guard<std::mutex> g (chainMu);
-		emit ({"latency", "*", std::to_string (chainLatency ())});
+			emitLatency (*chainOf (it->second->chain));
+		}
 	}
 	else if (cmd == "edit" && f.size () >= 2)
 	{
@@ -893,9 +977,18 @@ static void command (const std::vector<std::string>& f, std::vector<uint8_t> pay
 	{
 		for (auto& kv : slots)
 			closeEditor (kv.second.get ());
+		quitting = true; // (the chains' threads stop)
 		{
-			std::lock_guard<std::mutex> g (chainMu);
-			chain.clear ();
+			std::lock_guard<std::mutex> g (chainsMu);
+			for (auto& kv : chains)
+			{
+				{
+					std::lock_guard<std::mutex> g2 (kv.second->mu);
+					kv.second->slots.clear ();
+				}
+				std::lock_guard<std::mutex> g3 (kv.second->qmu);
+				kv.second->qcv.notify_all ();
+			}
 		}
 		for (auto& kv : slots)
 			teardown (kv.second);
@@ -923,12 +1016,10 @@ static void reader ()
 		auto f = split (h, '\t');
 		if (f[0] == "audio" && f.size () >= 3)
 		{
+			// audio seq frames [chain]: processed on that chain's own thread
 			int frames = std::atoi (f[2].c_str ());
 			if (frames > 0 && payload.size () >= (size_t)frames * 8)
-			{
-				int lat = processAudio (reinterpret_cast<float*> (payload.data ()), frames);
-				emit ({"audio", f[1], f[2], std::to_string (lat)}, payload.data (), (uint32_t)frames * 8);
-			}
+				queueAudio (f, payload);
 			continue;
 		}
 		postUI ([f, payload] () { command (f, payload); });

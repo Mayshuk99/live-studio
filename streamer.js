@@ -45,10 +45,10 @@ const hwDecode = o => {
 const pixFmt = o => zeroCopy(o) ? [] : ['-pix_fmt', 'yuv420p'];
 /* where the picture comes from: Live Studio's window (Matroska from the browser's encoder), or the native engine
    (raw frames on the pipe + sound from a local connection) */
-const { engineInput, engineTrim, engineCoded } = require('./native-engine');
+const { engineInput, engineTrim, engineCoded, soundChannels, soundMap } = require('./native-engine');
 // the engine already delivers exactly one frame per frame time: nothing to repeat or drop
 const cfr = (o, fps) => o.engine ? [] : ['-r', rate(fps), '-fps_mode', 'cfr'];
-const inputOf = o => o.engine ? [...engineInput(o), '-map', '1:v:0', '-map', '0:a:0', ...(o.coded ? [] : engineTrim())] : [...hwDecode(o), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?'];
+const inputOf = o => o.engine ? [...engineInput(o), '-map', '1:v:0', ...soundMap(o), ...(o.coded ? [] : engineTrim())] : [...hwDecode(o), '-f', 'matroska', '-i', 'pipe:0', '-map', '0:v:0', '-map', '0:a:0?'];
 
 function streamArgs(o) {
   // own encoder settings (Settings → Live stream → Stream encoder settings, like Wirecast's encoder presets)
@@ -425,7 +425,7 @@ class OutputManager extends EventEmitter {
   /* turn the crash-safe fragmented recording into a normal MP4 (fast, no re-encode) */
   _finalize(part, final) {
     return new Promise((resolve, reject) => {
-      const p = spawn(this.ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-i', part, '-c', 'copy', '-movflags', '+faststart', '-y', final], { windowsHide: true });
+      const p = spawn(this.ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-i', part, '-map', '0', '-c', 'copy', '-movflags', '+faststart', '-y', final], { windowsHide: true });
       p.on('exit', code => {
         if (code === 0 && fs.existsSync(final)) { try { fs.unlinkSync(part); } catch (e) { /* keep */ } resolve(final); }
         else reject(new Error('remux failed'));
@@ -461,7 +461,7 @@ class OutputManager extends EventEmitter {
     p.kill = () => { if (this.engine) this.engine.send({ cmd: 'output-kill', id }); setTimeout(() => this._engineExit(id, -9), 3000); };
     // src: an ISO recording of that camera; group: started together (the recording and its ISO files)
     this.engine.send({ cmd: 'output-start', id, args, src: (o && o.kind === 'iso' && o.src) || '', group: (o && o.group) || '', groupSize: (o && o.groupSize) || 0, prio: encPriority(o || {}, args),
-      ...(enc && encArgs ? { enc, encArgs, soundSkipMs: engineCoded.soundSkipMs(o) } : {}) });
+      ach: soundChannels(o), ...(enc && encArgs ? { enc, encArgs, soundSkipMs: engineCoded.soundSkipMs(o) } : {}) });
     return p;
   }
   engineEvent(h) {

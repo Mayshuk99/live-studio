@@ -553,7 +553,7 @@
     const r = await S.nativeStart({ w: natW(), h: natH(), fpsNum: num, fpsDen: den, moveSpeed: settings.moveSpeed ?? 0.12 });
     if (!r || r.error) { toast(`Native engine: ${r ? r.error : 'no answer'} — using the classic engine.`, 'error'); logEvent('ENGINE', `could not start: ${r ? r.error : 'no answer'}`); return false; }
     NAT.on = true; rt.eng = NAT;
-    mixer.enablePcmTap((pcm, rate) => { if (NAT.ready) S.nativeAudio(rate, pcm); }).then(() => {
+    mixer.enablePcmTap((pcm, rate, ch) => { if (NAT.ready) S.nativeAudio(rate, pcm, ch); }).then(() => {
       // the sound goes straight from the sound thread to the engine; if that line does not work, through the window
       if (!S.isApp || NAT.portOK) return;
       const ch = new MessageChannel();
@@ -1770,7 +1770,9 @@
         if (fx) logEvent('ENCODER', `${this.kind}: picture delayed ${(o.videoDelayMs ?? 20) + fx} ms (sync ${o.videoDelayMs ?? 20} + plug-ins ${fx})`);
         const opts = this.kind === 'stream'
           ? Object.assign({ kind: 'stream', url, bitrate: kbps, audioBitrate: akbps, adv: rec }, base)
-          : Object.assign({ kind: 'record', dir: settings.recordDir, name: show.showName, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, adv: rec, timecode: this.tc || (rec && rec.timecode ? timecodeNow(rec.fps || o.fps) : ''), group: this.group || '', groupSize: this.groupSize || 0 }, base);
+          : Object.assign({ kind: 'record', dir: settings.recordDir, name: show.showName, bitrate: o.recordBitrate, audioBitrate: o.recordAudioBitrate || 256, adv: rec, timecode: this.tc || (rec && rec.timecode ? timecodeNow(rec.fps || o.fps) : ''), group: this.group || '', groupSize: this.groupSize || 0,
+            tracks: tracksOn().map(t => ({ n: t.n, name: trackName(t) })) }, base);
+        if (opts.kind === 'record' && opts.tracks.length) logEvent('RECORD', `sound tracks: 1 Program${opts.tracks.map(t => ` · ${t.n} ${t.name}`).join('')}`);
         if (rec) logEvent('ENCODER', `${who}: own encoder settings — ${recAdvText(rec, encoder)}`);
         const r = await S.outStart(opts);
         if (!r || r.error) throw new Error(r ? r.error : 'Encoder did not start');
@@ -4023,12 +4025,25 @@
     if (id) rt.meters.set(id, { i: fill, m: wrap });
     return [wrap, db];
   }
-  function chRow({ id, name, sub, cfg, extra }) {
-    const [fader, db] = chFader(id, cfg, -60, () => mixer.update(id, cfg));
-    const mute = el('button', { class: 'ch-mute' + (cfg.mute ? ' on' : ''), title: 'Mute', onclick: () => { cfg.mute = !cfg.mute; mixer.update(id, cfg); changed(); mute.classList.toggle('on', cfg.mute); fader.classList.toggle('muted', cfg.mute); mute.textContent = cfg.mute ? '🔇' : '🔊'; } }, cfg.mute ? '🔇' : '🔊');
+  // an input's row: mute, name, fader, then which recording tracks it goes to, its plug-ins (FX) and its settings
+  function chRow({ id, name, sub, cfg, extra, onChange }) {
+    const upd = onChange || (() => mixer.update(id, cfg));
+    const [fader, db] = chFader(id, cfg, -60, upd);
+    const mute = el('button', { class: 'ch-mute' + (cfg.mute ? ' on' : ''), title: 'Mute', onclick: () => { cfg.mute = !cfg.mute; upd(); changed(); mute.classList.toggle('on', cfg.mute); fader.classList.toggle('muted', cfg.mute); mute.textContent = cfg.mute ? '🔇' : '🔊'; } }, cfg.mute ? '🔇' : '🔊');
+    const chain = id && !String(id).startsWith('tr:') ? 'ch:' + id : id;
+    const sends = id && !String(id).startsWith('tr:') ? tracksOn().map(t => {
+      const b = el('button', { class: 'ch-send' + ((cfg.tracks || []).includes(t.n) ? ' on' : ''), title: `Send to recording track ${t.n} — ${trackName(t)}`, onclick: () => {
+        const on = new Set(cfg.tracks || []);
+        if (on.has(t.n)) on.delete(t.n); else on.add(t.n);
+        cfg.tracks = [...on].sort((x, y) => x - y);
+        mixer.update(id, cfg); changed(); b.classList.toggle('on', on.has(t.n));
+      } }, String(t.n));
+      return b;
+    }) : [];
+    const fx = chain && S.vstStart ? el('button', { class: 'ch-fx' + (vstOnCount(chain) ? ' on' : ''), dataset: { chain }, title: String(id).startsWith('tr:') ? 'Plug-ins (VST3) on this track' : 'Plug-ins (VST3) on this input', onclick: () => { rt.insBack = openMixer; openInserts(chain); } }, vstBtnText(chain)) : null;
     return el('div', { class: 'ch' }, mute,
       el('div', { class: 'ch-name', title: sub || '' }, name, sub ? el('small', null, sub) : null),
-      fader, db, extra || el('span'));
+      fader, db, el('div', { class: 'ch-x' }, sends.length ? el('span', { class: 'ch-sends' }, ...sends) : null, fx, extra || null));
   }
   const masterCanvas = el('canvas', { class: 'master-meters', width: 150, height: 300 });
   const gonio = el('canvas', { class: 'gonio', width: 160, height: 160 });
@@ -4083,15 +4098,34 @@
         extra: el('button', { class: 'ch-set', title: 'Choose sound card / input, delay', onclick: () => inputSettings(a) }, '⚙') }));
     }
     rows.append(chRow({ id: 'media', name: 'Videos', sub: 'opening / closing videos', cfg: show.audio.media }));
+    // recording tracks 2…6: switched on here; the numbered buttons on each input send it to them
+    const trRows = el('div', { class: 'ch-list tr-list' });
+    for (const t of tracksCfg()) {
+      const on = el('input', { type: 'checkbox', checked: !!t.on, title: t.on ? 'Recorded — click to stop recording this track' : 'Click to record this track too', onchange: () => {
+        t.on = on.checked; changed(); applyTracks(); vstSync();
+        logEvent('AUDIO', `recording track ${t.n} (${trackName(t)}) ${t.on ? 'on' : 'off'} · tracks on: ${tracksOn().map(x => x.n).join(', ') || 'none'}`);
+        if (rt.rec) toast('Recording now: the file keeps the tracks it started with — the change is in the next recording.', '');
+        openMixer();
+      } });
+      const name = el('input', { type: 'text', class: 'tr-name', value: t.name || '', placeholder: `Track ${t.n}`, maxlength: 40, oninput: () => { t.name = name.value; changed(); } });
+      const head = el('label', { class: 'tr-head' }, on, el('b', { class: 'mono' }, String(t.n)), name);
+      if (!t.on) { trRows.append(el('div', { class: 'ch tr-off' }, el('span'), head)); continue; }
+      const row = chRow({ id: 'tr:' + t.n, name: head, cfg: t, onChange: () => applyTracks() });
+      trRows.append(row);
+    }
     put(body,
       el('h3', null, 'Sound cards & inputs'),
       show.audio.inputs.length ? null : el('div', { class: 'status-bad', style: 'margin-bottom:8px' }, 'No sound card connected yet. Click “+ Connect sound card”.'),
+      tracksOn().length ? el('div', { class: 'muted', style: 'font-size:.82em;margin:-2px 0 4px' }, 'Numbered buttons: which recording tracks the input also goes to (after its fader). Every input always goes to the program (track 1).') : null,
       rows,
       el('div', { class: 'row wrap', style: 'gap:8px;margin:10px 0 4px' },
         el('button', { class: 'btn primary', onclick: () => inputSettings(null) }, '+ Connect sound card / input'),
         el('button', { class: 'btn', onclick: async () => { await refreshDevices(); toast(`Found ${rt.devices.audio.length} audio devices.`); openMixer(); } }, '↻ Rescan devices'),
         el('button', { class: 'btn', onclick: openSyncTest }, '⏱ Sync test')),
-      el('div', { class: 'muted', style: 'font-size:.85em' }, 'Click ⚙ on an input to pick which sound card and which channels it uses (capture card, SSL, etc.).'),
+      el('div', { class: 'muted', style: 'font-size:.85em' }, 'Click ⚙ on an input to pick which sound card and which channels it uses (capture card, SSL, etc.). FX: VST3 plug-ins on that input.'),
+      el('h3', null, 'Recording tracks'),
+      el('div', { class: 'muted', style: 'font-size:.85em;margin-bottom:6px' }, `Track 1 is the program — the stream and the recording's first track. Tick tracks 2–6 to record more sound tracks into the same MP4 file (like OBS): for example the pulpit alone, or the room. Name them, send inputs to them with the numbered buttons above, and give each its own plug-ins (FX) — these change only that track, never the stream.${rt.eng ? '' : ' Extra tracks are recorded with the native engine (Settings → Video output).'}`),
+      trRows,
       el('h3', null, 'Program playback (e.g. SSL 2 → TC Electronic meter)'),
       el('div', { class: 'field' }, el('span', null, 'Play the program on'),
         select([['', 'Off'], ...outChoices()],
@@ -4118,44 +4152,89 @@
       el('div', { class: 'row', style: 'margin-top:14px' }, el('span', { class: 'grow' }), el('button', { class: 'btn primary', onclick: () => closeModal() }, 'Done')));
     openModal('Audio mixer & sound card', body);
   }
-  /* ---------- VST3 plug-ins on the Master (inserts) ----------
-     They run in their own program (ls-vst). The sound runs a fixed 50 ms (+ the plug-ins' own delay) behind, so a
-     late answer never makes a gap; a crashed plug-in host means the sound simply goes on untouched. */
-  const VSTR = { started: false, ready: false, missing: false, slots: new Map(), stats: null, portOK: false, list: null, scanning: null, prog: null, redraw: null, lateAt: 0, editT: new Map(), loggedDry: 0 };
+  /* ---------- VST3 plug-ins (inserts) on the master, on every input and on every recording track ----------
+     They run in their own program (ls-vst), one chain each: '' the master, 'ch:<input id>' an input ('ch:media' the
+     videos), 'tr:<n>' recording track n. Each insert stage runs a fixed time behind (50 ms + its plug-ins' own delay),
+     so a late answer never makes a gap; a crashed plug-in host means the sound simply goes on untouched.
+     Timing: all inputs share one delay (the longest input chain) and the master and the tracks share another, so every
+     input, the program and every track stay lined up; the picture waits for the two together. */
+  const VSTR = { started: false, ready: false, missing: false, slots: new Map(), stats: null, cstats: new Map(), portOK: new Set(), list: null, scanning: null, prog: null, redraw: null, lateAt: 0, editT: new Map(), loggedDry: 0 };
   const VST_BASE_MS = 50;
   const vstIns = () => { const m = show.audio.master; if (!Array.isArray(m.inserts)) m.inserts = []; return m.inserts; };
-  const vstActive = () => vstIns().length > 0 && !VSTR.missing;
-  const vstOnCount = () => vstIns().filter(x => !x.bypass).length;
-  const vstBtnText = () => { const n = vstIns().length, on = vstOnCount(); return n ? `FX ${on}${on !== n ? '/' + n : ''}` : 'FX'; };
+  /* recording tracks 2…6 (OBS-style): track 1 is the program (the stream); the others go into the recording only */
+  const TRACK_NS = [2, 3, 4, 5, 6];
+  function tracksCfg() {
+    const A = show.audio;
+    if (!Array.isArray(A.tracks)) A.tracks = [];
+    for (const n of TRACK_NS) if (!A.tracks.find(t => t.n === n)) A.tracks.push({ n, on: false, name: '', gain: 0, mute: false, inserts: [] });
+    A.tracks = A.tracks.filter(t => TRACK_NS.includes(t.n)).sort((x, y) => x.n - y.n);
+    return A.tracks;
+  }
+  const tracksOn = () => tracksCfg().filter(t => t.on);
+  const trackName = t => String(t.name || '').trim() || `Track ${t.n}`;
+  function applyTracks() { mixer.setTracks(tracksOn().map(t => ({ n: t.n, gain: t.gain || 0, mute: !!t.mute }))); }
+  // the settings object of a chain's place in the mixer (null: it is not there any more)
+  function chainCfg(chain) {
+    if (!chain) return show.audio.master;
+    if (chain === 'ch:media') return show.audio.media;
+    if (chain.startsWith('ch:')) return show.audio.inputs.find(a => a.id === chain.slice(3)) || null;
+    if (chain.startsWith('tr:')) return tracksCfg().find(t => t.n === +chain.slice(3)) || null;
+    return null;
+  }
+  function chainIns(chain) {
+    const c = chainCfg(chain);
+    if (!c) return [];
+    if (!Array.isArray(c.inserts)) c.inserts = [];
+    return c.inserts;
+  }
+  const chainName = chain => !chain ? 'Master' : chain === 'ch:media' ? 'Videos' : chain.startsWith('tr:') ? trackName(chainCfg(chain) || { n: +chain.slice(3) }) : ((chainCfg(chain) || {}).name || 'Input');
+  // every chain that runs: the master, every input (and the videos), the tracks that are on
+  const stripChains = () => [...show.audio.inputs.map(a => 'ch:' + a.id), 'ch:media'];
+  const busChains = () => ['', ...tracksOn().map(t => 'tr:' + t.n)];
+  const allChains = () => [...busChains(), ...stripChains()];
+  const allIns = () => allChains().flatMap(c => chainIns(c).map(x => ({ x, chain: c })));
+  function findIns(id) { for (const c of allChains()) { const x = chainIns(c).find(i => i.id === id); if (x) return { x, chain: c }; } return { x: null, chain: null }; }
+  const vstActive = () => allIns().length > 0 && !VSTR.missing;
+  const vstOnCount = (chain = '') => chainIns(chain).filter(x => !x.bypass).length;
+  const vstBtnText = (chain = '') => { const n = chainIns(chain).length, on = vstOnCount(chain); return n ? `FX ${on}${on !== n ? '/' + n : ''}` : 'FX'; };
   const b64of = u8 => { let s2 = ''; for (let i = 0; i < u8.length; i += 0x8000) s2 += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s2); };
   const bytesOf = b => { const s2 = atob(b); const u = new Uint8Array(s2.length); for (let i = 0; i < s2.length; i++) u[i] = s2.charCodeAt(i); return u; };
-  // total delay of the master sound (samples): 50 ms for the round trip + every loaded plug-in's own delay (bypassed ones too, so bypass never moves the timing)
-  function vstD() {
-    const sr = mixer.ctx.sampleRate; let lat = 0;
-    for (const x of vstIns()) { const st = VSTR.slots.get(x.id); if (st && st.ok) lat += st.lat || 0; }
-    return Math.round(sr * VST_BASE_MS / 1000) + lat;
+  // a chain's own plug-in delay: every loaded plug-in's (bypassed ones too, so bypass never moves the timing)
+  function chainLat(chain) { let lat = 0; for (const x of chainIns(chain)) { const st = VSTR.slots.get(x.id); if (st && st.ok) lat += st.lat || 0; } return lat; }
+  // a stage's delay (samples): 50 ms for the round trip + its longest chain; 0 when none of its chains has plug-ins
+  function stageD(chains) {
+    const used = chains.filter(c => chainIns(c).length);
+    if (!used.length || VSTR.missing) return 0;
+    return Math.round(mixer.ctx.sampleRate * VST_BASE_MS / 1000) + Math.max(0, ...used.map(chainLat));
   }
+  const vstD = () => stageD(busChains());
   const vstMs = () => mixer.insertD ? Math.round(mixer.insertD / mixer.ctx.sampleRate * 1000) : 0;
   function vstApplyD() {
-    const on = vstActive(), before = mixer.insertD || 0;
-    mixer.setInserts(on, on ? vstD() : 0);
+    const before = mixer.insertD || 0, Ds = stageD(stripChains()), Db = stageD(busChains());
+    // inputs: all delayed alike once any of them has plug-ins (the ones without just wait)
+    for (const c of stripChains()) mixer.setChainInsert(c, !!Ds && chainIns(c).length > 0, Ds);
+    for (const c of busChains()) mixer.setChainInsert(c, !!Db && chainIns(c).length > 0, Db);
+    for (const t of tracksCfg()) if (!t.on) mixer.setChainInsert('tr:' + t.n, false, 0);
+    if (!Db) mixer.setInserts(false, 0);
+    mixer.insertD = Ds + Db; mixer.insertDs = Ds; mixer.insertDb = Db;
     mixer.setDelayComp(rt.eng ? 0 : vstMs()); // classic engine: the inputs' sound delay is shortened instead
     if ((mixer.insertD || 0) !== before) {
-      logEvent('PLUGINS', `master sound delay ${vstMs()} ms`);
+      logEvent('PLUGINS', `sound delay ${vstMs()} ms${Ds && Db ? ` (inputs ${Math.round(Ds / mixer.ctx.sampleRate * 1000)} + master ${Math.round(Db / mixer.ctx.sampleRate * 1000)})` : ''}`);
       if (rt.eng && ((rt.live && rt.live.viaEngine) || (rt.rec && rt.rec.viaEngine))) toast('The plug-in delay changed — sound/picture sync is corrected the next time you go live or record.', '');
     }
   }
-  function vstLoad(x) {
-    VSTR.slots.set(x.id, { loading: true, ok: false, lat: (VSTR.slots.get(x.id) || {}).lat || 0 });
-    S.vstCmd(['load', x.id, x.path, x.cid], x.state ? bytesOf(x.state) : null);
+  function vstLoad(x, chain) {
+    VSTR.slots.set(x.id, { loading: true, ok: false, lat: (VSTR.slots.get(x.id) || {}).lat || 0, chain });
+    S.vstCmd(['load', x.id, x.path, x.cid, chain], x.state ? bytesOf(x.state) : null);
     if (x.bypass) S.vstCmd(['bypass', x.id, '1']);
   }
-  const vstOrder = () => S.vstCmd(['order', ...vstIns().map(x => x.id)]);
+  const vstOrder = chain => S.vstCmd(['order-chain', chain, ...chainIns(chain).map(x => x.id)]);
+  const vstOrderAll = () => { for (const c of allChains()) if (chainIns(c).length) vstOrder(c); };
   async function vstSync() {
     if (!S.vstStart) return;
-    const ins = vstIns();
+    const ins = allIns();
     if (!ins.length) {
-      if (VSTR.started) { VSTR.started = false; VSTR.ready = false; VSTR.slots.clear(); await S.vstStop(); logEvent('PLUGINS', 'no plug-ins on the master — plug-in host stopped'); }
+      if (VSTR.started) { VSTR.started = false; VSTR.ready = false; VSTR.slots.clear(); await S.vstStop(); logEvent('PLUGINS', 'no plug-ins anywhere — plug-in host stopped'); }
       vstApplyD(); vstRedraw(); return;
     }
     if (!VSTR.started) {
@@ -4164,34 +4243,37 @@
       if (!r || r.error) { VSTR.started = false; VSTR.missing = true; toast(`Plug-ins: ${r ? r.error : 'no answer'}`, 'error'); vstApplyD(); vstRedraw(); return; }
       VSTR.missing = false;
       await vstAudioPath();
-      if (r.ready) { VSTR.ready = true; for (const x of ins) vstLoad(x); vstOrder(); }
-      logEvent('PLUGINS', `plug-in host started · ${ins.map(x => x.name).join(' → ')}`);
+      if (r.ready) { VSTR.ready = true; for (const i of allIns()) vstLoad(i.x, i.chain); vstOrderAll(); }
+      logEvent('PLUGINS', `plug-in host started · ${allChains().filter(c => chainIns(c).length).map(c => `${chainName(c)}: ${chainIns(c).map(x => x.name).join(' → ')}`).join(' · ')}`);
     } else if (VSTR.ready) {
-      // load what is new, unload what is gone, then the order
-      const want = new Set(ins.map(x => x.id));
-      for (const id of [...VSTR.slots.keys()]) if (!want.has(id)) { S.vstCmd(['unload', id]); VSTR.slots.delete(id); }
-      for (const x of ins) if (!VSTR.slots.has(x.id)) vstLoad(x);
-      vstOrder();
+      // load what is new, unload what is gone (or whose input / track went away), then the order
+      const want = new Set(ins.map(i => i.x.id));
+      for (const id of [...VSTR.slots.keys()]) if (!want.has(id)) { S.vstCmd(['close-edit', id]); S.vstCmd(['unload', id]); VSTR.slots.delete(id); }
+      for (const i of ins) if (!VSTR.slots.has(i.x.id)) vstLoad(i.x, i.chain);
+      vstOrderAll();
     }
     vstApplyD(); vstRedraw();
   }
-  // the sound thread ↔ plug-in host line (straight to the main process; through the window if that does not answer)
-  async function vstAudioPath() {
-    await mixer.enableInserts(d => {
-      if (d.pcm !== undefined) { S.vstAudio(d.seq, d.pcm); return; } // relayed through the window
-      if (d.portOk) { if (!VSTR.portOK) logEvent('PLUGINS', 'sound goes straight from the sound thread to the plug-ins'); VSTR.portOK = true; return; }
-      if (d.stats) vstStats(d.stats);
-    });
-    if (VSTR.portSet) return;
-    VSTR.portSet = true;
+  // the sound thread ↔ plug-in host lines, one per chain (straight to the main process; through the window if that does not answer)
+  function vstPortFor(chain) {
     if (!S.isApp && !S.vstPortSink) return;
     const ch = new MessageChannel();
-    if (S.isApp) window.postMessage('ls-vst-port', '*', [ch.port2]); else S.vstPortSink(ch.port2); // (the browser stand-in for tests)
-    mixer.insertPort(ch.port1);
-    setTimeout(() => { if (!VSTR.portOK) { mixer.insertPort(null); logEvent('PLUGINS', 'sound goes to the plug-ins through the window (the direct line did not answer)'); } }, 3000);
+    if (S.isApp) window.postMessage({ t: 'ls-vst-port', chain }, '*', [ch.port2]); else S.vstPortSink(ch.port2, chain); // (the browser stand-in for tests)
+    mixer.insertPort(ch.port1, chain);
+    VSTR.portOK.delete(chain);
+    setTimeout(() => { if (!VSTR.portOK.has(chain) && mixer.insNode(chain)) { mixer.insertPort(null, chain); logEvent('PLUGINS', `${chainName(chain)}: sound goes to the plug-ins through the window (the direct line did not answer)`); } }, 3000);
   }
-  function vstStats(st) {
-    VSTR.stats = st;
+  async function vstAudioPath() {
+    await mixer.enableInserts((d, chain) => {
+      chain = chain || '';
+      if (d.pcm !== undefined) { S.vstAudio(d.seq, d.pcm, chain); return; } // relayed through the window
+      if (d.portOk) { if (!VSTR.portOK.size) logEvent('PLUGINS', 'sound goes straight from the sound thread to the plug-ins'); VSTR.portOK.add(chain); return; }
+      if (d.stats) vstStats(d.stats, chain);
+    }, chain => vstPortFor(chain));
+  }
+  function vstStats(st, chain) {
+    VSTR.cstats.set(chain, st);
+    if (!chain) VSTR.stats = st;
     // untouched sound played while the plug-ins were running = they answered too late (or went away)
     const dryMs = Math.round(st.dry / mixer.ctx.sampleRate * 1000);
     if (VSTR.ready && dryMs > 20) VSTR.loggedDry += dryMs;
@@ -4199,31 +4281,40 @@
     if (VSTR.loggedDry && now - VSTR.lateAt > 10000) { VSTR.lateAt = now; logEvent('PLUGINS', `plug-ins answered late: ${VSTR.loggedDry} ms played without them (the sound did not stop)`); VSTR.loggedDry = 0; }
     if (VSTR.redrawStatus) VSTR.redrawStatus();
   }
-  function vstRedraw() { if (VSTR.redraw) VSTR.redraw(); syncAudioButtons(); }
+  function vstRedraw() { if (VSTR.redraw) VSTR.redraw(); syncAudioButtons(); syncFxButtons(); }
+  // the small FX buttons on the mixer's inputs and tracks
+  function syncFxButtons() {
+    document.querySelectorAll('.ch-fx[data-chain]').forEach(b => {
+      const c = b.dataset.chain, t = vstBtnText(c);
+      if (b.textContent !== t) b.textContent = t;
+      b.classList.toggle('on', vstOnCount(c) > 0);
+      b.classList.toggle('bad', chainIns(c).some(x => { const st = VSTR.slots.get(x.id); return st && (st.broken || st.err); }));
+    });
+  }
   // a plug-in's settings are kept in the show (fetched 2 s after you stop turning its knobs, and when its window closes)
   function vstWantState(id) {
     clearTimeout(VSTR.editT.get(id));
     VSTR.editT.set(id, setTimeout(() => { VSTR.editT.delete(id); S.vstCmd(['get-state', id]); }, 2000));
   }
   if (S.onVst) S.onVst((f, payload) => {
-    const ins = vstIns(), x = ins.find(i => i.id === f[1]), st = VSTR.slots.get(f[1]);
+    const { x, chain } = findIns(f[1]), st = VSTR.slots.get(f[1]), where = x && chain ? ` (${chainName(chain)})` : '';
     switch (f[0]) {
       case 'ready':
         VSTR.ready = true; VSTR.slots.clear();
         logEvent('PLUGINS', `plug-in host ready (${f[1] || ''})`);
-        for (const i of ins) vstLoad(i);
-        vstOrder(); vstApplyD();
+        for (const i of allIns()) vstLoad(i.x, i.chain);
+        vstOrderAll(); vstApplyD();
         break;
       case 'loaded':
         if (!x) break;
         if (f[2] === '1') {
-          VSTR.slots.set(x.id, { ok: true, lat: +f[3] || 0, name: f[4], nIn: +f[5], nOut: +f[6] });
+          VSTR.slots.set(x.id, { ok: true, lat: +f[3] || 0, name: f[4], nIn: +f[5], nOut: +f[6], chain });
           if (f[4] && f[4] !== x.name) x.name = f[4];
-          logEvent('PLUGINS', `loaded ${x.name}${+f[3] ? ` · own delay ${(+f[3] / mixer.ctx.sampleRate * 1000).toFixed(1)} ms` : ''}${+f[5] === 1 ? ' · mono' : ''}`);
+          logEvent('PLUGINS', `loaded ${x.name}${where}${+f[3] ? ` · own delay ${(+f[3] / mixer.ctx.sampleRate * 1000).toFixed(1)} ms` : ''}${+f[5] === 1 ? ' · mono' : ''}`);
         } else {
-          VSTR.slots.set(x.id, { ok: false, err: f[3] || 'could not be loaded', lat: 0 });
-          logEvent('PLUGINS', `${x.name} could not be loaded: ${f[3]}`);
-          toast(`Plug-in “${x.name}” could not be loaded: ${f[3]}`, 'error');
+          VSTR.slots.set(x.id, { ok: false, err: f[3] || 'could not be loaded', lat: 0, chain });
+          logEvent('PLUGINS', `${x.name}${where} could not be loaded: ${f[3]}`);
+          toast(`Plug-in “${x.name}”${where} could not be loaded: ${f[3]}`, 'error');
         }
         vstApplyD(); vstRedraw();
         break;
@@ -4243,7 +4334,7 @@
         break;
       case 'broken':
         if (st) st.broken = true;
-        if (x) { logEvent('PLUGINS', `${x.name} crashed while processing — it is skipped now (the sound goes on)`); toast(`Plug-in “${x.name}” crashed and is skipped now — the sound goes on without it. Remove it or reload the show.`, 'error'); }
+        if (x) { logEvent('PLUGINS', `${x.name}${where} crashed while processing — it is skipped now (the sound goes on)`); toast(`Plug-in “${x.name}”${where} crashed and is skipped now — the sound goes on without it. Remove it or reload the show.`, 'error'); }
         vstRedraw();
         break;
       case 'log': logEvent('PLUGINS', f.slice(1).join(' ')); break;
@@ -4270,42 +4361,47 @@
   // effects only (instruments are hidden), sorted by maker then name
   const vstEffects = () => (VSTR.list ? VSTR.list.plugins : []).filter(p2 => !/Instrument/i.test(p2.sub) || /Fx/i.test(p2.sub))
     .sort((a, b) => (a.vendor || '').localeCompare(b.vendor || '') || a.name.localeCompare(b.name));
-  function vstPage() {
+  // the plug-in list of one chain ('' = the master)
+  function vstPage(chain = '') {
     const wrap = el('div', { class: 'vst-page' });
     const status = el('div', { class: 'vst-status' }), slotsBox = el('div', { class: 'vst-slots' }), pickBox = el('div');
+    const isMaster = !chain, isTrack = chain.startsWith('tr:');
     let picking = false, q = '';
     const drawStatus = () => {
       status.innerHTML = '';
-      const st = VSTR.stats, ins = vstIns();
+      const st = VSTR.cstats.get(chain), ins = chainIns(chain), sr = mixer.ctx.sampleRate;
+      const myD = isMaster || isTrack ? mixer.insertDb || 0 : mixer.insertDs || 0, myMs = Math.round(myD / sr * 1000);
       let line;
       if (!S.vstStart) line = el('span', { class: 'muted' }, 'Plug-ins work in the Live Studio app on Windows.');
       else if (VSTR.missing) line = el('span', { class: 'status-bad' }, 'The plug-in host is missing from this installation — update Live Studio.');
-      else if (!ins.length) line = el('span', { class: 'muted' }, 'No plug-ins on the master. The sound goes straight through, with no delay.');
+      else if (!ins.length) line = el('span', { class: 'muted' }, myD ? (isMaster || isTrack ? `No plug-ins here. The sound waits ${myMs} ms anyway, to stay in step with the tracks that have plug-ins.` : `No plug-ins here. The sound waits ${myMs} ms anyway, to stay in step with the inputs that have plug-ins.`)
+        : isMaster ? 'No plug-ins on the master. The sound goes straight through, with no delay.' : 'No plug-ins here. The sound goes straight through, with no delay.');
       else if (!VSTR.ready) line = el('span', { class: 'status-bad' }, 'Plug-in host starting… (the sound goes on untouched meanwhile)');
       else {
-        const dry = st ? Math.round(st.dry / mixer.ctx.sampleRate * 1000) : 0;
+        const dry = st ? Math.round(st.dry / sr * 1000) : 0, own = Math.round(chainLat(chain) / sr * 1000);
         line = el('span', { class: dry > 20 ? 'status-bad' : 'status-ok' },
-          `● Running · sound ${vstMs()} ms behind${vstMs() > VST_BASE_MS ? ` (${vstMs() - VST_BASE_MS} ms of it from the plug-ins)` : ''} · ${rt.eng ? 'picture delayed to match' : 'inputs’ sound delay shortened to match'}`,
+          isMaster ? `● Running · program sound ${myMs} ms behind${own ? ` (${own} ms of it from these plug-ins)` : ''} · total ${vstMs()} ms · ${rt.eng ? 'picture delayed to match' : 'inputs’ sound delay shortened to match'}`
+            : `● Running · this sound ${myMs} ms behind${own ? ` (${own} ms of it from these plug-ins)` : ''} · total ${vstMs()} ms · ${rt.eng ? 'picture delayed to match' : 'inputs’ sound delay shortened to match'}`,
           dry > 20 ? ` · ${dry} ms late in the last second` : '');
       }
       put(status, line, VSTR.prog ? el('div', { class: 'muted' }, `Looking for plug-ins… ${VSTR.prog.i}/${VSTR.prog.n} ${VSTR.prog.module}`) : null);
     };
     const drawSlots = () => {
       slotsBox.innerHTML = '';
-      const ins = vstIns();
+      const ins = chainIns(chain);
       ins.forEach((x, i) => {
         const st = VSTR.slots.get(x.id) || {};
         const state = st.broken ? el('span', { class: 'status-bad' }, 'crashed — skipped') : st.err ? el('span', { class: 'status-bad' }, st.err) : st.loading || (!st.ok && VSTR.started) ? el('span', { class: 'muted' }, 'loading…') : st.lat ? el('span', { class: 'muted' }, `delay ${(st.lat / mixer.ctx.sampleRate * 1000).toFixed(1)} ms`) : null;
         put(slotsBox, el('div', { class: 'vst-slot' + (x.bypass ? ' off' : '') + (st.broken || st.err ? ' bad' : '') },
           el('span', { class: 'vst-num mono' }, String(i + 1)),
-          el('button', { class: 'btn vst-pwr' + (x.bypass ? '' : ' on'), title: x.bypass ? 'Bypassed — click to turn it on' : 'On — click to bypass', onclick: () => { x.bypass = !x.bypass; S.vstCmd(['bypass', x.id, x.bypass ? '1' : '0']); changed(); logEvent('PLUGINS', `${x.name} ${x.bypass ? 'bypassed' : 'on'}`); drawSlots(); syncAudioButtons(); } }, '⏻'),
+          el('button', { class: 'btn vst-pwr' + (x.bypass ? '' : ' on'), title: x.bypass ? 'Bypassed — click to turn it on' : 'On — click to bypass', onclick: () => { x.bypass = !x.bypass; S.vstCmd(['bypass', x.id, x.bypass ? '1' : '0']); changed(); logEvent('PLUGINS', `${x.name} (${chainName(chain)}) ${x.bypass ? 'bypassed' : 'on'}`); drawSlots(); syncAudioButtons(); syncFxButtons(); } }, '⏻'),
           el('div', { class: 'vst-name' }, el('b', null, x.name), el('small', null, x.vendor || ''), state),
           el('button', { class: 'btn', disabled: !st.ok, title: 'Open the plug-in’s own window', onclick: () => S.vstCmd(['edit', x.id]) }, st.editor ? 'Window open' : 'Edit…'),
-          el('button', { class: 'btn small', disabled: i === 0, title: 'Move up (earlier in the chain)', onclick: () => { ins.splice(i - 1, 0, ins.splice(i, 1)[0]); vstOrder(); changed(); drawSlots(); } }, '▲'),
-          el('button', { class: 'btn small', disabled: i === ins.length - 1, title: 'Move down (later in the chain)', onclick: () => { ins.splice(i + 1, 0, ins.splice(i, 1)[0]); vstOrder(); changed(); drawSlots(); } }, '▼'),
-          el('button', { class: 'btn small danger', title: 'Remove from the master', onclick: () => { S.vstCmd(['close-edit', x.id]); ins.splice(i, 1); changed(); logEvent('PLUGINS', `removed ${x.name}`); vstSync(); } }, '✕')));
+          el('button', { class: 'btn small', disabled: i === 0, title: 'Move up (earlier in the chain)', onclick: () => { ins.splice(i - 1, 0, ins.splice(i, 1)[0]); vstOrder(chain); changed(); drawSlots(); } }, '▲'),
+          el('button', { class: 'btn small', disabled: i === ins.length - 1, title: 'Move down (later in the chain)', onclick: () => { ins.splice(i + 1, 0, ins.splice(i, 1)[0]); vstOrder(chain); changed(); drawSlots(); } }, '▼'),
+          el('button', { class: 'btn small danger', title: isMaster ? 'Remove from the master' : 'Remove', onclick: () => { S.vstCmd(['close-edit', x.id]); ins.splice(i, 1); changed(); logEvent('PLUGINS', `removed ${x.name} (${chainName(chain)})`); vstSync(); } }, '✕')));
       });
-      document.querySelectorAll('.fx-dot').forEach(d2 => d2.classList.toggle('on', vstOnCount() > 0));
+      if (isMaster) document.querySelectorAll('.fx-dot').forEach(d2 => d2.classList.toggle('on', vstOnCount() > 0));
       if (ins.length < 8) put(slotsBox, el('button', { class: 'btn primary vst-add', onclick: () => { picking = !picking; drawPick(); if (picking && !VSTR.list) vstScan(false).then(drawPick); } }, picking ? 'Close the list' : '+ Add plug-in…'));
       drawStatus();
     };
@@ -4321,9 +4417,10 @@
         if (VSTR.scanning && !VSTR.list) { put(list, el('div', { class: 'muted' }, 'Looking for plug-ins… (the first time can take a minute — Waves especially)')); return; }
         if (!all.length) { put(list, el('div', { class: 'muted' }, 'No VST3 plug-ins found. They live in C:\\Program Files\\Common Files\\VST3 — install them there (Waves: through Waves Central) and click “Look again”.')); return; }
         for (const p2 of found.slice(0, 300)) put(list, el('button', { class: 'vst-item', onclick: () => {
+          if (!chainCfg(chain)) return;
           const x = { id: uid('fx'), path: p2.path, cid: p2.cid, name: p2.name, vendor: p2.vendor, bypass: false, state: null };
-          vstIns().push(x); changed(); picking = false; q = '';
-          logEvent('PLUGINS', `added ${p2.name} (${p2.vendor})`);
+          chainIns(chain).push(x); changed(); picking = false; q = '';
+          logEvent('PLUGINS', `added ${p2.name} (${p2.vendor}) on ${chainName(chain)}`);
           vstSync(); drawPick(); drawSlots();
         } }, el('b', null, p2.name), el('small', null, `${p2.vendor}${p2.sub ? ' · ' + p2.sub.replace(/\|/g, ', ') : ''}`)));
         if (!found.length) put(list, el('div', { class: 'muted' }, 'Nothing matches.'));
@@ -4341,8 +4438,24 @@
     VSTR.redraw = () => { if (wrap.isConnected) drawSlots(); else VSTR.redraw = null; };
     VSTR.redrawStatus = () => { if (wrap.isConnected) drawStatus(); else VSTR.redrawStatus = null; };
     drawSlots();
-    return put(wrap, status, slotsBox, pickBox,
-      el('div', { class: 'muted', style: 'font-size:.82em;margin-top:12px' }, 'VST3 plug-ins (e.g. Waves) on the program sound, top to bottom: after the master fader, before Live Studio’s compressor and limiter (keep LIMITER on as the last safety). They run in a separate program — if one crashes, the stream goes on without it. With plug-ins the sound runs about 50 ms behind; the picture is delayed to match. Settings made in a plug-in’s window are saved with the show.'));
+    const about = isMaster
+      ? 'VST3 plug-ins (e.g. Waves) on the program sound, top to bottom: after the master fader, before Live Studio’s compressor and limiter (keep LIMITER on as the last safety). They run in a separate program — if one crashes, the stream goes on without it. With plug-ins the sound runs about 50 ms behind; the picture is delayed to match. Settings made in a plug-in’s window are saved with the show.'
+      : isTrack
+        ? 'Plug-ins on this recording track only, top to bottom: after the inputs sent to it are mixed, before the track’s fader. The stream and the other tracks are not affected. Settings made in a plug-in’s window are saved with the show.'
+        : 'Plug-ins on this input, top to bottom: after its low cut and voice compressor, before its fader — so they reach the program and every recording track it is sent to. They run in a separate program — if one crashes, the sound goes on without it. Settings made in a plug-in’s window are saved with the show.';
+    return put(wrap, status, slotsBox, pickBox, el('div', { class: 'muted', style: 'font-size:.82em;margin-top:12px' }, about));
+  }
+  // plug-ins of an input or a recording track, in a window of their own (the master's are under DYN → PLUG-INS)
+  function openInserts(chain) {
+    const back = rt.insBack;
+    rt.insBack = null;
+    openModal(`Plug-ins — ${chainName(chain)}`, el('div', null, vstPage(chain),
+      el('div', { class: 'row', style: 'margin-top:12px' }, el('span', { class: 'grow' }),
+        el('button', { class: 'btn primary', onclick: () => {
+          closeModal();
+          if (VSTR.ready) for (const x of chainIns(chain)) if ((VSTR.slots.get(x.id) || {}).ok) S.vstCmd(['get-state', x.id]);
+          if (back) back();
+        } }, 'Done'))));
   }
   /* ---------- master dynamics: compressor + limiter (like a console's DYN screen) ---------- */
   const COMP_PRESETS = [
@@ -4828,7 +4941,7 @@
         check(' Low-cut (removes rumble)', cfg.lowcut, v => { cfg.lowcut = v; }),
         check(' Voice leveler (gentle compression)', cfg.voice, v => { cfg.voice = v; })),
       el('div', { class: 'row' },
-        isNew ? null : el('button', { class: 'btn danger', onclick: () => { mixer.removeInput(cfg.id); show.audio.inputs = show.audio.inputs.filter(x => x.id !== cfg.id); changed(); closeModal(); refresh('audio'); } }, 'Remove input'),
+        isNew ? null : el('button', { class: 'btn danger', onclick: () => { mixer.removeInput(cfg.id); show.audio.inputs = show.audio.inputs.filter(x => x.id !== cfg.id); changed(); closeModal(); refresh('audio'); vstSync(); } }, 'Remove input'),
         el('span', { class: 'grow' }),
         el('button', { class: 'btn primary', onclick: async () => {
           rememberDevice(cfg, 'audio');
@@ -5539,6 +5652,8 @@
     delete show.intro; delete show.ending; delete show.autoIntro;
     { const h = SV().hold; if (h.zoom === 1.12 && h.focusX === 0.3) { h.zoom = 1.06; h.focusX = 0.4; } } // 1.3.3 framing → new default
     syncRoleShots();
+    mixer.update('media', show.audio.media);
+    applyTracks();
     drawHold();
     engine.cut('shot_hold');
     rt.service = 'hold';
@@ -5589,7 +5704,7 @@
     S.version().then(v => S.ffmpegVersion().then(fv => logEvent('START', `Live Studio ${v} · FFmpeg ${fv || '?'} · output ${o.width}×${o.height} at ${o.fps} fps · encoder ${o.encoder} · stream ${o.bitrate} kbps / audio ${o.audioBitrate || 160} · recording ${o.recordBitrate} kbps · picture engine ${o.engine === 'native' ? 'NATIVE (OBS-style)' : 'classic'} · screen ${screen.width}×${screen.height} @${devicePixelRatio}×`)).catch(() => {})).catch(() => {});
     for (const c of show.cameras) { const st = rt.camStatus.get(c.id) || {}; logEvent('CAMERA', `${c.name}: ${c.deviceLabel || 'device'} · wanted ${c.res || 1080}p ${c.fps || 'auto'} · ${st.text || ''} · ${engine.sources.get(c.id) && engine.sources.get(c.id).sync ? 'frame sync on' : 'frame sync off (screen-refresh timing)'}`); }
     for (const a of show.audio.inputs) logEvent('AUDIO', `input ${a.name || a.id}: ${a.deviceLabel || a.label || ''}`);
-    logEvent('AUDIO', `headphones: ${settings.monitorOut && settings.monitorOut.label || 'Windows default'} · program playback: ${settings.playbackOut && settings.playbackOut.label || 'off'} · limiter ${show.audio.master.limiter ? 'on' : 'off'} · compressor ${show.audio.master.dyn && show.audio.master.dyn.comp && show.audio.master.dyn.comp.on ? 'on' : 'off'} · plug-ins: ${vstIns().map(x => x.name + (x.bypass ? ' (bypassed)' : '')).join(' → ') || 'none'}${vstIns().length ? ` (${vstMs()} ms)` : ''}`);
+    logEvent('AUDIO', `headphones: ${settings.monitorOut && settings.monitorOut.label || 'Windows default'} · program playback: ${settings.playbackOut && settings.playbackOut.label || 'off'} · limiter ${show.audio.master.limiter ? 'on' : 'off'} · compressor ${show.audio.master.dyn && show.audio.master.dyn.comp && show.audio.master.dyn.comp.on ? 'on' : 'off'} · plug-ins: ${allChains().filter(c => chainIns(c).length).map(c => `${chainName(c)}: ${chainIns(c).map(x => x.name + (x.bypass ? ' (bypassed)' : '')).join(' → ')}`).join(' · ') || 'none'}${allIns().length ? ` (${vstMs()} ms)` : ''} · recording tracks: ${tracksOn().map(t => `${t.n} ${trackName(t)} ← ${[...show.audio.inputs, { id: 'media', name: 'Videos', tracks: show.audio.media.tracks }].filter(a => (a.tracks || []).includes(t.n)).map(a => a.name).join(', ') || 'nothing'}`).join(' · ') || 'none'}`);
     // the screen's refresh rate (the program used to follow it; it matters for smooth video)
     { const ts = []; const f = t => { ts.push(t); if (ts.length < 301) requestAnimationFrame(f); else {
         const d = ts.slice(1).map((x, i) => x - ts[i]), med = [...d].sort((a, b) => a - b)[150];

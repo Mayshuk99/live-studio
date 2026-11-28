@@ -349,7 +349,7 @@ func (e *Engine) command(cmd string, m Msg, payload []byte) {
 		if m.has("enc") && len(m.strs("encArgs")) > 0 && m.str("src") == "" {
 			enc = encCfgOf(m.obj("enc"), e)
 		}
-		e.startOutput(m.str("id"), m.strs("args"), m.str("src"), m.str("group"), int(m.num("groupSize")), prio, enc, m.strs("encArgs"), int(m.num("soundSkipMs")))
+		e.startOutput(m.str("id"), m.strs("args"), m.str("src"), m.str("group"), int(m.num("groupSize")), prio, enc, m.strs("encArgs"), int(m.num("soundSkipMs")), int(m.num("ach")))
 	case "enc-probe":
 		// would the encoder inside the engine work here? (asked when it is switched on in Settings; the answer goes to the log
 		// and the window — the same test runs by itself before an output uses it)
@@ -822,7 +822,7 @@ func (e *Engine) tick(n uint64, now time.Time) time.Duration {
 	} else {
 		e.clockCam = ""
 	}
-	pcm := e.audio.pull(e.samplesFor(n))
+	pcm, pcmCh := e.audio.pull(e.samplesFor(n))
 	// ISO recordings: one camera each, full picture (with its colour correction), on the same tick as the program
 	for _, o := range e.outputs {
 		if o.src != "" && !o.closing && o.live.Load() {
@@ -831,7 +831,7 @@ func (e *Engine) tick(n uint64, now time.Time) time.Duration {
 			o.iso = f
 		}
 	}
-	e.dispatch(of, pcm)
+	e.dispatch(of, pcm, pcmCh)
 	pgmW, pgmH, pgmEvery := e.pvPgmW, e.pvPgmH, e.pvPgmEvery
 	camW, camH, camEvery, camYUV := e.pvCamW, e.pvCamH, e.pvCamEvery, e.pvCamYUV
 	var pvCams []*Camera

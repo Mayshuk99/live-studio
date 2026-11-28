@@ -139,13 +139,26 @@ const SOUND_RESERVE_EXTRA_MS = 340;
    with 0.34 s of sound and no picture — a frozen first picture in the recording, and the recording and its ISO files
    22 pictures apart */
 const engineTrim = () => ['-ss', (SOUND_RESERVE_EXTRA_MS / 1000).toFixed(3)];
+/* recording tracks (a recording only): the sound comes as pairs of channels — the program's L, R, then track n on
+   channels 2n−2, 2n−1 (OBS-style tracks 2…6; one that is off is silent). FFmpeg makes a stereo track of each track
+   recorded. The stream always takes the program alone. tracks: [{ n, name }] */
+const recTracks = o => (o && o.kind === 'record' && Array.isArray(o.tracks) ? o.tracks.filter(t => t && t.n >= 2 && t.n <= 6).sort((a, b) => a.n - b.n) : []);
+const soundChannels = o => { const t = recTracks(o); return t.length ? 2 * t[t.length - 1].n : 2; };
+function soundMap(o) {
+  const t = recTracks(o);
+  if (!t.length) return ['-map', '0:a:0'];
+  const list = [{ n: 1, name: 'Program' }, ...t.map(x => ({ n: x.n, name: String(x.name || '').trim() || `Track ${x.n}` }))];
+  const fc = `[0:a]asplit=${list.length}${list.map((_, i) => `[x${i}]`).join('')};` + list.map((x, i) => `[x${i}]pan=stereo|c0=c${x.n * 2 - 2}|c1=c${x.n * 2 - 1}[a${i}]`).join(';');
+  return ['-filter_complex', fc, ...list.flatMap((_, i) => ['-map', `[a${i}]`]),
+    ...list.flatMap((x, i) => [`-metadata:s:a:${i}`, `title=${x.name}`, `-metadata:s:a:${i}`, `handler_name=${x.name}`])];
+}
 function engineInput(o) {
   const fps = o.fps || 59.94;
   const rate = fps === 59.94 ? '60000/1001' : fps === 29.97 ? '30000/1001' : String(fps);
   const d = (Math.max(0, o.videoDelayMs === undefined ? 20 : o.videoDelayMs) + SOUND_RESERVE_EXTRA_MS) / 1000;
   return [
     // no probing: the formats are known, and probing would wait for sound before reading any picture
-    '-thread_queue_size', '2048', '-probesize', '32', '-analyzeduration', '0', '-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'tcp://127.0.0.1:{AUDIOPORT}',
+    '-thread_queue_size', '2048', '-probesize', '32', '-analyzeduration', '0', '-f', 's16le', '-ar', '48000', '-ac', String(soundChannels(o)), '-i', 'tcp://127.0.0.1:{AUDIOPORT}',
     // (about 200 MB of pictures at most waiting inside FFmpeg, whatever the size: 64 at 1080p, 16 at 4K)
     // encoded inside the engine: ready-made H.264 on the pipe (see engineCoded below)
     // (FLV-wrapped by the engine: every picture has its time and the format comes first, so FFmpeg guesses and probes nothing)
@@ -165,4 +178,4 @@ const engineCoded = {
   soundSkipMs: o => { const d = Math.max(0, o.videoDelayMs === undefined ? 20 : o.videoDelayMs) + SOUND_RESERVE_EXTRA_MS, fps = o.fps || 59.94; return Math.round(Math.round(d / 1000 * fps) / fps * 1000); }
 };
 
-module.exports = { NativeEngine, enginePath, engineInput, engineTrim, engineCoded, SOUND_RESERVE_EXTRA_MS };
+module.exports = { NativeEngine, enginePath, engineInput, engineTrim, engineCoded, soundChannels, soundMap, SOUND_RESERVE_EXTRA_MS };

@@ -8,8 +8,8 @@ Your own live production and streaming program for Windows.
 - **Speaker captions:** one-click name captions for whoever is speaking.
 - **Before service and ending:** a before-service video that plays once or loops, then fades into the camera, plus a closing video.
 - **Shortcuts:** set your own key for every action.
-- **Audio:** a mixer for your SSL audio interface, camera audio and video files.
-- **Output:** streams to YouTube (and Facebook or any RTMP / SRT server at the same time) and records to MP4; ISO recording puts every camera in its own ProRes / MJPEG / H.264 file.
+- **Audio:** a mixer for your SSL audio interface, camera audio and video files, with VST3 plug-ins (e.g. Waves) on the master, on every input and on every recording track.
+- **Output:** streams to YouTube (and Facebook or any RTMP / SRT server at the same time) and records to MP4, with up to 5 extra sound tracks (OBS-style: the pulpit alone, the room…); ISO recording puts every camera in its own ProRes / MJPEG / H.264 file.
 - **Network sources:** NDI, SRT and RTSP pictures as cameras (native engine).
 - **Files:** almost any video, picture or sound file (MOV/ProRes, AVI, WMV, MPEG, MXF, HEIC, TIFF, PSD, RAW, AIFF, WMA …) — what the player cannot play is converted once, by itself.
 - **Slides:** PDF, PowerPoint (with PowerPoint or LibreOffice on the computer) and text (TXT, RTF, Word, ODT) as slides, stepped with the buttons or a presentation clicker (Page Up / Page Down).
@@ -82,6 +82,11 @@ In **Titles & Graphics**, click **+ Web page** and paste the link of your live t
 - The master section shows peak and RMS levels with peak hold and clip lights, plus a **phase (mono check)** meter and stereo picture, and loudness in LUFS (YouTube aims for about −14).
 - **MONO** lets you listen in mono on your headphones only.
 - **⏱ Sync test** measures how far the capture card's sound and picture are apart: clap in front of the camera, and it sets the audio delay to fix it.
+- **Plug-ins (FX):** VST3 plug-ins on the master (DYN → PLUG-INS) and, in 🎚 Mixer, on each input and each recording track (the **FX** button on its row). Each place has its own chain, top to bottom. With plug-ins the sound runs about 50 ms behind (plus the plug-ins' own delay); all inputs wait alike and the master and the tracks wait alike, so everything stays lined up, and the picture is delayed to match.
+
+### Recording tracks (like OBS)
+
+Track 1 is the program: what the stream and the recording's first sound track carry. In **🎚 Mixer → Recording tracks**, tick tracks 2–6 to put more sound tracks into the same MP4 file, and name them (for example *Pulpit* and *Room*). On each input row, the numbered buttons send that input to those tracks (after its fader, as well as to the program). Each track has its own fader, mute and plug-ins (FX), which change only that track, never the stream. The tracks follow fade to black. They are recorded with the native engine; editors such as DaVinci Resolve or Premiere show each as its own audio track (most players play only the first).
 
 ## 4. Running a show
 

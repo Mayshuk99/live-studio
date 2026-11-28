@@ -17,8 +17,10 @@
   let n = 0;
   const emit = ev => outListeners.forEach(cb => cb(ev));
   window.__outEmit = emit; // tests: pretend an encoder stopped
-  const vstSyncWorker = L => { if (L.worker) L.worker.postMessage({ n: L.chain.filter(id => L.slots[id] && !L.slots[id].bypass).length, delay: L.delayMs, running: L.running }); };
-  const vstL = () => window.__vst = window.__vst || { sent: [], cbs: [], audioCbs: [], slots: {}, chain: [], delayMs: 4, latOf: {},
+  // the stand-in host keeps one chain per place ('' the master, 'ch:…' an input, 'tr:…' a track); L.chain = the master's
+  const vstAct = (L, c) => (c ? (L.chains[c] || []) : L.chain).filter(id => L.slots[id] && !L.slots[id].bypass);
+  const vstSyncWorker = L => { if (L.worker) L.worker.postMessage({ n: vstAct(L, '').length, delay: L.delayMs, running: L.running }); for (const [c, w] of Object.entries(L.workers || {})) w.postMessage({ n: vstAct(L, c).length, delay: L.delayMs, running: L.running }); };
+  const vstL = () => window.__vst = window.__vst || { sent: [], cbs: [], audioCbs: [], slots: {}, chain: [], chains: {}, workers: {}, blocksBy: {}, delayMs: 4, latOf: {},
     list: [{ path: 'C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 14.12_x64.vst3', cid: '57415645534C324C3220537465726500', name: 'L2 Stereo', vendor: 'Waves', sub: 'Fx|Dynamics' },
       { path: 'C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 14.12_x64.vst3', cid: '57415645535251533352657665726200', name: 'RVerb Stereo', vendor: 'Waves', sub: 'Fx|Reverb' },
       { path: 'C:\\Program Files\\Common Files\\VST3\\FabFilter Pro-Q 3.vst3', cid: '72C4DB717A4D459AB97E51745D84B39D', name: 'Pro-Q 3', vendor: 'FabFilter', sub: 'Fx|EQ' },
@@ -110,40 +112,43 @@
     nativeSend: (h, payload) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push(Object.assign({}, h, payload ? { bytes: payload.byteLength } : {}, payload && window.__natKeep && window.__natKeep(h) ? { px: payload } : {})); /* (a test can keep the pixels: window.__natKeep = h => …) */ if (h.cmd === 'camera-close') L.sent.filter(m => m.cmd === 'camera' && m.id === h.id).forEach(m => { m.closed = true; }); },
     ndiList: async () => { await new Promise(r => setTimeout(r, 300)); return { sources: [{ name: 'CHURCH-PC (ProPresenter)', url: '192.168.1.20:5961' }, { name: 'IPHONE (NDI HX Camera)', url: '192.168.1.31:5962' }], version: 'NDI SDK (browser stand-in)' }; },
     nativeCamera: (id, dev) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push({ cmd: 'camera', id, dev }); setTimeout(() => L.cbs.forEach(cb => cb({ ev: 'cam-status', id, ok: true, text: 'Running' })), 100); },
-    nativeAudio: (rate, pcm) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.audio = (L.audio || 0) + pcm.length; },
+    nativeAudio: (rate, pcm, ch) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.audio = (L.audio || 0) + pcm.length; L.audioCh = ch || 2; if (window.__natKeepAudio) window.__natKeepAudio(pcm, ch || 2); },
     nativeWeb: (id, cfg) => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.sent.push({ cmd: 'web', id, cfg }); },
     onNative: cb => { const L = window.__nat = window.__nat || { sent: [], cbs: [] }; L.cbs.push(cb); },
     // VST3 plug-in host stand-in for tests: every plug-in halves the level; answers after L.delayMs
     vstStart: async () => { const L = vstL(); L.running = true; vstSyncWorker(L); setTimeout(() => L.cbs.forEach(cb => cb(['ready', 'test'])), 50); return { ok: true, ready: false }; },
-    vstStop: async () => { const L = vstL(); L.running = false; L.chain = []; vstSyncWorker(L); return true; },
+    vstStop: async () => { const L = vstL(); L.running = false; L.chain = []; L.chains = {}; vstSyncWorker(L); return true; },
     vstCmd: (f, payload) => {
       const L = vstL(); L.sent.push({ f, bytes: payload ? payload.byteLength : 0 });
       const ev = (...a) => setTimeout(() => L.cbs.forEach(cb => cb(a[0], a[1])), 5);
-      if (f[0] === 'load') { L.slots[f[1]] = { bypass: false, lat: L.latOf[f[3]] || 0 }; if (!L.chain.includes(f[1])) L.chain.push(f[1]); const p = L.list.find(x => x.cid === f[3]); ev(p ? ['loaded', f[1], '1', String(L.slots[f[1]].lat), p.name, '2', '2'] : ['loaded', f[1], '0', 'this plug-in is no longer in its file (updated or removed?)']); }
-      else if (f[0] === 'unload') { delete L.slots[f[1]]; L.chain = L.chain.filter(x => x !== f[1]); ev(['unloaded', f[1]]); }
+      const list = c => c ? (L.chains[c] = L.chains[c] || []) : L.chain;
+      if (f[0] === 'load') { const c = f[4] || ''; L.slots[f[1]] = { bypass: false, lat: L.latOf[f[3]] || 0, chain: c }; if (!list(c).includes(f[1])) list(c).push(f[1]); const p = L.list.find(x => x.cid === f[3]); ev(p ? ['loaded', f[1], '1', String(L.slots[f[1]].lat), p.name, '2', '2', c] : ['loaded', f[1], '0', 'this plug-in is no longer in its file (updated or removed?)']); }
+      else if (f[0] === 'unload') { const c = L.slots[f[1]] ? L.slots[f[1]].chain : ''; delete L.slots[f[1]]; if (c) L.chains[c] = list(c).filter(x => x !== f[1]); else L.chain = L.chain.filter(x => x !== f[1]); ev(['unloaded', f[1]]); }
       else if (f[0] === 'order') L.chain = f.slice(1).filter(id => L.slots[id]);
+      else if (f[0] === 'order-chain') { const ids = f.slice(2).filter(id => L.slots[id]); if (f[1]) L.chains[f[1]] = ids; else L.chain = ids; }
       else if (f[0] === 'bypass') { if (L.slots[f[1]]) L.slots[f[1]].bypass = f[2] === '1'; }
       else if (f[0] === 'edit') { ev(['editor', f[1], 'open']); setTimeout(() => L.cbs.forEach(cb => cb(['edited', f[1]])), 300); }
       else if (f[0] === 'get-state') ev(['state', f[1]], new Uint8Array([1, 2, 3, 4]));
       vstSyncWorker(L);
     },
-    vstAudio: (seq, pcm) => {
-      const L = vstL(); L.blocks = (L.blocks || 0) + 1;
+    vstAudio: (seq, pcm, chain) => {
+      const L = vstL(); L.blocks = (L.blocks || 0) + 1; chain = chain || ''; L.blocksBy[chain] = (L.blocksBy[chain] || 0) + 1;
       if (!L.running) return;
-      const act = L.chain.filter(id => L.slots[id] && !L.slots[id].bypass), g = Math.pow(0.5, act.length), lat = act.reduce((a, id) => a + L.slots[id].lat, 0);
+      const act = vstAct(L, chain), g = Math.pow(0.5, act.length);
       const out = new Float32Array(pcm.length); for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] * g; // (the stand-in has no real delay: lat is only reported)
-      setTimeout(() => L.audioCbs.forEach(cb => cb({ seq, lat: 0, pcm: out })), L.delayMs);
+      setTimeout(() => L.audioCbs.forEach(cb => cb({ seq, lat: 0, pcm: out, chain })), L.delayMs);
     },
     vstScan: async () => { const L = vstL(); await new Promise(r => setTimeout(r, 200)); return { plugins: L.list, problems: [], folders: ['C:\\Program Files\\Common Files\\VST3'], modules: 2 }; },
     vstPickFolder: async () => null,
     setLang: () => {},
     // the direct line: a worker stands in for the host program (its own thread, like the real one)
-    vstPortSink: port => {
-      const L = vstL();
+    vstPortSink: (port, chain) => {
+      const L = vstL(); chain = chain || '';
       const src = `let n = 0, delay = 4, running = true, port = null;
         onmessage = e => { const d = e.data; if (d.port) { port = d.port; port.onmessage = m => { const b = m.data; if (!running || b.pcm === undefined) return; const g = Math.pow(0.5, n), out = new Float32Array(b.pcm.length); for (let i = 0; i < out.length; i++) out[i] = b.pcm[i] * g; setTimeout(() => port.postMessage({ seq: b.seq, lat: 0, pcm: out }), delay); }; port.postMessage({ hello: 1 }); } else { n = d.n; delay = d.delay; running = d.running; } };`;
-      L.worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
-      L.worker.postMessage({ port }, [port]);
+      const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      if (chain) { if (L.workers[chain]) L.workers[chain].terminate(); L.workers[chain] = w; } else { if (L.worker) L.worker.terminate(); L.worker = w; }
+      w.postMessage({ port }, [port]);
       vstSyncWorker(L);
     },
     onVst: cb => vstL().cbs.push(cb),

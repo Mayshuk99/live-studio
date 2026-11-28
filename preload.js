@@ -4,7 +4,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 window.addEventListener('message', e => {
   if (e.source !== window || !e.ports || !e.ports[0]) return;
   if (e.data === 'ls-native-audio-port') ipcRenderer.postMessage('native:audio-port', null, [e.ports[0]]);
-  else if (e.data === 'ls-vst-port') ipcRenderer.postMessage('vst:port', null, [e.ports[0]]);
+  else if (e.data === 'ls-vst-port') ipcRenderer.postMessage('vst:port', '', [e.ports[0]]);
+  else if (e.data && e.data.t === 'ls-vst-port') ipcRenderer.postMessage('vst:port', String(e.data.chain || ''), [e.ports[0]]);
 });
 
 contextBridge.exposeInMainWorld('studio', {
@@ -19,7 +20,7 @@ contextBridge.exposeInMainWorld('studio', {
   nativeSend: (h, payload) => ipcRenderer.send('native:send', h, payload || null),
   nativeCamera: (id, dev) => ipcRenderer.send('native:camera', id, dev),
   ndiList: () => ipcRenderer.invoke('ndi:list'),
-  nativeAudio: (rate, pcm) => ipcRenderer.send('native:audio', rate, pcm),
+  nativeAudio: (rate, pcm, ch) => ipcRenderer.send('native:audio', rate, pcm, ch || 2),
   nativeWeb: (id, cfg) => ipcRenderer.send('native:web', id, cfg),
   onNative: cb => ipcRenderer.on('native:ev', (e, h, payload) => cb(h, payload)),
   setLang: l => ipcRenderer.send('app:lang', l),
@@ -27,7 +28,7 @@ contextBridge.exposeInMainWorld('studio', {
   vstStart: opts => ipcRenderer.invoke('vst:start', opts),
   vstStop: () => ipcRenderer.invoke('vst:stop'),
   vstCmd: (fields, payload) => ipcRenderer.send('vst:cmd', fields, payload || null),
-  vstAudio: (seq, pcm) => ipcRenderer.send('vst:audio', seq, pcm),
+  vstAudio: (seq, pcm, chain) => ipcRenderer.send('vst:audio', seq, pcm, chain || ''),
   vstScan: (force, extra) => ipcRenderer.invoke('vst:scan', !!force, extra || []),
   vstPickFolder: () => ipcRenderer.invoke('vst:pick-folder'),
   onVst: cb => ipcRenderer.on('vst:ev', (e, f, payload) => cb(f, payload)),

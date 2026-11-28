@@ -725,7 +725,7 @@ window.I18N_RU = {
     "The plug-in host stopped — restarting it. The sound goes on meanwhile.": "Хост плагинов остановился — перезапускаю. Звук пока идёт.",
     "Plug-ins work in the Live Studio app on Windows.": "Плагины работают в программе Live Studio на Windows.",
     "The plug-in host is missing from this installation — update Live Studio.": "В этой установке нет хоста плагинов — обновите Live Studio.",
-    "No plug-ins on the master. The sound goes straight through, with no delay.": "На мастере нет плагинов. Звук идёт напрямую, без задержки.",
+    "No plug-ins on the master. The sound goes straight through, with no delay.": "На мастере плагинов нет. Звук проходит напрямую, без задержки.",
     "Plug-in host starting… (the sound goes on untouched meanwhile)": "Запуск хоста плагинов… (звук пока идёт без обработки)",
     "picture delayed to match": "картинка задержана для синхронизации",
     "inputs’ sound delay shortened to match": "задержка звука входов уменьшена для синхронизации",
@@ -1292,7 +1292,22 @@ window.I18N_RU = {
     "On — when it passes its test": "Включён — если проходит проверку",
     "The way OBS does it: the pictures go from the engine straight to the graphics card’s encoder instead of through a pipe to FFmpeg first — less work for the processor. New: try it with a test recording before a service. It is used from the next time the stream or recording starts; if it fails its test or stops, FFmpeg encodes as before.": "Как в OBS: кадры идут из движка прямо в кодировщик видеокарты, а не сначала по каналу в FFmpeg — меньше работы процессору. Новое: сначала попробуйте на пробной записи, до служения. Используется со следующего запуска трансляции или записи; если проверка не пройдена или кодировщик остановится, кодирует FFmpeg, как раньше.",
     "Testing the encoder…": "Проверяю кодировщик…",
-    "The encoder inside the engine stopped — FFmpeg encodes from now on (see the log).": "Кодировщик внутри движка остановился — дальше кодирует FFmpeg (подробности в журнале)."
+    "The encoder inside the engine stopped — FFmpeg encodes from now on (see the log).": "Кодировщик внутри движка остановился — дальше кодирует FFmpeg (подробности в журнале).",
+    "Plug-ins (VST3) on this track": "Плагины (VST3) на этой дорожке",
+    "Plug-ins (VST3) on this input": "Плагины (VST3) на этом входе",
+    "Recorded — click to stop recording this track": "Записывается — нажмите, чтобы не записывать эту дорожку",
+    "Click to record this track too": "Нажмите, чтобы записывать и эту дорожку",
+    "Recording now: the file keeps the tracks it started with — the change is in the next recording.": "Идёт запись: в файле остаются дорожки, с которыми она началась — изменение будет в следующей записи.",
+    "Numbered buttons: which recording tracks the input also goes to (after its fader). Every input always goes to the program (track 1).": "Кнопки с номерами: на какие дорожки записи вход идёт ещё (после фейдера). В программу (дорожка 1) каждый вход идёт всегда.",
+    "Click ⚙ on an input to pick which sound card and which channels it uses (capture card, SSL, etc.). FX: VST3 plug-ins on that input.": "Нажмите ⚙ у входа, чтобы выбрать звуковую карту и каналы (карта захвата, SSL и т. д.). FX — плагины VST3 на этом входе.",
+    "Recording tracks": "Дорожки записи",
+    "Extra tracks are recorded with the native engine (Settings → Video output).": "Дополнительные дорожки записываются с родным движком (Настройки → Видеовыход).",
+    "Master": "Мастер",
+    "Input": "Вход",
+    "No plug-ins here. The sound goes straight through, with no delay.": "Здесь плагинов нет. Звук проходит напрямую, без задержки.",
+    "Remove": "Убрать",
+    "Plug-ins on this recording track only, top to bottom: after the inputs sent to it are mixed, before the track’s fader. The stream and the other tracks are not affected. Settings made in a plug-in’s window are saved with the show.": "Плагины только на этой дорожке записи, сверху вниз: после смешивания отправленных на неё входов, перед фейдером дорожки. Эфир и другие дорожки не меняются. Настройки, сделанные в окне плагина, сохраняются в шоу.",
+    "Plug-ins on this input, top to bottom: after its low cut and voice compressor, before its fader — so they reach the program and every recording track it is sent to. They run in a separate program — if one crashes, the sound goes on without it. Settings made in a plug-in’s window are saved with the show.": "Плагины на этом входе, сверху вниз: после среза низов и компрессора голоса, перед фейдером — поэтому они попадают и в программу, и на каждую дорожку записи, куда отправлен вход. Они работают в отдельной программе — если какой-то упадёт, звук пойдёт без него. Настройки, сделанные в окне плагина, сохраняются в шоу."
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
@@ -1488,6 +1503,17 @@ window.I18N_RU = {
     ["Test failed ({0}): {1}", "Проверка не пройдена ({0}): {1}"],
     ["The NVIDIA encoder inside the engine passed its test ({0}). It is used from the next time the stream or recording starts.", "Кодировщик NVIDIA внутри движка прошёл проверку ({0}). Он будет использоваться со следующего запуска трансляции или записи."],
     ["No NVIDIA encoder was found here ({0}) — FFmpeg keeps encoding.", "Кодировщик NVIDIA здесь не найден ({0}) — кодирует по-прежнему FFmpeg."],
-    ["The NVIDIA encoder inside the engine did not pass its test: {0} — FFmpeg keeps encoding.", "Кодировщик NVIDIA внутри движка не прошёл проверку: {0} — кодирует по-прежнему FFmpeg."]
+    ["The NVIDIA encoder inside the engine did not pass its test: {0} — FFmpeg keeps encoding.", "Кодировщик NVIDIA внутри движка не прошёл проверку: {0} — кодирует по-прежнему FFmpeg."],
+    ["Send to recording track {0} — {1}", "Отправлять на дорожку записи {0} — {1}"],
+    ["Track {0}", "Дорожка {0}"],
+    ["Track 1 is the program — the stream and the recording's first track. Tick tracks 2–6 to record more sound tracks into the same MP4 file (like OBS): for example the pulpit alone, or the room. Name them, send inputs to them with the numbered buttons above, and give each its own plug-ins (FX) — these change only that track, never the stream.{0}", "Дорожка 1 — это программа: эфир и первая дорожка записи. Отметьте дорожки 2–6, чтобы записывать в тот же MP4 ещё звуковые дорожки (как в OBS): например, только кафедру или зал. Дайте им имена, отправьте на них входы кнопками с номерами выше и поставьте каждой свои плагины (FX) — они меняют только эту дорожку, эфир никогда.{0}"],
+    ["Plug-in “{0}”{1} could not be loaded: {2}", "Плагин «{0}»{1} не удалось загрузить: {2}"],
+    ["Plug-in “{0}”{1} crashed and is skipped now — the sound goes on without it. Remove it or reload the show.", "Плагин «{0}»{1} упал и теперь пропускается — звук идёт без него. Уберите его или откройте шоу заново."],
+    ["No plug-ins here. The sound waits {0} ms anyway, to stay in step with the tracks that have plug-ins.", "Здесь плагинов нет. Звук всё равно ждёт {0} мс, чтобы идти вровень с дорожками, где плагины есть."],
+    ["No plug-ins here. The sound waits {0} ms anyway, to stay in step with the inputs that have plug-ins.", "Здесь плагинов нет. Звук всё равно ждёт {0} мс, чтобы идти вровень со входами, где плагины есть."],
+    ["● Running · program sound {0} ms behind{1} · total {2} ms · {3}", "● Работают · звук программы отстаёт на {0} мс{1} · всего {2} мс · {3}"],
+    ["● Running · this sound {0} ms behind{1} · total {2} ms · {3}", "● Работают · этот звук отстаёт на {0} мс{1} · всего {2} мс · {3}"],
+    ["({0} ms of it from these plug-ins)", "(из них {0} мс — эти плагины)"],
+    ["Plug-ins — {0}", "Плагины — {0}"]
   ]
 };

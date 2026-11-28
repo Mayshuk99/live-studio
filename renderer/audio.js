@@ -1,6 +1,8 @@
 /* Live Studio — audio mixer
  * Mic / line inputs (e.g. SSL 2, SSL 2+, SSL 12), camera audio and video-file audio,
- * mixed into one stereo bus that goes to the stream and recording.
+ * mixed into one stereo bus that goes to the stream and recording (track 1, the program).
+ * Recording tracks 2–6 (OBS-style): each input can also be sent to any of them; they go into the recording only.
+ * VST3 inserts (plug-ins) on the master, on every input and on every recording track.
  */
 (function () {
   'use strict';
@@ -126,6 +128,8 @@
       this.liveBus = ctx.createGain();
       this.liveBus.connect(this.masterIn);
       this.strips = new Map();
+      this._stripIns = new Map(); // input id → { on, D } for its insert stage
+      this.tracks = new Map();    // 2…6 → recording track (see setTracks)
       this.devices = new Map(); // deviceId -> { stream, node, splitter, users }
       this.mediaEls = new Map(); // sourceId -> { node, gain }
       this.media = this._strip('media', this.ctx.createGain(), { gain: 0 });
@@ -143,8 +147,9 @@
       await this.ctx.audioWorklet.addModule('pcm-tap.js');
       this._tap = new AudioWorkletNode(this.ctx, 'pcm-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
       this._tapSink = this.ctx.createGain(); this._tapSink.gain.value = 0; // keeps it running; adds nothing
-      this.masterOut.connect(this._tap); this._tap.connect(this._tapSink); this._tapSink.connect(this.ctx.destination);
-      this._tap.port.onmessage = e => { if (this._tapCb) this._tapCb(e.data, this.ctx.sampleRate); };
+      this._tap.connect(this._tapSink); this._tapSink.connect(this.ctx.destination);
+      this._tapWire();
+      this._tap.port.onmessage = e => { const d = e.data; if (this._tapCb && d) this._tapCb(d.pcm || d, this.ctx.sampleRate, d.ch || 2); };
     }
     // a direct line from the sound thread to the main process (null: back to going through the window)
     pcmTapPort(port) { if (this._tap) this._tap.port.postMessage({ port }, port ? [port] : []); }
@@ -152,22 +157,74 @@
 
     /* VST3 plug-ins on the master (after the master fader and auto-level, before the compressor and limiter).
        The node stays in the chain once made; with no plug-ins it passes the sound straight through, with no delay. */
-    async enableInserts(onMsg) {
-      this._vstMsg = onMsg;
+    async enableInserts(onMsg, onNew) {
+      this._vstMsg = onMsg; this._vstNew = onNew || this._vstNew;
       if (this._vst) return this._vst;
       if (!this._vstLoad) this._vstLoad = this.ctx.audioWorklet.addModule('vst-insert.js').then(() => {
-        const n = new AudioWorkletNode(this.ctx, 'vst-insert', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
-        n.port.onmessage = e => { if (this._vstMsg) this._vstMsg(e.data); };
+        this._insReady = true;
+        const n = this._insNode('');
         this._vst = n;
         this._wire();
         return n;
       });
       return this._vstLoad;
     }
+    /* one insert stage (the vst-insert worklet) for a chain: '' the master, 'ch:<input id>' an input, 'tr:<n>' a track.
+       Made only once the worklet module is loaded (enableInserts). The window is told so it can give it a direct line. */
+    _insNode(chain) {
+      const n = new AudioWorkletNode(this.ctx, 'vst-insert', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
+      n.port.onmessage = e => { if (this._vstMsg) this._vstMsg(e.data, chain); };
+      n._chain = chain;
+      if (this._vstNew) setTimeout(() => this._vstNew(chain), 0);
+      return n;
+    }
+    // the insert node of a chain, if there is one
+    insNode(chain) {
+      if (!chain) return this._vst || null;
+      if (chain.startsWith('ch:')) { const s = this.strips.get(chain.slice(3)); return s && s.ins || null; }
+      if (chain.startsWith('tr:')) { const t = this.tracks.get(+chain.slice(3)); return t && t.ins || null; }
+      return null;
+    }
+    /* inserts of an input or a track: on = blocks go to the plug-ins, D = the stage's delay (samples). All inputs share
+       one D and all tracks share the master's, so everything stays lined up. D = 0 and off: no node is made (or the
+       one there passes the sound straight through). */
+    setChainInsert(chain, on, D) {
+      if (!chain) return this.setInserts(on, D);
+      const want = { on: !!on, D: on || D ? D | 0 : 0 };
+      if (chain.startsWith('ch:')) {
+        const s = this.strips.get(chain.slice(3));
+        this._stripIns.set(chain.slice(3), want);
+        if (s) this._applyStripIns(s);
+      } else if (chain.startsWith('tr:')) {
+        const t = this.tracks.get(+chain.slice(3));
+        if (t) { t.insWant = want; this._applyTrackIns(t); }
+      }
+    }
+    _applyStripIns(s) {
+      const w = this._stripIns.get(s.id) || { on: false, D: 0 };
+      if (!s.ins) {
+        if (!(w.on || w.D) || !this._insReady) return;
+        s.ins = this._insNode('ch:' + s.id);
+        try { s.comp.disconnect(); } catch (e) { /* */ }
+        s.comp.connect(s.ins); s.ins.connect(s.fader);
+      }
+      s.ins.port.postMessage({ on: w.on, D: w.D });
+    }
+    _applyTrackIns(t) {
+      const w = t.insWant || { on: false, D: 0 };
+      if (!t.ins) {
+        if (!(w.on || w.D) || !this._insReady) return;
+        t.ins = this._insNode('tr:' + t.n);
+        try { t.bus.disconnect(); } catch (e) { /* */ }
+        t.bus.connect(t.ins); t.ins.connect(t.align);
+      }
+      t.ins.port.postMessage({ on: w.on, D: w.D });
+    }
     // on: blocks go to the plug-ins; D: how far (samples) the sound runs behind so the plug-ins have time to answer
-    setInserts(on, D) { if (this._vst) this._vst.port.postMessage({ on: !!on, D: on ? D | 0 : 0 }); this.insertD = on ? D | 0 : 0; }
-    insertPort(port) { if (this._vst) this._vst.port.postMessage({ port }, port ? [port] : []); }
-    insertReply(d) { if (this._vst) this._vst.port.postMessage(d); }
+    // (the master's stage also just waits D with no plug-ins of its own, when a recording track has some)
+    setInserts(on, D) { if (this._vst) this._vst.port.postMessage({ on: !!on, D: D | 0 }); this.insertD = D | 0; }
+    insertPort(port, chain) { const n = this.insNode(chain || ''); if (n) n.port.postMessage({ port }, port ? [port] : []); else if (port) try { port.close(); } catch (e) { /* */ } }
+    insertReply(d) { const n = this.insNode(d && d.chain || ''); if (n) n.port.postMessage(d); }
     // classic engine: the inputs' own sound delay is shortened by the plug-ins' delay, so lips stay in sync
     setDelayComp(ms) {
       ms = Math.max(0, +ms || 0);
@@ -196,6 +253,7 @@
       last.connect(this.limIn);
       this.limIn.connect(this.limiterOn ? (this.l2 || this.limDrive) : this.masterOut);
       this._wired = true;
+      if (this.tracks) this._alignTracks();
     }
     /* master dynamics. Times in ms, levels in dB, knee in dB.
        The browser's compressor adds its own automatic make-up gain (0.6 × the reduction it would apply at full
@@ -332,10 +390,82 @@
       return out;
     }
     fadeMaster(on, ms) {
-      const g = this.masterOut.gain, t = this.ctx.currentTime;
-      g.cancelScheduledValues(t);
-      g.setValueAtTime(g.value, t);
-      g.linearRampToValueAtTime(on ? 1 : 0, t + ms / 1000);
+      const t = this.ctx.currentTime;
+      this._fadeOn = !!on;
+      for (const g of [this.masterOut.gain, ...[...this.tracks.values()].map(x => x.fade.gain)]) { // the recording tracks fade with the program
+        g.cancelScheduledValues(t);
+        g.setValueAtTime(g.value, t);
+        g.linearRampToValueAtTime(on ? 1 : 0, t + ms / 1000);
+      }
+    }
+
+    /* ---------- recording tracks 2…6 ----------
+       list: [{ n, gain, mute }] for the tracks that are on. Each: bus (the inputs' sends) → [inserts] → line-up delay →
+       fader → fade → the recording. The line-up delay is what the master's compressor / limiter add to the program
+       (their look-ahead), so every track stays sample-aligned with track 1. */
+    setTracks(list) {
+      const want = new Map((list || []).filter(x => x && x.n >= 2 && x.n <= 6).map(x => [x.n, x]));
+      const ctx = this.ctx, t0 = ctx.currentTime;
+      let changedSet = false;
+      for (const [n, t] of this.tracks) if (!want.has(n)) {
+        try { t.bus.disconnect(); t.align.disconnect(); t.fader.disconnect(); t.fade.disconnect(); if (t.ins) { t.ins.port.postMessage({ on: false, D: 0 }); t.ins.disconnect(); } } catch (e) { /* */ }
+        for (const s of this.strips.values()) { const g = s.sends.get(n); if (g) { try { g.disconnect(); } catch (e) { /* */ } s.sends.delete(n); } }
+        this.tracks.delete(n); changedSet = true;
+      }
+      for (const [n, c] of want) {
+        let t = this.tracks.get(n);
+        if (!t) {
+          t = { n, bus: ctx.createGain(), align: ctx.createDelay(1), fader: ctx.createGain(), fade: ctx.createGain(), meter: ctx.createAnalyser(), ins: null, insWant: null };
+          t.meter.fftSize = 1024;
+          t.fade.gain.value = this._fadeOn === false ? 0 : 1;
+          t.bus.connect(t.align); t.align.connect(t.fader); t.fader.connect(t.fade); t.fader.connect(t.meter);
+          this.tracks.set(n, t); changedSet = true;
+        }
+        t.cfg = c;
+        t.fader.gain.setTargetAtTime(c.mute ? 0 : dbToGain(c.gain || 0), t0, 0.015);
+      }
+      for (const s of this.strips.values()) this._applySends(s);
+      this._alignTracks();
+      if (changedSet) this._tapWire();
+    }
+    // an input's sends to the tracks (cfg.tracks: the track numbers it goes to)
+    _applySends(s) {
+      if (!s.sends) return;
+      const on = new Set(Array.isArray(s.cfg && s.cfg.tracks) ? s.cfg.tracks : []), t0 = this.ctx.currentTime;
+      for (const [n, t] of this.tracks) {
+        let g = s.sends.get(n);
+        if (!g) { g = this.ctx.createGain(); g.gain.value = 0; s.mute.connect(g); g.connect(t.bus); s.sends.set(n, g); }
+        g.gain.setTargetAtTime(on.has(n) ? 1 : 0, t0, 0.01);
+      }
+    }
+    // the program's own processing delay after the inserts (compressor look-ahead 6 ms; the limiter's: the L2's window
+    // less one sample — it writes, then reads the oldest — or the browser limiter's 6 ms)
+    masterLatency() {
+      const sr = this.ctx.sampleRate;
+      return (this.compOn ? 0.006 : 0) + (this.limiterOn ? (this.l2 ? (Math.max(8, Math.round(0.0015 * sr)) - 1) / sr : 0.006) : 0);
+    }
+    _alignTracks() {
+      const d = this.masterLatency(), t0 = this.ctx.currentTime;
+      for (const t of this.tracks.values()) t.align.delayTime.setValueAtTime(d, t0);
+    }
+    /* the tap for the native engine: the program alone, or the program + the tracks, each at its own place — track n on
+       channels 2n−2, 2n−1 (a track that is off in between is silent). Fixed places: switching a track on or off while
+       recording never moves the others. */
+    _tapWire() {
+      if (!this._tap) return;
+      try { this.masterOut.disconnect(this._tap); } catch (e) { /* */ }
+      if (this._tapMerge) { try { this._tapMerge.disconnect(); } catch (e) { /* */ } for (const x of this._tapSplits || []) try { x.disconnect(); } catch (e) { /* */ } }
+      this._tapMerge = null; this._tapSplits = [];
+      const list = [...this.tracks.values()].sort((a, b) => a.n - b.n);
+      this.tapTracks = list.map(t => t.n);
+      if (!list.length) { this._tap.channelCount = 2; this.masterOut.connect(this._tap); return; }
+      const C = 2 * list[list.length - 1].n, m = this.ctx.createChannelMerger(C);
+      [[1, this.masterOut], ...list.map(t => [t.n, t.fade])].forEach(([n, src]) => {
+        const sp = this.ctx.createChannelSplitter(2); src.connect(sp); sp.connect(m, 0, n * 2 - 2); sp.connect(m, 1, n * 2 - 1); this._tapSplits.push(sp);
+      });
+      this._tap.channelCount = C;
+      m.connect(this._tap);
+      this._tapMerge = m;
     }
 
     /* one processing strip: delay -> low cut -> voice compressor -> fader -> pan -> mute -> master */
@@ -354,8 +484,10 @@
       s.fader.connect(s.pan); s.pan.connect(s.mute); s.mute.connect(id === 'media' ? this.masterIn : this.liveBus);
       if (id !== 'media') { s.pflSend = ctx.createGain(); s.mute.connect(s.pflSend); s.pflSend.connect(this.pfl); }
       s.fader.connect(s.meter);
+      s.sends = new Map(); // track n → its send (after the fader, pan and mute, like OBS)
       this.strips.set(id, s);
       this.update(id, cfg);
+      this._applyStripIns(s);
       return s;
     }
     update(id, cfg) {
@@ -369,6 +501,7 @@
       s.delay.delayTime.setTargetAtTime(Math.max(0, Math.min(2000, c.delay - (this.delayComp || 0))) / 1000, t, 0.01);
       s.lowcut.frequency.setTargetAtTime(c.lowcut ? 90 : 5, t, 0.01);
       s.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, c.pan)), t, 0.01);
+      this._applySends(s);
       if (c.voice) {
         s.comp.threshold.value = -22; s.comp.knee.value = 8; s.comp.ratio.value = 3.5;
         s.comp.attack.value = 0.004; s.comp.release.value = 0.22;
@@ -440,7 +573,8 @@
     removeInput(id) {
       const s = this.strips.get(id);
       if (!s || id === 'media') return;
-      try { s.mute.disconnect(); s.input.disconnect(); if (s.pflSend) s.pflSend.disconnect(); } catch (e) { /* ignore */ }
+      try { s.mute.disconnect(); s.input.disconnect(); if (s.pflSend) s.pflSend.disconnect(); for (const g of s.sends.values()) g.disconnect(); if (s.ins) s.ins.disconnect(); } catch (e) { /* ignore */ }
+      if (s.ins) try { s.ins.port.postMessage({ on: false, D: 0 }); } catch (e) { /* */ }
       this.strips.delete(id);
       if (s.deviceKey) this._release(s.deviceKey);
     }
@@ -552,6 +686,7 @@
         return next;
       };
       for (const [id, s] of this.strips) out[id] = fall(id, this._peak(s.meter));
+      for (const [n, t] of this.tracks) out['tr:' + n] = fall('tr:' + n, this._peak(t.meter));
       out.__L = fall('__L', this._peak(this.mL));
       out.__R = fall('__R', this._peak(this.mR));
       return out;

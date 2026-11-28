@@ -50,11 +50,12 @@ if (!AD || !MDA) { console.error('sample plug-ins not found'); process.exit(1); 
   const send = (fields, payload) => { const h = Buffer.from(fields.join('\t')); const pre = Buffer.alloc(8); pre.writeUInt32LE(h.length, 0); pre.writeUInt32LE(payload ? payload.length : 0, 4); p.stdin.write(Buffer.concat([pre, h, payload || Buffer.alloc(0)])); };
   const wait = (ev, id, ms = 15000) => new Promise((res, rej) => { const w = { ev, id, res }; waiters.push(w); setTimeout(() => { const i = waiters.indexOf(w); if (i >= 0) { waiters.splice(i, 1); rej(new Error(`no "${ev}" from the host within ${ms} ms`)); } }, ms); });
   let seq = 0;
-  async function proc(frames, gen) {
+  // chain: undefined = the master, as Live Studio before 1.52 sent it (no chain field)
+  async function proc(frames, gen, chain) {
     const f = new Float32Array(frames * 2);
     for (let i = 0; i < frames; i++) { const v = gen(i); f[i * 2] = v; f[i * 2 + 1] = v; }
-    const w = wait('audio', String(seq)); send(['audio', String(seq), String(frames)], Buffer.from(f.buffer)); seq++;
-    const r = await w; const out = new Float32Array(frames * 2); Buffer.from(out.buffer).set(r.pay); out.lat = +r.f[3]; return out;
+    const w = wait('audio', String(seq)); send(['audio', String(seq), String(frames), ...(chain === undefined ? [] : [chain])], Buffer.from(f.buffer)); seq++;
+    const r = await w; const out = new Float32Array(frames * 2); Buffer.from(out.buffer).set(r.pay); out.lat = +r.f[3]; out.chain = r.f[4]; return out;
   }
   const peak = a => a.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
   try {
@@ -93,6 +94,33 @@ if (!AD || !MDA) { console.error('sample plug-ins not found'); process.exit(1); 
     send(['edit', 'lim']);
     check(['none', 'open'].includes((await wait('editor', 'lim')).f[2]), 'asking for a plug-in window answers');
     send(['close-edit', 'lim']);
+
+    // chains (host version 2): inserts on an input channel and on a recording track, each with its own order and thread
+    send(['load', 'chlim', lim.path, lim.cid, 'ch:mic1']);
+    const CL = await wait('loaded', 'chlim');
+    check(CL.f[2] === '1' && CL.f[7] === 'ch:mic1', `load mda Limiter on the channel chain "ch:mic1" (${CL.f.slice(3).join(' | ')})`);
+    pk = 0; for (let k = 0; k < 40; k++) { o = await proc(512, i => 0.99 * Math.sin((k * 512 + i) / 8), 'ch:mic1'); if (k > 20) pk = Math.max(pk, peak(o)); }
+    check(pk < 0.8 && o.chain === 'ch:mic1', `the channel's limiter limits its own sound: peak 0.99 → ${pk.toFixed(3)} (answer names the chain: ${o.chain})`);
+    o = await proc(512, i => 0.99 * Math.sin(i / 8), 'tr:2');
+    check(Math.abs(peak(o) - 0.99) < 0.02 && o.chain === 'tr:2', 'a chain with no plug-ins passes its sound unchanged');
+    { // blocks for three chains at once: every one comes back, each chain's in its own order
+      const got = { '': [], 'ch:mic1': [], 'tr:2': [] }, ws = [];
+      for (let k = 0; k < 90; k++) {
+        const ch = ['', 'ch:mic1', 'tr:2'][k % 3], q = seq++, f = new Float32Array(512);
+        ws.push(wait('audio', String(q)).then(r => got[r.f[4]].push(q)));
+        send(['audio', String(q), '256', ch], Buffer.from(f.buffer));
+      }
+      await Promise.all(ws);
+      const ordered = a => a.every((v, i) => !i || v > a[i - 1]);
+      check(Object.values(got).every(a => a.length === 30 && ordered(a)), `90 blocks for 3 chains: all back, each chain in order (${Object.values(got).map(a => a.length).join('/')})`);
+    }
+    send(['load', 'chlim2', lim.path, lim.cid, 'ch:mic1']); await wait('loaded', 'chlim2');
+    send(['order-chain', 'ch:mic1', 'chlim2', 'chlim']); send(['bypass', 'chlim', '1']); send(['bypass', 'chlim2', '1']); await settle();
+    o = await proc(512, i => 0.99 * Math.sin(i / 8), 'ch:mic1');
+    check(Math.abs(peak(o) - 0.99) < 0.02, 'order-chain and bypass work on a channel chain');
+    send(['unload', 'chlim']); await wait('unloaded', 'chlim'); send(['unload', 'chlim2']); await wait('unloaded', 'chlim2');
+    o = await proc(512, i => 0.5, 'ch:mic1');
+    check(Math.abs(o[100] - 0.5) < 1e-6, 'after unloading, the channel chain passes its sound unchanged');
 
     const t0 = Date.now(); for (let k = 0; k < 1875; k++) await proc(256, i => 0.3 * Math.sin(i));
     const ms = Date.now() - t0;
