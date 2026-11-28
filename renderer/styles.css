@@ -749,3 +749,21 @@ textarea { width: 100%; box-sizing: border-box; }
 .meter-sw.sel { border-color: #fff; box-shadow: 0 0 0 2px var(--accent, #3b82f6); }
 /* a shot showing slides: which slide is up */
 .shot .deck-tile { position: absolute; left: 6px; bottom: 44px; background: rgba(0,0,0,.72); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: .8em; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* button size, set from each panel's header (Shots: --card, People: --spk, Titles & Graphics: --gfx) */
+body { --spk: 1; --gfx: 1; }
+.head-size { display: flex; align-items: center; gap: 5px; margin-left: auto; flex: 0 0 auto; color: var(--muted); cursor: default; }
+.head-size input[type=range] { width: calc(96px * var(--scale)); margin: 0; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.head-size-ico { font-size: .85em; }
+.head-size-val { font-size: .72em; min-width: 3.2em; text-align: right; }
+.head-size + .panel-tools { margin-left: 8px; }
+.tile-row .spk { flex-basis: calc(170px * var(--scale) * var(--spk)); min-height: calc(70px * var(--spk)); max-height: calc(110px * var(--spk)); padding: calc(9px * var(--spk)) calc(10px * var(--spk)) calc(7px * var(--spk)); }
+.tile-row .spk .spk-name { font-size: calc(1.08em * var(--spk)); }
+.tile-row .spk .spk-title { font-size: calc(.85em * var(--spk)); }
+.tile-row .spk.add { font-size: calc(1em * var(--spk)); }
+.gfx-body .tile-row .gtile.chip { min-width: calc(130px * var(--scale) * var(--gfx)); max-width: calc(300px * var(--scale) * var(--gfx)); min-height: calc(52px * var(--scale) * var(--gfx)); max-height: calc(110px * var(--scale) * var(--gfx)); }
+.gfx-body .tile-row .gtile.chip .g-title { font-size: calc(15px * var(--scale) * var(--gfx)); }
+.gfx-body .tile-row .gtile.add { height: auto; min-height: calc(52px * var(--scale) * var(--gfx)); max-height: calc(110px * var(--scale) * var(--gfx)); font-size: calc(1em * var(--gfx)); }
+.spk-tools .head-size { margin: 0 4px 0 0; }
+.spk-tools .head-size input[type=range] { width: calc(80px * var(--scale)); }
+.spk-tools { background: #1e1e21; padding-left: 8px; } /* (over the end of the header's hint, cleanly) */

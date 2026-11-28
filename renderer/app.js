@@ -153,7 +153,7 @@
     youtube: { server: 'rtmps://a.rtmps.youtube.com:443/live2', custom: '', key: '' },
     output: { width: 1920, height: 1080, fps: 30, bitrate: 8000, encoder: 'x264', audioBitrate: 160, recordBitrate: 20000, recordAudioBitrate: 256 },
     recordDir: '', autoRecord: false, ftbAudio: true, zebra: false, moveSpeed: 0.12, updates: 'ask',
-    ui: { scale: 1, accent: '#3b82f6', card: 1, layouts: defaultLayouts(), layoutV: 5 },
+    ui: { scale: 1, accent: '#3b82f6', card: 1, spk: 1, gfx: 1, layouts: defaultLayouts(), layoutV: 5 },
     hotkeys: {}
   });
   function merge(base, over) {
@@ -2372,7 +2372,28 @@
     r.setProperty('--scale', settings.ui.scale);
     r.setProperty('--accent', settings.ui.accent);
     document.body.style.setProperty('--card', settings.ui.card || 1);
+    document.body.style.setProperty('--spk', settings.ui.spk || 1);
+    document.body.style.setProperty('--gfx', settings.ui.gfx || 1);
   }
+  /* the size of a panel's buttons, right in its header (Shots, People, Titles & Graphics): drag to change, double-click = 100 % */
+  const SIZE_KEYS = { shots: 'card', speakers: 'spk', labels: 'gfx' };
+  let sizeSave = null;
+  function headSize(panelId) {
+    const k = SIZE_KEYS[panelId];
+    if (!k) return null;
+    const val = el('span', { class: 'head-size-val mono' }, `${Math.round((settings.ui[k] || 1) * 100)}%`);
+    const set = v => {
+      settings.ui[k] = Math.round(v * 100) / 100; val.textContent = `${Math.round(settings.ui[k] * 100)}%`; applyUI();
+      clearTimeout(sizeSave); sizeSave = setTimeout(saveSettings, 600);
+    };
+    const range = el('input', { type: 'range', min: 0.6, max: 2, step: 0.05, value: settings.ui[k] || 1, title: 'Button size — drag to make them bigger or smaller · double-click = 100 %' });
+    range.addEventListener('input', () => set(+range.value));
+    range.addEventListener('dblclick', () => { range.value = 1; set(1); });
+    const box = el('label', { class: 'head-size', title: 'Button size · double-click = 100 %' }, el('span', { class: 'head-size-ico' }, '⤡'), range, val);
+    box.addEventListener('pointerdown', () => { rt.sizeDrag = true; }); // (while dragging it, the panel itself is not dragged in layout editing)
+    return box;
+  }
+  window.addEventListener('pointerup', () => { rt.sizeDrag = false; });
   function setEditing(on) {
     rt.editing = on;
     document.body.classList.toggle('editing', on);
@@ -2410,12 +2431,12 @@
         el('button', { class: 'btn small', title: 'Shorter', onclick: () => resize(p, 0, -1) }, '▴'),
         el('button', { class: 'btn small', title: 'Taller', onclick: () => resize(p, 0, 1) }, '▾'),
         el('button', { class: 'btn small danger', title: 'Hide panel', onclick: () => { p.hidden = true; saveSettings(); renderGrid(); } }, '✕'));
-      const head = el('div', { class: 'panel-head' }, el('h3', null, PANEL_DEFS[p.id].title), el('span', { class: 'head-hint' }, PANEL_DEFS[p.id].hint || ''), tools);
+      const head = el('div', { class: 'panel-head' }, el('h3', null, PANEL_DEFS[p.id].title), el('span', { class: 'head-hint' }, PANEL_DEFS[p.id].hint || ''), p.id === 'speakers' ? null : headSize(p.id), tools); // (People: among its own tools in the header row)
       const body = el('div', { class: 'panel-body' });
       const panel = el('section', { class: 'panel', style: `grid-column: span ${p.w}; grid-row: span ${p.h};`, dataset: { id: p.id } }, head, body);
       if (rt.editing) {
         panel.draggable = true;
-        panel.addEventListener('dragstart', e => { dragId = p.id; e.dataTransfer.effectAllowed = 'move'; });
+        panel.addEventListener('dragstart', e => { if (rt.sizeDrag) { e.preventDefault(); return; } dragId = p.id; e.dataTransfer.effectAllowed = 'move'; });
         panel.addEventListener('dragover', e => { e.preventDefault(); panel.classList.add('drag-over'); });
         panel.addEventListener('dragleave', () => panel.classList.remove('drag-over'));
         panel.addEventListener('drop', e => {
@@ -3955,7 +3976,7 @@
     });
     row.append(el('div', { class: 'spk add', onclick: () => { const p = { id: uid('spk'), name: '', title: '', hotkey: '' }; editSpeaker(p, true); } }, '+ Add person'));
     put(body,
-      el('div', { class: 'spk-tools' },
+      el('div', { class: 'spk-tools' }, headSize('speakers'),
         el('button', { class: 'btn small', onclick: () => { const p = show.speakers[0] || { name: 'John Smith', title: 'Senior Pastor' }; openDesigner(st, { title: p.name, subtitle: p.title }, restyleSpeaker); } }, '🎨 Look'),
         select([[0, 'Stay on'], [5, 'Hide after 5 s'], [8, 'Hide after 8 s'], [10, 'Hide after 10 s'], [15, 'Hide after 15 s']], st.autoHide, v => { st.autoHide = +v; changed(); }),
         el('button', { class: 'btn small danger', id: 'spkHide', onclick: hideSpeaker }, el('span', null, 'Hide'), keyChip('hideAll'))),
