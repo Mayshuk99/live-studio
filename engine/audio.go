@@ -92,9 +92,12 @@ func (a *Audio) pull(n int) []byte {
 		}
 	}
 	a.level += (waiting - a.level) * 0.01
-	// keep the waiting sound near the target: ±0.2 % speed at most (inaudible)
+	// keep the waiting sound near the target: ±0.5 % speed at most (a twelfth of a semitone).
+	// The picture is delayed to match the target, so sound that is short of it is early by the difference. With the gentle
+	// ±0.03 % this had (27 Nov: 60–200 ms waiting instead of 400 after the window lost some sound at the start) getting
+	// back took a quarter of an hour; now about a minute.
 	errv := (a.level - target) / target
-	a.adj = math.Max(-0.002, math.Min(0.002, errv*0.0006))
+	a.adj = math.Max(-0.005, math.Min(0.005, errv*0.02))
 	step := a.inRate / outRate * (1 + a.adj)
 	for i := 0; i < n; i++ {
 		ip := int(a.pos)

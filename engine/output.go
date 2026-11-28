@@ -50,6 +50,7 @@ type Output struct {
 	iso     *OutFrame   // ISO: this tick's picture
 	group   string      // started together with others: frames begin for all of them on the same tick
 	gsize   int
+	stuck   int          // ticks in a row in which it could take nothing
 	encName string       // encoded inside the engine by this (else by FFmpeg)
 	encNs   atomic.Int64 // time spent encoding since the last report, and how many pictures
 	encN    atomic.Int64
@@ -116,9 +117,39 @@ func startEncThread(id string, c *encCfg, ffmpeg string) *encThread {
 	return t
 }
 
+// the pictures in a run of H.264, told apart by the marker each begins with (NAL 9); no markers: it is one picture
+func splitAUs(b []byte) [][]byte {
+	var out [][]byte
+	start := 0
+	for i := 1; i+3 < len(b); i++ {
+		if b[i] == 0 && b[i+1] == 0 && b[i+2] == 1 && b[i+3]&31 == 9 {
+			cut := i
+			if b[i-1] == 0 {
+				cut = i - 1
+			}
+			if cut > start {
+				out = append(out, b[start:cut])
+				start = cut
+			}
+			i += 3
+		}
+	}
+	return append(out, b[start:])
+}
+
 // pictures in, H.264 out to FFmpeg's pipe
 func (o *Output) encodeLoop(enc picEncoder) {
 	ok := true
+	// (wrapped as FLV, each picture with its time: flv.go)
+	fw := newFlvWriter(o.stdin, o.e.fpsNum, o.e.fpsDen)
+	put := func(b []byte) error {
+		for _, au := range splitAUs(b) {
+			if err := fw.write(au); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	for f := range o.vch {
 		if ok {
 			t0 := time.Now()
@@ -133,7 +164,7 @@ func (o *Output) encodeLoop(enc picEncoder) {
 				send(Msg{"ev": "enc-failed", "id": o.id, "error": err.Error()}, nil)
 				o.stdin.Close()
 			} else if len(au) > 0 {
-				if _, err := o.stdin.Write(au); err != nil {
+				if err := put(au); err != nil {
 					ok = false
 				}
 			}
@@ -141,7 +172,7 @@ func (o *Output) encodeLoop(enc picEncoder) {
 		f.release()
 	}
 	if tail := enc.close(); ok && len(tail) > 0 {
-		o.stdin.Write(tail)
+		put(tail)
 	}
 	o.stdin.Close()
 }
@@ -361,10 +392,21 @@ func (e *Engine) dispatch(of *OutFrame, pcm []byte) {
 			}
 			o.vch <- f
 			o.ach <- pcm
+			o.stuck = 0
 		} else {
 			o.dropped++
 			if o.src != "" {
 				f.release()
+			}
+			// encoded inside the engine and nothing has been taken for 3 s: FFmpeg has stopped reading (27 Nov: the stream
+			// and the recording stood still for minutes, unnoticed). End it; Live Studio starts it again, encoded by FFmpeg.
+			if o.stuck++; o.encName != "" && o.stuck == 3*o.e.fpsNum/o.e.fpsDen {
+				encGaveUp.Store(true)
+				logf("output %s: encoded inside the engine, but FFmpeg has taken nothing for 3 s — ending it; from now on FFmpeg encodes", o.id)
+				send(Msg{"ev": "enc-failed", "id": o.id, "error": "FFmpeg stopped taking the engine's H.264"}, nil)
+				if o.cmd.Process != nil {
+					o.cmd.Process.Kill()
+				}
 			}
 		}
 	}

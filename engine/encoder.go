@@ -455,10 +455,21 @@ func (p *pipeEncoder) encode(f *Frame) ([]byte, error) {
 	case <-time.After(250 * time.Millisecond):
 	case <-p.ended:
 	}
+	// whole pictures only: what follows the last marker (NAL 9) may still be arriving
 	p.mu.Lock()
-	b := p.buf
-	p.buf = nil
-	p.mu.Unlock()
+	defer p.mu.Unlock()
+	cut := 0
+	for i := len(p.buf) - 4; i > 0; i-- {
+		if p.buf[i] == 0 && p.buf[i+1] == 0 && p.buf[i+2] == 1 && p.buf[i+3]&31 == 9 {
+			cut = i
+			if p.buf[i-1] == 0 {
+				cut = i - 1
+			}
+			break
+		}
+	}
+	b := append([]byte(nil), p.buf[:cut]...)
+	p.buf = append(p.buf[:0], p.buf[cut:]...)
 	return b, nil
 }
 

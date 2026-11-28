@@ -158,7 +158,8 @@ engine/            native engine in Go (OBS-style): reads capture cards through 
                    structures are byte buffers laid out by nvenc_layout.go, generated from NVIDIA's header by
                    tools/nvlayout. The engine tests the encoder in a process of its own first (ls-engine --nvenc-test:
                    encodes, has FFmpeg decode it, compares the pictures) and falls back to FFmpeg's encoder whenever
-                   anything is not right; FFmpeg then only copies the finished H.264 next to the sound (engineCoded in
+                   anything is not right; FFmpeg then only copies the finished H.264 — handed over FLV-wrapped, each picture
+                   with its time (flv.go) — next to the sound (engineCoded in
                    native-engine.js, engineEncoder in streamer.js)
 vsthost/           VST3 host in C++ (CMake; the Steinberg VST3 SDK is downloaded by the build, not stored here)
 media-import.js    bringing files in: which formats play as they are, FFmpeg conversion of the rest, PDF / PowerPoint
