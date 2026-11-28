@@ -11,6 +11,16 @@
 //     voices have vibrato / pitch movement)
 // When a peak passes all tests a notch is placed (or an existing one deepened).
 // Notches hold for a while, then slowly release.
+//
+// v1.5 (ideas from audiojs/defeedback, MIT, re-implemented):
+//   * residual check on the POST-notch signal: a notch is only deepened while the howl is
+//     still visible after it; a notch that is deep enough stops deepening.
+//     (New howls are still FOUND on the input: tested in a closed loop, detecting on the
+//     post-notch signal re-caught a returning howl later, because a releasing notch hides it.)
+//   * saturated-howl rescue: once the amp clips, a howl grows harmonics and fails the
+//     "no harmonics" test. When the signal is loud and has a very low crest factor (a pegged,
+//     near-periodic tone), the loudest stable narrow peak is treated as a howl anyway, its
+//     fundamental is cut deep at once, and its harmonics/products are not notched separately.
 
 #include "FFT.h"
 #include <algorithm>
@@ -68,6 +78,9 @@ public:
         fft.init (fftSize);
         fftBuf.assign ((size_t) fftSize, cfloat());
         ring.assign ((size_t) fftSize, 0.0f);
+        ringPost.assign ((size_t) fftSize, 0.0f);
+        levelPostDb.assign ((size_t) (fftSize / 2 + 1), -200.0f);
+        ringPostPos = 0;
         ringPos = 0;
         hopCounter = 0;
 
@@ -101,8 +114,13 @@ public:
         for (auto& c : candidates) c = Candidate();
         for (auto& ni : notchInfo) { ni.freq.store (0.0f); ni.depthDb.store (0.0f); ni.hits.store (0); }
         std::fill (ring.begin(), ring.end(), 0.0f);
+        std::fill (ringPost.begin(), ringPost.end(), 0.0f);
         sampleCount = 0;
         coefCounter = 0;
+        crestSum.fill (0.0); crestPeak.fill (0.0f); crestPos = 0;
+        hopSumSq = 0.0; hopPeak = 0.0f; levelDbFS = -120.0f; crestDb = 20.0f;
+        rescueTime = -1e9;
+        for (auto& m : memory) m = Memory();
     }
 
     void setStrength (float s01) noexcept { strength = std::clamp (s01, 0.0f, 1.0f); }
@@ -122,29 +140,23 @@ public:
     {
         numCh = std::min (numCh, channels);
         if (clearRequested.exchange (false))
+        {
             for (auto& n : notches) { n.targetDb = 0.0f; n.currentDb = 0.0f; n.active = false; n.resetState(); n.hits = 0; }
+            for (auto& m : memory) m = Memory();   // mics moved / system changed: forget old frequencies
+        }
 
         int pos = 0;
         while (pos < numSamples)
         {
             const int todo = std::min (numSamples - pos, kCoefInterval - coefCounter);
 
-            // 1) side-chain analysis on the mono sum
-            for (int i = 0; i < todo; ++i)
-            {
-                float m = 0.0f;
-                for (int c = 0; c < numCh; ++c) m += ch[c][pos + i];
-                m /= (float) std::max (1, numCh);
-                ring[(size_t) ringPos] = m;
-                ringPos = (ringPos + 1) & (fftSize - 1);
-                ++sampleCount;
-                if (++hopCounter >= hop) { hopCounter = 0; analyse(); }
-            }
+            // detection on the input (pre-notch)
+            if (! postNotchAnalysis) feedAnalysis (ch, numCh, pos, todo);
 
-            // 2) coefficient update at the start of each 32-sample chunk
+            // 1) coefficient update at the start of each 32-sample chunk
             if (coefCounter == 0) updateNotchCoefficients();
 
-            // 3) apply active notches
+            // 2) apply active notches
             for (auto& n : notches)
             {
                 if (! n.active || n.currentDb <= 0.0f) continue;
@@ -164,10 +176,18 @@ public:
                 }
             }
 
+            // 3) post-notch signal: residual check (or, in the test mode, the whole detection)
+            if (postNotchAnalysis) feedAnalysis (ch, numCh, pos, todo);
+            else feedResidual (ch, numCh, pos, todo);
+
             coefCounter = (coefCounter + todo) % kCoefInterval;
             pos += todo;
         }
     }
+
+    void setPostNotchAnalysis (bool on) noexcept { postNotchAnalysis = on; }   // test mode
+    void setResidualCheck (bool on) noexcept { residualCheck = on; }
+    void setSaturationRescue (bool on) noexcept { saturationRescue = on; }
 
     // ---- UI access ---------------------------------------------------------
     const NotchInfo& getNotchInfo (int i) const noexcept { return notchInfo[(size_t) i]; }
@@ -211,6 +231,18 @@ private:
     static constexpr float kQ = 12.0f;              // ~1/8 octave
     static constexpr float kFastReleaseDbPerSec = 30.0f;
     static constexpr float kSubharmonicDb = 20.0f;   // fundamental within 20 dB -> it's a harmonic
+    static constexpr float kResidualMarginDb = 6.0f; // residual must still be (PMPR - 6 dB) above the median
+    static constexpr double kMemorySec = 60.0;       // remember released feedback frequencies this long
+    struct Memory { float freq = 0.0f; double time = -1e9; };
+    std::array<Memory, kMaxNotches> memory {};
+    static constexpr int kCrestHops = 19;            // ~200 ms of hops
+    // measured: saturated howl crest 3-4 dB, dominance +21..+34 dB, frequency spread 0.00-0.01 bin;
+    // steady sung/synthetic vowels crest ~7.7 dB, dominance +5..+9 dB, spread 0.2-0.5 bin
+    static constexpr float kSatCrestDb = 6.0f;       // pegged, near-periodic
+    static constexpr float kSatLevelDb = -24.0f;     // and loud
+    static constexpr float kSatDominanceDb = 12.0f;  // one tone far above everything else together
+    static constexpr float kSatSpreadBins = 0.15f;   // rock-stable frequency (no vibrato at all)
+    static constexpr float kProductGuardSec = 2.0f;  // ignore harmonics of a rescued howl this long
     float ratioFactor() const noexcept { return ratio <= 1 ? 0.0f : 1.0f - 1.0f / (float) ratio; }
     float maxDepthDb() const noexcept { return 9.0f + 21.0f * strength; }   // 9 .. 30 dB
 
@@ -229,8 +261,83 @@ private:
         return m;
     }
 
+    void feedAnalysis (float* const* ch, int numCh, int pos, int todo) noexcept
+    {
+        for (int i = 0; i < todo; ++i)
+        {
+            float m = 0.0f;
+            for (int c = 0; c < numCh; ++c) m += ch[c][pos + i];
+            m /= (float) std::max (1, numCh);
+            ring[(size_t) ringPos] = m;
+            ringPos = (ringPos + 1) & (fftSize - 1);
+            hopSumSq += (double) m * m;
+            hopPeak = std::max (hopPeak, std::abs (m));
+            ++sampleCount;
+            if (++hopCounter >= hop) { hopCounter = 0; analyse(); }
+        }
+    }
+
+    void feedResidual (float* const* ch, int numCh, int pos, int todo) noexcept
+    {
+        for (int i = 0; i < todo; ++i)
+        {
+            float m = 0.0f;
+            for (int c = 0; c < numCh; ++c) m += ch[c][pos + i];
+            ringPost[(size_t) ringPostPos] = m / (float) std::max (1, numCh);
+            ringPostPos = (ringPostPos + 1) & (fftSize - 1);
+        }
+    }
+
+    // spectrum of the post-notch signal (only when a notch is about to be deepened)
+    void analysePost() noexcept
+    {
+        for (int i = 0; i < fftSize; ++i)
+            fftBuf[(size_t) i] = cfloat (ringPost[(size_t) ((ringPostPos + i) & (fftSize - 1))] * window[(size_t) i], 0.0f);
+        fft.forward (fftBuf.data());
+        const int bins = fftSize / 2 + 1;
+        for (int k = 0; k < bins; ++k)
+            levelPostDb[(size_t) k] = 10.0f * std::log10 (std::norm (fftBuf[(size_t) k]) + 1e-20f) - normDb;
+        scratch.assign (levelPostDb.begin() + kLo, levelPostDb.begin() + kHi);
+        auto mid = scratch.begin() + (long) scratch.size() / 2;
+        std::nth_element (scratch.begin(), mid, scratch.end());
+        postMedianDb = *mid;
+        postMaxDb = -200.0f;
+        for (int k = kLo; k < kHi; ++k) postMaxDb = std::max (postMaxDb, levelPostDb[(size_t) k]);
+        postValid = true;
+    }
+
+    // is the howl at f still clearly there AFTER the notch bank?
+    // (still clearly above the floor AND still close to the loudest content of the output)
+    bool residualIsHowl (float f, float pmprThr, float absThr, float topThr) noexcept
+    {
+        if (! residualCheck || postNotchAnalysis) return true;
+        if (! postValid) analysePost();
+        const int kc = (int) std::lround (f * (float) fftSize / (float) sr);
+        float L = -200.0f;
+        for (int k = kc - 2; k <= kc + 2; ++k)
+            if (k >= 1 && k < (int) levelPostDb.size()) L = std::max (L, levelPostDb[(size_t) k]);
+        return L >= absThr && L - postMedianDb >= pmprThr - kResidualMarginDb
+            && L >= postMaxDb - std::max (3.0f, topThr - kResidualMarginDb);
+    }
+
+    // crest factor (peak / RMS) and RMS level of the analysed signal over the last ~200 ms
+    void updateCrest() noexcept
+    {
+        crestSum[(size_t) crestPos] = hopSumSq;
+        crestPeak[(size_t) crestPos] = hopPeak;
+        crestPos = (crestPos + 1) % kCrestHops;
+        hopSumSq = 0.0; hopPeak = 0.0f;
+        double sum = 0.0; float pk = 0.0f;
+        for (int i = 0; i < kCrestHops; ++i) { sum += crestSum[(size_t) i]; pk = std::max (pk, crestPeak[(size_t) i]); }
+        const double rms = std::sqrt (sum / ((double) kCrestHops * hop));
+        levelDbFS = (float) (20.0 * std::log10 (rms + 1e-12));
+        crestDb = (float) (20.0 * std::log10 ((pk + 1e-12) / (rms + 1e-12)));
+    }
+
     void analyse() noexcept
     {
+        updateCrest();
+        postValid = false;
         // windowed FFT of the last fftSize samples
         for (int i = 0; i < fftSize; ++i)
             fftBuf[(size_t) i] = cfloat (ring[(size_t) ((ringPos + i) & (fftSize - 1))] * window[(size_t) i], 0.0f);
@@ -258,6 +365,10 @@ private:
         std::nth_element (scratch.begin(), mid, scratch.end());
         const float medianDb = *mid;
 
+        // pegged, near-periodic loud signal = a howl that already saturates the system
+        const bool saturated = saturationRescue && strength > 0.2f && levelDbFS > kSatLevelDb && crestDb < kSatCrestDb;
+        const bool productGuard = (t - rescueTime) < kProductGuardSec;
+
         // thresholds controlled by strength (more strength = more sensitive)
         const float s = strength;
         const float pmprThr = 30.0f - 12.0f * s;     // 30 .. 18 dB above the median
@@ -269,6 +380,7 @@ private:
         const int framesSlow = (int) std::lround (45.0f - 25.0f * s);   // ~480 .. 215 ms
         const float growThr = 12.0f - 6.0f * s;                          // 12 .. 6 dB relative growth
         const float ringThr = 9.0f - 3.0f * s;                           // tone outlives the rest by 9 .. 6 dB
+        const int rescueFrames = (int) std::lround (6.0f - 3.0f * s);    // ~64 .. 32 ms
 
         // total band power (for "relative level" = peak vs. everything else)
         double bandPow = 0.0;
@@ -280,7 +392,7 @@ private:
         }
 
         // collect peaks that pass the instantaneous tests
-        struct Peak { float bin; float level; float rel; bool harmonic; };
+        struct Peak { float bin; float level; float rel; bool harmonic; bool rescue; };
         std::array<Peak, 8> peaks {};
         int numPeaks = 0;
 
@@ -288,6 +400,15 @@ private:
         {
             const float L = levelDb[(size_t) k];
             if (L < absThr || L - medianDb < pmprThr || L < globalMax - topThr) continue;
+
+            // harmonics / products of a saturated howl we just cut: they vanish with it
+            if (productGuard)
+            {
+                const float ratio = ((float) k * (float) sr / (float) fftSize) / rescueF0;
+                const float rk = std::round (ratio);
+                if (rk >= 2.0f && rk <= 12.0f && std::abs (ratio - rk) < 0.015f * rk) continue;
+            }
+            bool rescue = saturated && L >= globalMax - 0.5f;
             if (! (L > levelDb[(size_t) k - 1] && L >= levelDb[(size_t) k + 1])) continue;
 
             float neigh = -200.0f;
@@ -295,8 +416,8 @@ private:
                 neigh = std::max ({ neigh, binLevel (k - m), binLevel (k + m) });
             if (L - neigh < pnprThr) continue;
 
-            if (2 * k < bins - 3 && L - maxAround (2 * k, 2) < phprThr) continue;
-            if (3 * k < bins - 3 && L - maxAround (3 * k, 3) < phprThr) continue;
+            if (! rescue && 2 * k < bins - 3 && L - maxAround (2 * k, 2) < phprThr) continue;
+            if (! rescue && 3 * k < bins - 3 && L - maxAround (3 * k, 3) < phprThr) continue;
 
             // voice / instrument harmonic? A howl has no harmonic series below it, a harmonic does:
             // the fundamental AND every harmonic in between must be present as peaks.
@@ -308,7 +429,7 @@ private:
                 return Lp > L - kSubharmonicDb && Lp > side + 6.0f;
             };
             bool isHarmonic = false;
-            for (int h = 2; h <= 4 && ! isHarmonic; ++h)
+            for (int h = 2; h <= 4 && ! isHarmonic && ! rescue; ++h)
             {
                 const float kf = (float) k / (float) h;
                 bool series = true;
@@ -327,7 +448,8 @@ private:
             const double restPow = std::max (bandPow - peakPow, bandPow * 1e-6);
             const float rel = L - (float) (10.0 * std::log10 (restPow + 1e-30));
 
-            const Peak p { (float) k + delta, L, rel, isHarmonic };
+            rescue = rescue && rel >= kSatDominanceDb;          // one tone louder than everything else together
+            const Peak p { (float) k + delta, L, rel, isHarmonic, rescue };
             if (numPeaks < (int) peaks.size()) peaks[(size_t) numPeaks++] = p;
             else
             {
@@ -386,22 +508,50 @@ private:
             //    It must grow in absolute level too (a voice onset after a decaying reverb tail only
             //    grows relative to the spectrum).
             const float hk = p.harmonic ? 1.5f : 1.0f;   // extra evidence for harmonic-looking tones (ringing)
-            const bool growing = c.count >= framesFast && relGrowth >= growThr
-                              && (c.absLast - c.absFirst) >= 0.7f * growThr;
+            // frequencies that howled in the last minute come back fast -> fast path for them
+            const bool known = isNearKnownFeedback (freqHz, t);
+            const bool growing = known ? (c.count >= std::max (2, framesFast / 2) && relGrowth >= 0.5f * growThr)
+                                       : (c.count >= framesFast && relGrowth >= growThr
+                                          && (c.absLast - c.absFirst) >= 0.7f * growThr);
             // B) steady isolated tone that just won't go away (ringing / saturated howl).
             //    Already-notched frequencies that persist are deepened quickly.
             //    A tone that looks like part of a voice's harmonic series must last 3x longer
             //    (reverb tails of a voice decay away, a loop keeps ringing).
-            const int needed = isNearActiveNotch (freqHz) ? framesFast : (p.harmonic ? 3 * framesSlow : framesSlow);
+            const int needed = known ? framesFast : (p.harmonic ? 3 * framesSlow : framesSlow);
             const bool persistent = c.count >= needed && relGrowth > -3.0f && (c.absLast - c.absFirst) > -3.0f;
             // C) ringing: after the sound stops one tone outlives the rest of the spectrum by far
             //    (loop close to howling). Reverb tails decay together, so they do not qualify.
             const bool ringing = c.count >= 2 * framesFast && (c.absLast - c.absFirst) <= 0.0f
                               && relGrowth >= ringThr * hk;
 
+            // D) saturated howl: loud, pegged, stable -> cut its fundamental hard, right away
+            if (p.rescue && (c.maxBin - c.minBin) <= kSatSpreadBins && c.count >= rescueFrames)
+            {
+                const int kb = (int) std::lround (c.bin);
+                float fundBin = c.bin;
+                for (int h = 5; h >= 2; --h)                     // a louder harmonic of a lower howl?
+                {
+                    const int kf = (int) std::lround (c.bin / (float) h);
+                    if (kf < kLo) continue;
+                    const float Lf = maxAround (kf, 1);
+                    if (Lf >= p.level - 15.0f && Lf > std::max (binLevel (kf - 4), binLevel (kf + 4)) + 6.0f)
+                    { fundBin = c.bin / (float) h; break; }
+                }
+                (void) kb;
+                const float f0 = (float) (fundBin * sr / fftSize);
+                triggerNotch (f0, t, 40.0f, true);               // deep at once
+                rescueF0 = f0;
+                rescueTime = t;
+                c.count = 1;
+                c.minBin = c.maxBin = c.bin;
+                c.firstLevel = c.lastLevel;
+                c.absFirst = c.absLast;
+                continue;
+            }
+
             if (stable && (growing || persistent || ringing))
             {
-                triggerNotch (freqHz, t, p.level - medianDb - 10.0f);
+                triggerNotch (freqHz, t, p.level - medianDb - 10.0f, residualIsHowl (freqHz, pmprThr, absThr, topThr));
                 c.count = 1;
                 c.minBin = c.maxBin = c.bin;
                 c.firstLevel = c.lastLevel;
@@ -424,6 +574,16 @@ private:
         }
     }
 
+    // active notch, or a notch released less than kMemorySec ago, near f
+    bool isNearKnownFeedback (float f, double t) const noexcept
+    {
+        if (isNearActiveNotch (f)) return true;
+        for (const auto& m : memory)
+            if (m.freq > 0.0f && t - m.time < kMemorySec && std::abs (std::log2 (f / m.freq)) < 1.0f / 24.0f)
+                return true;
+        return false;
+    }
+
     bool isNearActiveNotch (float f) const noexcept
     {
         for (auto& n : notches)
@@ -432,7 +592,7 @@ private:
         return false;
     }
 
-    void triggerNotch (float f, double t, float excessDb) noexcept
+    void triggerNotch (float f, double t, float excessDb, bool stillHowlingAfterNotch) noexcept
     {
         const float maxDepth = maxDepthDb();
         const float rf = ratioFactor();                                   // 0 (1:1) .. 0.75 (1:4)
@@ -452,7 +612,9 @@ private:
         if (hit != nullptr)
         {
             hit->freq = 0.8f * hit->freq + 0.2f * f;
-            hit->targetDb = rf > 0.0f ? std::min (maxDepth, std::max (hit->targetDb, hit->currentDb) + stepDb) : 0.0f;
+            // deepen only while the howl is still visible after the notch bank
+            if (stillHowlingAfterNotch)
+                hit->targetDb = rf > 0.0f ? std::min (maxDepth, std::max (hit->targetDb, hit->currentDb) + stepDb) : 0.0f;
             hit->lastHit = t;
             ++hit->hits;
             return;
@@ -520,7 +682,16 @@ private:
                 n.resetState();
                 n.b0 = 1.0; n.b1 = n.b2 = n.a1 = n.a2 = 0.0;
                 // keep listing it (detected frequency) until the release time is over
-                if (t - n.lastHit > releaseSec) n.active = false;
+                if (t - n.lastHit > releaseSec)
+                {
+                    n.active = false;
+                    if (n.hits > 0)                               // remember it for a minute
+                    {
+                        auto& m = *std::min_element (memory.begin(), memory.end(), [] (auto& a, auto& b) { return a.time < b.time; });
+                        m.freq = n.freq;
+                        m.time = t;
+                    }
+                }
                 continue;
             }
 
@@ -569,6 +740,18 @@ private:
 
     float strength = 0.5f;
     float attackSec = 0.02f, releaseSec = 15.0f;
+    bool postNotchAnalysis = false, saturationRescue = true, residualCheck = true;
+    std::vector<float> ringPost, levelPostDb;
+    int ringPostPos = 0;
+    float postMedianDb = -120.0f, postMaxDb = -120.0f;
+    bool postValid = false;
+    std::array<double, kCrestHops> crestSum {};
+    std::array<float, kCrestHops> crestPeak {};
+    int crestPos = 0;
+    double hopSumSq = 0.0;
+    float hopPeak = 0.0f, levelDbFS = -120.0f, crestDb = 20.0f;
+    float rescueF0 = 1.0f;
+    double rescueTime = -1e9;
     int ratio = 4;
     std::atomic<bool> clearRequested { false };
 

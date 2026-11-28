@@ -47,6 +47,9 @@ int main (int argc, char** argv)
         const float fb = (float) atof (argv[4]), nr = (float) atof (argv[5]), rv = (float) atof (argv[6]);
         const int block = argc > 7 ? atoi (argv[7]) : 256;
         eng->prepare (SR, 1);
+        if (getenv ("DFB_POST")) eng->feedback.setPostNotchAnalysis (true);
+        if (getenv ("DFB_NORESID")) eng->feedback.setResidualCheck (false);
+        if (getenv ("DFB_NORESCUE")) eng->feedback.setSaturationRescue (false);
         eng->setParameters (fb, nr, rv, false, getenv ("DFB_ROOM_AMT") ? (float) atof (getenv ("DFB_ROOM_AMT")) : 0.0f);
         if (getenv ("DFB_RESTORE")) eng->setRestore ((float) atof (getenv ("DFB_RESTORE")));
         int maxNotches = 0;
@@ -77,7 +80,12 @@ int main (int argc, char** argv)
         const float fb = (float) atof (argv[6]);
         const bool usePlugin = fb >= 0.0f;
         const int block = 64;
+        const double enableAt = getenv ("DFB_ENABLE_AT") ? atof (getenv ("DFB_ENABLE_AT")) : 0.0;
+        const float clipLevel = getenv ("DFB_CLIP") ? (float) atof (getenv ("DFB_CLIP")) : 0.0f;
         eng->prepare (SR, 1);
+        if (getenv ("DFB_POST")) eng->feedback.setPostNotchAnalysis (true);
+        if (getenv ("DFB_NORESID")) eng->feedback.setResidualCheck (false);
+        if (getenv ("DFB_NORESCUE")) eng->feedback.setSaturationRescue (false);
         eng->setParameters (std::max (0.0f, fb), 0.0f, 0.0f, false);
 
         const size_t n = src.size();
@@ -98,11 +106,15 @@ int main (int argc, char** argv)
             }
             if (usePlugin)
             {
+                // DFB_ENABLE_AT=seconds: the De-Feedback knob is at 0 until then (howl can saturate first)
+                if (enableAt > 0.0 && p / SR < enableAt) eng->setParameters (0.0f, 0.0f, 0.0f, false);
+                else eng->setParameters (std::max (0.0f, fb), 0.0f, 0.0f, false);
                 float* ch[1] = { out.data() + p };
                 eng->process (ch, 1, (int) bl);
             }
             for (size_t i = p; i < p + bl; ++i)
-                spk[i] = std::tanh (gain * out[i]);   // amplifier / speaker saturates
+                spk[i] = clipLevel > 0.0f ? std::clamp (gain * out[i], -clipLevel, clipLevel)   // hard clipping amp
+                                          : std::tanh (gain * out[i]);                          // amplifier / speaker saturates
             if (log && usePlugin && (p % 4800) < block)
             {
                 fprintf (log, "%.3f", p / SR);
