@@ -2376,20 +2376,82 @@
     document.body.style.setProperty('--gfx', settings.ui.gfx || 1);
   }
   /* the size of a panel's buttons, right in its header (Shots, People, Titles & Graphics): drag to change, double-click = 100 % */
-  const SIZE_KEYS = { shots: 'card', speakers: 'spk', labels: 'gfx' };
+  const SIZE_KEYS = { shots: 'card', speakers: 'spk', labels: 'gfx', monitors: 'mon' };
   let sizeSave = null;
+  /* Video: how tall the monitors' panel is against the panels under it (each page keeps its own). The rows the Video
+     panel covers get this weight, the others 1 — so it grows smoothly while the panels below give way. */
+  const monK = () => { const m = settings.ui.mon; return (m && typeof m === 'object' ? m[view] : m) || 1; };
+  function applyMonSize() {
+    const grid = $('#grid');
+    if (!grid) return;
+    grid.style.gridTemplateRows = '';
+    const k = monK(), pan = grid.querySelector('.panel[data-id="monitors"]');
+    if (!pan || Math.abs(k - 1) < 0.01) return;
+    const cs = getComputedStyle(grid), tracks = cs.gridTemplateRows.split(' ').map(parseFloat).filter(x => x >= 0);
+    const gap = parseFloat(cs.rowGap) || 0, r = pan.getBoundingClientRect(), rows = new Set();
+    let y = grid.getBoundingClientRect().top + (parseFloat(cs.paddingTop) || 0) - grid.scrollTop;
+    tracks.forEach((h, i) => { const mid = y + h / 2; if (mid > r.top && mid < r.bottom) rows.add(i); y += h + gap; });
+    if (!rows.size || rows.size === tracks.length) return; // (nothing under or over it to give way)
+    const put2 = w => { grid.style.gridTemplateRows = tracks.map((_, i) => `minmax(calc(62px * var(--scale)), ${rows.has(i) ? w : 1}fr)`).join(' '); };
+    // taller than the pictures can use (they are as wide as the panel allows): no further — the panels below keep that room
+    const scr = pan.querySelector('.monitor.program .screen');
+    const spare = () => { if (!scr) return 0; const b2 = scr.getBoundingClientRect(); return b2.height - 4 - b2.width * 9 / 16; };
+    let use = k;
+    put2(k);
+    if (k > 1 && spare() > 2) {
+      let lo = 1, hi = k;
+      for (let i = 0; i < 9; i++) { const mid = (lo + hi) / 2; put2(mid); if (spare() > 2) hi = mid; else lo = mid; }
+      use = lo; put2(lo);
+    }
+    rt.monMax = use < k - 0.01 ? use : 0;
+  }
+  /* Video: how the width is shared between Preview and Live (each page keeps its own): 50 % = equal; more = Live bigger */
+  const monSplit = () => { const m = settings.ui.monSplit; return (m && m[view]) || 0.5; };
+  function applyMonSplit() {
+    const m = document.querySelector('.monitors');
+    if (!m) return;
+    const sp = monSplit();
+    m.style.setProperty('--pv-grow', (2 * (1 - sp)).toFixed(3));
+    m.style.setProperty('--pg-grow', (2 * sp).toFixed(3));
+  }
+  function headMonSplit() {
+    const val = el('span', { class: 'head-size-val mono' }, `${Math.round(monSplit() * 100)}%`);
+    const range = el('input', { type: 'range', min: 0.3, max: 0.75, step: 0.01, value: monSplit(), title: 'Preview ↔ Live: drag right to make Live bigger and Preview smaller · double-click = equal' });
+    const set = v => {
+      if (!settings.ui.monSplit || typeof settings.ui.monSplit !== 'object') settings.ui.monSplit = {};
+      settings.ui.monSplit[view] = Math.round(v * 100) / 100;
+      val.textContent = `${Math.round(v * 100)}%`;
+      applyMonSplit(); applyMonSize(); // (a wider Live picture can use a taller panel)
+      clearTimeout(sizeSave); sizeSave = setTimeout(saveSettings, 600);
+    };
+    range.addEventListener('input', () => set(+range.value));
+    range.addEventListener('dblclick', () => { range.value = 0.5; set(0.5); });
+    const box = el('label', { class: 'head-size', title: 'Share of the width for Live · double-click = equal' }, el('span', { class: 'head-size-ico' }, '◧'), range, val);
+    box.addEventListener('pointerdown', () => { rt.sizeDrag = true; });
+    return box;
+  }
   function headSize(panelId) {
     const k = SIZE_KEYS[panelId];
     if (!k) return null;
-    const val = el('span', { class: 'head-size-val mono' }, `${Math.round((settings.ui[k] || 1) * 100)}%`);
+    const isMon = k === 'mon', get = () => isMon ? monK() : (settings.ui[k] || 1);
+    const val = el('span', { class: 'head-size-val mono' }, `${Math.round(get() * 100)}%`);
     const set = v => {
-      settings.ui[k] = Math.round(v * 100) / 100; val.textContent = `${Math.round(settings.ui[k] * 100)}%`; applyUI();
+      v = Math.round(v * 100) / 100;
+      if (isMon) {
+        if (!settings.ui.mon || typeof settings.ui.mon !== 'object') settings.ui.mon = {};
+        settings.ui.mon[view] = v; applyMonSize();
+        // past the size the pictures can use: the slider stops there
+        if (rt.monMax) { v = Math.floor(rt.monMax * 100) / 100; settings.ui.mon[view] = v; range.value = v; }
+      }
+      else { settings.ui[k] = v; applyUI(); }
+      val.textContent = `${Math.round(v * 100)}%`;
       clearTimeout(sizeSave); sizeSave = setTimeout(saveSettings, 600);
     };
-    const range = el('input', { type: 'range', min: 0.6, max: 2, step: 0.05, value: settings.ui[k] || 1, title: 'Button size — drag to make them bigger or smaller · double-click = 100 %' });
+    const range = el('input', { type: 'range', min: isMon ? 0.4 : 0.6, max: isMon ? 3 : 2, step: 0.05, value: get(),
+      title: isMon ? 'Size of the Preview and Live monitors — drag; the panels under them give way · double-click = 100 %' : 'Button size — drag to make them bigger or smaller · double-click = 100 %' });
     range.addEventListener('input', () => set(+range.value));
     range.addEventListener('dblclick', () => { range.value = 1; set(1); });
-    const box = el('label', { class: 'head-size', title: 'Button size · double-click = 100 %' }, el('span', { class: 'head-size-ico' }, '⤡'), range, val);
+    const box = el('label', { class: 'head-size', title: isMon ? 'Monitor size · double-click = 100 %' : 'Button size · double-click = 100 %' }, el('span', { class: 'head-size-ico' }, isMon ? '⛶' : '⤡'), range, val);
     box.addEventListener('pointerdown', () => { rt.sizeDrag = true; }); // (while dragging it, the panel itself is not dragged in layout editing)
     return box;
   }
@@ -2431,7 +2493,7 @@
         el('button', { class: 'btn small', title: 'Shorter', onclick: () => resize(p, 0, -1) }, '▴'),
         el('button', { class: 'btn small', title: 'Taller', onclick: () => resize(p, 0, 1) }, '▾'),
         el('button', { class: 'btn small danger', title: 'Hide panel', onclick: () => { p.hidden = true; saveSettings(); renderGrid(); } }, '✕'));
-      const head = el('div', { class: 'panel-head' }, el('h3', null, PANEL_DEFS[p.id].title), el('span', { class: 'head-hint' }, PANEL_DEFS[p.id].hint || ''), p.id === 'speakers' ? null : headSize(p.id), tools); // (People: among its own tools in the header row)
+      const head = el('div', { class: 'panel-head' }, el('h3', null, PANEL_DEFS[p.id].title), el('span', { class: 'head-hint' }, PANEL_DEFS[p.id].hint || ''), p.id === 'speakers' ? null : headSize(p.id), p.id === 'monitors' ? headMonSplit() : null, tools); // (People: among its own tools in the header row)
       const body = el('div', { class: 'panel-body' });
       const panel = el('section', { class: 'panel', style: `grid-column: span ${p.w}; grid-row: span ${p.h};`, dataset: { id: p.id } }, head, body);
       if (rt.editing) {
@@ -2456,6 +2518,7 @@
     add.innerHTML = '';
     add.append(el('option', { value: '' }, '+ Show hidden panel…'));
     curLayout().filter(p => p.hidden).forEach(p => add.append(el('option', { value: p.id }, PANEL_DEFS[p.id].title)));
+    requestAnimationFrame(applyMonSize);
   }
   function resize(p, dw, dh) { p.w = clamp(p.w + dw, 2, 12); p.h = clamp(p.h + dh, 2, 10); saveSettings(); renderGrid(); }
   const RENDER = {};
@@ -2653,6 +2716,7 @@
         // with the Audio panel hidden (big-monitor layout), its buttons and the loudness sit here
         curLayout().some(x => x.id === 'audio' && !x.hidden) ? null : el('div', { class: 'mini-audio' }, ...audioButtons(), miniLufs)),
         el('div', { class: 'tb-side right' }, meterControls()))));
+    applyMonSplit();
     renderTally();
   };
 

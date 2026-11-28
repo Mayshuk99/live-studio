@@ -767,3 +767,6 @@ body { --spk: 1; --gfx: 1; }
 .spk-tools .head-size { margin: 0 4px 0 0; }
 .spk-tools .head-size input[type=range] { width: calc(80px * var(--scale)); }
 .spk-tools { background: #1e1e21; padding-left: 8px; } /* (over the end of the header's hint, cleanly) */
+.monitors .monitor.preview { flex: var(--pv-grow, 1) 1 0; }
+.monitors .monitor.program { flex: var(--pg-grow, 1) 1 0; }
+.head-size + .head-size { margin-left: 14px; }

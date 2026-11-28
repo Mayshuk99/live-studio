@@ -1309,7 +1309,11 @@ window.I18N_RU = {
     "Plug-ins on this recording track only, top to bottom: after the inputs sent to it are mixed, before the track’s fader. The stream and the other tracks are not affected. Settings made in a plug-in’s window are saved with the show.": "Плагины только на этой дорожке записи, сверху вниз: после смешивания отправленных на неё входов, перед фейдером дорожки. Эфир и другие дорожки не меняются. Настройки, сделанные в окне плагина, сохраняются в шоу.",
     "Plug-ins on this input, top to bottom: after its low cut and voice compressor, before its fader — so they reach the program and every recording track it is sent to. They run in a separate program — if one crashes, the sound goes on without it. Settings made in a plug-in’s window are saved with the show.": "Плагины на этом входе, сверху вниз: после среза низов и компрессора голоса, перед фейдером — поэтому они попадают и в программу, и на каждую дорожку записи, куда отправлен вход. Они работают в отдельной программе — если какой-то упадёт, звук пойдёт без него. Настройки, сделанные в окне плагина, сохраняются в шоу.",
     "Button size — drag to make them bigger or smaller · double-click = 100 %": "Размер кнопок — потяните, чтобы сделать больше или меньше · двойной щелчок = 100 %",
-    "Button size · double-click = 100 %": "Размер кнопок · двойной щелчок = 100 %"
+    "Button size · double-click = 100 %": "Размер кнопок · двойной щелчок = 100 %",
+    "Size of the Preview and Live monitors — drag; the panels under them give way · double-click = 100 %": "Размер мониторов Превью и Эфир — потяните; панели под ними уступят место · двойной щелчок = 100 %",
+    "Monitor size · double-click = 100 %": "Размер мониторов · двойной щелчок = 100 %",
+    "Preview ↔ Live: drag right to make Live bigger and Preview smaller · double-click = equal": "Превью ↔ Эфир: потяните вправо — Эфир больше, Превью меньше · двойной щелчок = поровну",
+    "Share of the width for Live · double-click = equal": "Доля ширины для Эфира · двойной щелчок = поровну"
   },
   tpl: [
     ["“{0}” not found — using the Windows default for now", "«{0}» не найдено — пока используется устройство Windows по умолчанию"],
